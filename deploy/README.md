@@ -17,14 +17,18 @@ stores runtime data in a named Docker volume.
 Create ~/services/tutorlaing/.env on the VM using .env.example as the schema.
 Required values are TELEGRAM_BOT_TOKEN and, for a closed alpha,
 TELEGRAM_ALLOWED_CHAT_IDS.
-Production compose sets TELEGRAM_WEBHOOK_URL and reads a random secret from
-.telegram_webhook_secret through a Docker secret. Local development may leave
-all webhook settings empty for polling.
+Production compose sets TELEGRAM_WEBHOOK_URL. The random
+TELEGRAM_WEBHOOK_SECRET is stored in the server-only .env with mode 600.
+Local development may leave all webhook settings empty for polling.
 
-Create the secret once on the VM:
+Generate the secret once on the VM without printing it:
 
     install -m 600 /dev/null .telegram_webhook_secret
     openssl rand -hex 32 > .telegram_webhook_secret
+
+The deployment procedure copies the generated value directly to the protected
+.env and never prints it. Do not paste it into GitHub, documentation or command
+output.
 
 Port 5678 is mapped to the app because the existing Cloudflare route for
 brain.sekond.pl already targets localhost:5678. Port 8080 remains available
