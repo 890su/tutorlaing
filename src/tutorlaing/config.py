@@ -15,6 +15,21 @@ def _parse_chat_ids(raw: str) -> frozenset[int] | None:
         raise ValueError("TELEGRAM_ALLOWED_CHAT_IDS must contain integer IDs") from exc
 
 
+def _webhook_secret() -> str:
+    direct = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    secret_file = os.environ.get("TELEGRAM_WEBHOOK_SECRET_FILE", "").strip()
+    if direct and secret_file:
+        raise ValueError(
+            "Set TELEGRAM_WEBHOOK_SECRET or TELEGRAM_WEBHOOK_SECRET_FILE, not both"
+        )
+    if not secret_file:
+        return direct
+    try:
+        return Path(secret_file).read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError("Could not read TELEGRAM_WEBHOOK_SECRET_FILE") from exc
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
@@ -35,7 +50,7 @@ class Settings:
 
         data_dir = Path(os.environ.get("DATA_DIR", "/data")).expanduser()
         webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL", "").strip()
-        webhook_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+        webhook_secret = _webhook_secret()
         if bool(webhook_url) != bool(webhook_secret):
             raise ValueError(
                 "TELEGRAM_WEBHOOK_URL and TELEGRAM_WEBHOOK_SECRET must be set together"

@@ -5,10 +5,16 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      TELEGRAM_WEBHOOK_URL: https://brain.sekond.pl/telegram/webhook
+      TELEGRAM_WEBHOOK_SECRET_FILE: /run/secrets/telegram_webhook_secret
+    secrets:
+      - telegram_webhook_secret
     volumes:
       - tutorlaing-data:/data
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:5678:8080"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -16,3 +22,7 @@ services:
 
 volumes:
   tutorlaing-data:
+
+secrets:
+  telegram_webhook_secret:
+    file: ./.telegram_webhook_secret

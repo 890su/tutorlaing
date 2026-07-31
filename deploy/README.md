@@ -17,8 +17,18 @@ stores runtime data in a named Docker volume.
 Create ~/services/tutorlaing/.env on the VM using .env.example as the schema.
 Required values are TELEGRAM_BOT_TOKEN and, for a closed alpha,
 TELEGRAM_ALLOWED_CHAT_IDS.
-Production also sets TELEGRAM_WEBHOOK_URL and a random
-TELEGRAM_WEBHOOK_SECRET. Local development may leave both empty for polling.
+Production compose sets TELEGRAM_WEBHOOK_URL and reads a random secret from
+.telegram_webhook_secret through a Docker secret. Local development may leave
+all webhook settings empty for polling.
+
+Create the secret once on the VM:
+
+    install -m 600 /dev/null .telegram_webhook_secret
+    openssl rand -hex 32 > .telegram_webhook_secret
+
+Port 5678 is mapped to the app because the existing Cloudflare route for
+brain.sekond.pl already targets localhost:5678. Port 8080 remains available
+locally for direct health checks.
 
 Never commit the environment file. The existing Brainless bot process must be
 stopped before Tutorlaing starts with the same token: Telegram permits only one

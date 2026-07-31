@@ -12,6 +12,7 @@ data/
 *.db
 *.sqlite
 *.sqlite3
+.telegram_webhook_secret
 dist/
 build/
 *.egg-info/
