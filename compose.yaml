@@ -1,0 +1,18 @@
+services:
+  tutorlaing:
+    image: ghcr.io/890su/tutorlaing:latest
+    container_name: tutorlaing
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - tutorlaing-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  tutorlaing-data:

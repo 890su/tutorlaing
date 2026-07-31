@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "introduce-yourself",
+      "title_ru": "Познакомиться",
+      "title_pl": "Przedstawić się",
+      "category": "communication",
+      "objective_ru": "Представиться и поддержать короткое знакомство.",
+      "opening_ru": "Вы впервые разговариваете с соседом или коллегой.",
+      "steps": [
+        {
+          "id": "name-origin",
+          "interlocutor_pl": "Dzień dobry! Jestem Marta. A jak pan/pani ma na imię?",
+          "context_ru": "Поздоровайтесь и назовите своё имя.",
+          "hint_ru": "Начните с «Dzień dobry» и используйте «Mam na imię...».",
+          "expected_groups": [["dzień dobry", "dzien dobry", "cześć", "czesc"], ["mam na imię", "mam na imie", "nazywam się", "nazywam sie"]],
+          "target_chunk": "Dzień dobry, mam na imię...",
+          "bottleneck_ru": "начать знакомство и назвать себя полной фразой",
+          "task_blocking": true
+        },
+        {
+          "id": "clarify-origin",
+          "interlocutor_pl": "Miło mi. Od dawna mieszka pan/pani w Polsce?",
+          "context_ru": "Ответьте, как давно вы живёте в Польше. Если вопрос непонятен — попросите повторить.",
+          "hint_ru": "Можно сказать «Mieszkam w Polsce od...» или «Czy może pani powtórzyć?».",
+          "expected_groups": [["mieszkam", "jestem"], ["od", "dopiero", "miesiąc", "miesiac", "rok", "lat", "tydzień", "tydzien"]],
+          "target_chunk": "Mieszkam w Polsce od...",
+          "bottleneck_ru": "сообщить длительность проживания коротким естественным ответом",
+          "task_blocking": false
+        }
+      ]
+    },
+    {
+      "id": "pharmacy",
+      "title_ru": "В аптеке",
+      "title_pl": "W aptece",
+      "category": "health",
+      "objective_ru": "Описать простой симптом и понять уточняющий вопрос фармацевта.",
+      "opening_ru": "Вы пришли в аптеку из-за боли в горле. Это языковая тренировка, не медицинская консультация.",
+      "steps": [
+        {
+          "id": "describe-symptom",
+          "interlocutor_pl": "Dzień dobry. W czym mogę pomóc?",
+          "context_ru": "Скажите, что у вас болит горло и вы ищете что-нибудь от боли.",
+          "hint_ru": "Используйте «Boli mnie gardło» и «Szukam czegoś na ból».",
+          "expected_groups": [["boli mnie gardło", "boli mnie gardlo", "ból gardła", "bol gardla"], ["szukam", "potrzebuję", "potrzebuje", "proszę", "prosze"]],
+          "target_chunk": "Boli mnie gardło. Szukam czegoś na ból.",
+          "bottleneck_ru": "ясно назвать симптом и цель визита",
+          "task_blocking": true
+        },
+        {
+          "id": "symptom-duration",
+          "interlocutor_pl": "Od kiedy boli pana/panią gardło? Czy ma pan/pani gorączkę?",
+          "context_ru": "Ответьте, что горло болит два дня и температуры нет.",
+          "hint_ru": "«Od dwóch dni. Nie mam gorączki.»",
+          "expected_groups": [["od dwóch dni", "od dwoch dni", "dwa dni"], ["nie mam gorączki", "nie mam goraczki", "bez gorączki", "bez goraczki"]],
+          "target_chunk": "Od dwóch dni. Nie mam gorączki.",
+          "bottleneck_ru": "понять вопросы «od kiedy» и «czy ma pan/pani...»",
+          "task_blocking": true
+        }
+      ]
+    },
+    {
+      "id": "doctor-appointment",
+      "title_ru": "Запись к врачу",
+      "title_pl": "Wizyta u lekarza",
+      "category": "health",
+      "objective_ru": "Записаться на приём и уточнить доступное время.",
+      "opening_ru": "Вы звоните в przychodnia. Тренируем только язык записи на приём.",
+      "steps": [
+        {
+          "id": "request-appointment",
+          "interlocutor_pl": "Przychodnia, słucham.",
+          "context_ru": "Поздоровайтесь и скажите, что хотите записаться к семейному врачу.",
+          "hint_ru": "«Chciałbym/Chciałabym umówić wizytę do lekarza rodzinnego.»",
+          "expected_groups": [["chciałbym", "chcialbym", "chciałabym", "chcialabym", "chcę", "chce"], ["umówić wizytę", "umowic wizyte", "zapisać się", "zapisac sie"], ["lekarza rodzinnego", "lekarz rodzinny"]],
+          "target_chunk": "Chciałbym/Chciałabym umówić wizytę do lekarza rodzinnego.",
+          "bottleneck_ru": "сформулировать просьбу о записи к нужному врачу",
+          "task_blocking": true
+        },
+        {
+          "id": "choose-time",
+          "interlocutor_pl": "Mamy wolny termin w środę o ósmej albo w piątek o czternastej.",
+          "context_ru": "Выберите пятницу в 14:00 и подтвердите, что вам подходит.",
+          "hint_ru": "«Piątek o czternastej mi pasuje.»",
+          "expected_groups": [["piątek", "piatek", "w piątek", "w piatek"], ["czternastej", "14", "14:00"], ["pasuje", "może być", "moze byc"]],
+          "target_chunk": "Piątek o czternastej mi pasuje.",
+          "bottleneck_ru": "понять два предложенных времени и однозначно выбрать одно",
+          "task_blocking": true
+        }
+      ]
+    },
+    {
+      "id": "landlord-repair",
+      "title_ru": "Проблема в квартире",
+      "title_pl": "Problem w mieszkaniu",
+      "category": "housing",
+      "objective_ru": "Сообщить арендодателю о неисправности и договориться о визите.",
+      "opening_ru": "Вы звоните арендодателю: на кухне течёт кран.",
+      "steps": [
+        {
+          "id": "report-problem",
+          "interlocutor_pl": "Dzień dobry, co się stało?",
+          "context_ru": "Объясните, что кран на кухне протекает.",
+          "hint_ru": "«Kran w kuchni przecieka.»",
+          "expected_groups": [["kran"], ["w kuchni", "kuchnia"], ["przecieka", "cieknie", "leci woda"]],
+          "target_chunk": "Kran w kuchni przecieka.",
+          "bottleneck_ru": "кратко и точно описать неисправность",
+          "task_blocking": true
+        },
+        {
+          "id": "arrange-visit",
+          "interlocutor_pl": "Mogę przyjść dzisiaj po osiemnastej. Czy będzie pan/pani w domu?",
+          "context_ru": "Подтвердите, что будете дома после 18:00.",
+          "hint_ru": "«Tak, będę w domu po osiemnastej.»",
+          "expected_groups": [["tak", "dobrze"], ["będę", "bede", "jestem"], ["w domu"], ["po osiemnastej", "po 18"]],
+          "target_chunk": "Tak, będę w domu po osiemnastej.",
+          "bottleneck_ru": "подтвердить время визита без двусмысленности",
+          "task_blocking": true
+        }
+      ]
+    },
+    {
+      "id": "office-number",
+      "title_ru": "В urząd",
+      "title_pl": "W urzędzie",
+      "category": "administration",
+      "objective_ru": "Объяснить цель визита и найти нужное окно.",
+      "opening_ru": "Вы пришли в urząd, чтобы подать заявление на регистрацию места проживания.",
+      "steps": [
+        {
+          "id": "state-purpose",
+          "interlocutor_pl": "Dzień dobry. W jakiej sprawie?",
+          "context_ru": "Скажите, что хотите подать заявление о meldunek.",
+          "hint_ru": "«Chciałbym/Chciałabym złożyć wniosek o meldunek.»",
+          "expected_groups": [["chciałbym", "chcialbym", "chciałabym", "chcialabym", "chcę", "chce"], ["złożyć wniosek", "zlozyc wniosek"], ["meldunek", "zameldowanie"]],
+          "target_chunk": "Chciałbym/Chciałabym złożyć wniosek o meldunek.",
+          "bottleneck_ru": "назвать административную цель визита",
+          "task_blocking": true
+        },
+        {
+          "id": "find-desk",
+          "interlocutor_pl": "Proszę pobrać numerek do stanowiska numer siedem na pierwszym piętrze.",
+          "context_ru": "Уточните, правильно ли вы поняли: окно 7 на первом этаже.",
+          "hint_ru": "«Czy dobrze rozumiem: stanowisko siedem na pierwszym piętrze?»",
+          "expected_groups": [["czy dobrze rozumiem", "dobrze rozumiem", "czyli"], ["stanowisko siedem", "stanowisko 7", "numer siedem", "numer 7"], ["pierwszym piętrze", "pierwszym pietrze"]],
+          "target_chunk": "Czy dobrze rozumiem: stanowisko siedem na pierwszym piętrze?",
+          "bottleneck_ru": "проверить важную инструкцию вместо того, чтобы угадывать",
+          "task_blocking": true
+        }
+      ]
+    },
+    {
+      "id": "work-clarification",
+      "title_ru": "Уточнить задачу на работе",
+      "title_pl": "Dopytać o zadanie",
+      "category": "work",
+      "objective_ru": "Понять рабочую задачу и уточнить срок.",
+      "opening_ru": "Коллега быстро объясняет новое поручение.",
+      "steps": [
+        {
+          "id": "ask-repeat",
+          "interlocutor_pl": "Trzeba poprawić zestawienie, sprawdzić liczby i wysłać je klientowi.",
+          "context_ru": "Попросите повторить медленнее.",
+          "hint_ru": "«Czy możesz powtórzyć trochę wolniej?»",
+          "expected_groups": [["możesz powtórzyć", "mozesz powtorzyc", "proszę powtórzyć", "prosze powtorzyc"], ["wolniej", "trochę wolniej", "troche wolniej"]],
+          "target_chunk": "Czy możesz powtórzyć trochę wolniej?",
+          "bottleneck_ru": "вовремя попросить повторить, а не скрывать непонимание",
+          "task_blocking": true
+        },
+        {
+          "id": "confirm-deadline",
+          "interlocutor_pl": "Jasne. Zestawienie ma być gotowe jutro do południa.",
+          "context_ru": "Подтвердите, что срок — завтра до полудня.",
+          "hint_ru": "«Czyli mam to zrobić do jutra do południa, tak?»",
+          "expected_groups": [["czyli", "dobrze rozumiem"], ["jutro"], ["do południa", "do poludnia"], ["tak", "prawda"]],
+          "target_chunk": "Czyli mam to zrobić do jutra do południa, tak?",
+          "bottleneck_ru": "переформулировать срок и получить подтверждение",
+          "task_blocking": true
+        }
+      ]
+    },
+    {
+      "id": "shop-return",
+      "title_ru": "Вернуть покупку",
+      "title_pl": "Zwrot w sklepie",
+      "category": "shopping",
+      "objective_ru": "Сообщить о возврате и ответить на вопрос о чеке.",
+      "opening_ru": "Вы хотите вернуть неподходящий товар в магазин.",
+      "steps": [
+        {
+          "id": "request-return",
+          "interlocutor_pl": "Dzień dobry. W czym mogę pomóc?",
+          "context_ru": "Скажите, что хотите вернуть этот товар, потому что он не подходит.",
+          "hint_ru": "«Chciałbym/Chciałabym zwrócić ten produkt, bo mi nie pasuje.»",
+          "expected_groups": [["chciałbym", "chcialbym", "chciałabym", "chcialabym", "chcę", "chce"], ["zwrócić", "zwrocic", "zwrot"], ["nie pasuje", "za mały", "za maly", "za duży", "za duzy"]],
+          "target_chunk": "Chciałbym/Chciałabym zwrócić ten produkt, bo mi nie pasuje.",
+          "bottleneck_ru": "ясно сформулировать просьбу о возврате и причину",
+          "task_blocking": true
+        },
+        {
+          "id": "receipt",
+          "interlocutor_pl": "Czy ma pan/pani paragon?",
+          "context_ru": "Ответьте, что чек есть в телефоне, и спросите, подходит ли электронный.",
+          "hint_ru": "«Mam paragon w telefonie. Czy elektroniczny może być?»",
+          "expected_groups": [["mam paragon", "paragon mam"], ["w telefonie", "elektroniczny"], ["może być", "moze byc", "wystarczy"]],
+          "target_chunk": "Mam paragon w telefonie. Czy elektroniczny może być?",
+          "bottleneck_ru": "ответить на вопрос о документе и сразу уточнить формат",
+          "task_blocking": true
+        }
+      ]
+    },
+    {
+      "id": "directions",
+      "title_ru": "Спросить дорогу",
+      "title_pl": "Zapytać o drogę",
+      "category": "transport",
+      "objective_ru": "Спросить дорогу и проверить полученную инструкцию.",
+      "opening_ru": "Вы ищете ближайшую остановку автобуса.",
+      "steps": [
+        {
+          "id": "ask-way",
+          "interlocutor_pl": "Dzień dobry, słucham?",
+          "context_ru": "Спросите, как пройти к ближайшей автобусной остановке.",
+          "hint_ru": "«Jak dojść do najbliższego przystanku autobusowego?»",
+          "expected_groups": [["jak dojść", "jak dojsc", "gdzie jest"], ["najbliższego", "najblizszego", "najbliższy", "najblizszy"], ["przystanku", "przystanek"]],
+          "target_chunk": "Jak dojść do najbliższego przystanku autobusowego?",
+          "bottleneck_ru": "сформулировать полный вопрос о нужном месте",
+          "task_blocking": true
+        },
+        {
+          "id": "confirm-turn",
+          "interlocutor_pl": "Proszę iść prosto, a za apteką skręcić w lewo.",
+          "context_ru": "Уточните: повернуть налево после аптеки?",
+          "hint_ru": "«W lewo za apteką, dobrze rozumiem?»",
+          "expected_groups": [["w lewo"], ["za apteką", "za apteka"], ["dobrze rozumiem", "tak", "prawda"]],
+          "target_chunk": "W lewo za apteką, dobrze rozumiem?",
+          "bottleneck_ru": "проверить направление и ориентир",
+          "task_blocking": true
+        }
+      ]
+    }
+  ]
+}

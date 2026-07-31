@@ -1,0 +1,39 @@
+---
+project_id: tutorlaing
+project_type: telegram-service
+status: alpha
+updated: 2026-08-01
+---
+
+# Tutorlaing context
+
+Telegram-first адаптивный тренер польского для русскоязычного мигранта в
+Польше. Главная единица ценности — повторно выполненная жизненная задача без
+критической подсказки, а не число уроков.
+
+## Current implementation
+
+- Python 3.11+, без runtime-зависимостей.
+- Telegram Bot API через long polling.
+- 8 курируемых JSON-сценариев.
+- Rule-based диагностика коммуникативных смысловых групп.
+- SQLite для пользователей, попыток, повторений, outcomes и событий.
+- Health endpoint на порту 8080.
+- Docker image публикуется в ghcr.io/890su/tutorlaing.
+- Целевой runtime: srv-150, ~/services/tutorlaing.
+
+## Sources of truth
+
+- README.md — продукт и использование.
+- ROADMAP.md — продуктовые gates.
+- PLAN.md — фактическая реализация и backlog.
+- decisions.md — устойчивые технические и продуктовые решения.
+- deploy/README.md — операции и rollback.
+
+## Constraints
+
+- Не хранить секреты в Git или документации.
+- Не считать собственное тестирование подтверждением рынка.
+- Не открывать beta до ручной проверки польского контента.
+- Не добавлять LLM/голос до проверки базовой учебной петли.
+- Не изменять и не удалять локальный D:\aibrain\04_projects\brainless.
