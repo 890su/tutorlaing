@@ -23,6 +23,10 @@
 
 Репозиторий: [github.com/890su/tutorlaing](https://github.com/890su/tutorlaing).
 
+Развёрнутая alpha: [@brnai_bot](https://t.me/brnai_bot). Публичный health:
+[brain.sekond.pl/health](https://brain.sekond.pl/health). Production получает
+Telegram updates через webhook; polling остаётся только локальным fallback.
+
 ## Продуктовая гипотеза
 
 Мигранту часто не нужен ещё один линейный урок. Ему нужно:
@@ -282,4 +286,4 @@ Health endpoint по умолчанию доступен на http://127.0.0.1:8
 
 ## Текущий статус
 
-Стадия: техническая alpha готова локально; discovery, ручная проверка польского контента, dogfooding и внешний concierge-тест остаются открытыми. GitHub является источником истины, GHCR — каналом доставки контейнера. Деплой на srv-150 ожидает завершения очистки старого runtime и серверного smoke-теста.
+Стадия: техническая alpha развёрнута на srv-150 и доступна через @brnai_bot. GitHub является источником истины, GHCR — каналом доставки контейнера. Публичный health, защищённый webhook, команды бота и сохранение SQLite проверены. Discovery, ручная проверка польского контента, founder dogfooding и внешний concierge-тест остаются открытыми; технический deploy не считается прохождением этих продуктовых gates.

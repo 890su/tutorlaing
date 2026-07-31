@@ -12,9 +12,13 @@
 - данные хранятся в SQLite, доступны consent, allowlist и удаление;
 - контейнер публикуется в GHCR через GitHub Actions;
 - локально проходят 16 автоматических тестов;
-- Telegram Bot API и существующий бот @hermes890bot доступны;
+- production работает на @brnai_bot через защищённый webhook;
 - прямой SSH с рабочей станции недоступен, но серверный MCP SSH-контур работает;
-- очистка старого runtime и первый deploy на srv-150 ещё не выполнены.
+- runtime развёрнут из GitHub/GHCR в /home/admin890brain/services/tutorlaing;
+- публичный и локальный health, webhook secret, команды и synthetic update проверены;
+- старые n8n, Google MCP и Twenty CRM контейнеры и volumes удалены;
+- на VM оставлены только Tutorlaing и management MCP bridge;
+- заполнение корневого диска снижено с 88% до 70%.
 
 Открытые gates: review польского контента, dogfooding, внешние пользователи и фактические alpha-метрики.
 

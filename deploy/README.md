@@ -21,14 +21,15 @@ Production compose sets TELEGRAM_WEBHOOK_URL. The random
 TELEGRAM_WEBHOOK_SECRET is stored in the server-only .env with mode 600.
 Local development may leave all webhook settings empty for polling.
 
-Generate the secret once on the VM without printing it:
+Generate the secret once on the VM without printing it and append it to the
+protected .env:
 
-    install -m 600 /dev/null .telegram_webhook_secret
-    openssl rand -hex 32 > .telegram_webhook_secret
+    chmod 600 .env
+    secret="$(openssl rand -hex 32)"
+    printf '\nTELEGRAM_WEBHOOK_SECRET=%s\n' "$secret" >> .env
+    unset secret
 
-The deployment procedure copies the generated value directly to the protected
-.env and never prints it. Do not paste it into GitHub, documentation or command
-output.
+Do not paste the generated value into GitHub, documentation or command output.
 
 Port 5678 is mapped to the app because the existing Cloudflare route for
 brain.sekond.pl already targets localhost:5678. Port 8080 remains available
@@ -77,3 +78,13 @@ Do not remove:
 
 Before deleting old containers or volumes, inventory them and verify that no
 Tutorlaing volume is included.
+
+## Current production state
+
+- Bot: @brnai_bot
+- Public health: https://brain.sekond.pl/health
+- Webhook: https://brain.sekond.pl/telegram/webhook
+- Runtime containers: tutorlaing and n8n-mcp-projects-1
+- Persistent app volume: tutorlaing_tutorlaing-data
+- Old n8n, Google MCP and Twenty CRM containers/volumes: removed
+- Management bridge is intentionally retained until direct SSH is stable

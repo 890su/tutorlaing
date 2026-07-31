@@ -21,6 +21,11 @@ Telegram-first адаптивный тренер польского для ру�
 - Health endpoint на порту 8080.
 - Docker image публикуется в ghcr.io/890su/tutorlaing.
 - Целевой runtime: srv-150, ~/services/tutorlaing.
+- Production bot: @brnai_bot.
+- Telegram webhook: https://brain.sekond.pl/telegram/webhook.
+- Public health: https://brain.sekond.pl/health.
+- На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
+  операторской машины нестабилен.
 
 ## Sources of truth
 
