@@ -10,13 +10,15 @@ stores runtime data in a named Docker volume.
 - Image: ghcr.io/890su/tutorlaing:latest
 - Container: tutorlaing
 - Health: http://127.0.0.1:8080/health
-- Ingress: not required for Telegram long polling
+- Webhook: https://brain.sekond.pl/telegram/webhook
 
 ## Required secrets
 
 Create ~/services/tutorlaing/.env on the VM using .env.example as the schema.
 Required values are TELEGRAM_BOT_TOKEN and, for a closed alpha,
 TELEGRAM_ALLOWED_CHAT_IDS.
+Production also sets TELEGRAM_WEBHOOK_URL and a random
+TELEGRAM_WEBHOOK_SECRET. Local development may leave both empty for polling.
 
 Never commit the environment file. The existing Brainless bot process must be
 stopped before Tutorlaing starts with the same token: Telegram permits only one

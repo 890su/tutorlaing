@@ -37,6 +37,8 @@ class AppFlowTests(unittest.TestCase):
             health_port=0,
             poll_timeout=5,
             log_level="INFO",
+            telegram_webhook_url="",
+            telegram_webhook_secret="",
         )
         self.storage = Storage(data_dir / "test.sqlite3")
         self.telegram = FakeTelegram()
@@ -88,6 +90,8 @@ class AppFlowTests(unittest.TestCase):
             health_port=0,
             poll_timeout=5,
             log_level="INFO",
+            telegram_webhook_url="",
+            telegram_webhook_secret="",
         )
         bot = TutorlaingBot(settings, self.storage, self.telegram)
         bot.handle_text(2, "Unknown", "/start")

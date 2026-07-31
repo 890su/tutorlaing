@@ -533,22 +533,13 @@ class TutorlaingBot:
 
     def run_polling(self) -> None:
         LOGGER.info("Tutorlaing Telegram polling started")
+        self.configure_commands()
         try:
             self.telegram.call(
-                "setMyCommands",
-                {
-                    "commands": [
-                        {"command": "start", "description": "Открыть главное меню"},
-                        {"command": "scenarios", "description": "Выбрать ситуацию"},
-                        {"command": "review", "description": "Повторения на сегодня"},
-                        {"command": "review_now", "description": "Dogfooding: повторить сейчас"},
-                        {"command": "privacy", "description": "Как хранятся данные"},
-                        {"command": "delete_me", "description": "Удалить мои данные"},
-                    ]
-                },
+                "deleteWebhook", {"drop_pending_updates": False}
             )
         except TelegramError:
-            LOGGER.warning("Could not register bot commands", exc_info=True)
+            LOGGER.warning("Could not clear Telegram webhook", exc_info=True)
         backoff = 1
         while self.running:
             try:
@@ -566,3 +557,34 @@ class TutorlaingBot:
                 LOGGER.exception("Telegram polling failed")
                 time.sleep(backoff)
                 backoff = min(30, backoff * 2)
+
+    def configure_commands(self) -> None:
+        try:
+            self.telegram.call(
+                "setMyCommands",
+                {
+                    "commands": [
+                        {"command": "start", "description": "Открыть главное меню"},
+                        {"command": "scenarios", "description": "Выбрать ситуацию"},
+                        {"command": "review", "description": "Повторения на сегодня"},
+                        {"command": "review_now", "description": "Повторить сейчас"},
+                        {"command": "privacy", "description": "Как хранятся данные"},
+                        {"command": "delete_me", "description": "Удалить мои данные"},
+                    ]
+                },
+            )
+        except TelegramError:
+            LOGGER.warning("Could not register bot commands", exc_info=True)
+
+    def configure_webhook(self) -> None:
+        self.configure_commands()
+        self.telegram.call(
+            "setWebhook",
+            {
+                "url": self.settings.telegram_webhook_url,
+                "secret_token": self.settings.telegram_webhook_secret,
+                "allowed_updates": ["message", "callback_query"],
+                "drop_pending_updates": False,
+            },
+        )
+        LOGGER.info("Tutorlaing Telegram webhook configured")
