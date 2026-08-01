@@ -14,7 +14,8 @@ Telegram-first адаптивный тренер польского для ру�
 ## Current implementation
 
 - Python 3.11+, без runtime-зависимостей.
-- Telegram Bot API через long polling.
+- Telegram Bot API через production webhook; long polling оставлен локальным
+  fallback.
 - 8 курируемых JSON-сценариев.
 - Rule-based диагностика коммуникативных смысловых групп.
 - Gemini 3.5 Flash анализирует каждый содержательный ответ; доступны
@@ -22,7 +23,13 @@ Telegram-first адаптивный тренер польского для ру�
 - Rule-based диагностика остаётся fallback при отказе или невалидном ответе AI.
 - Языковая модель профиля разделяет instruction, translation и target language;
   первый target остаётся польским.
-- SQLite для пользователей, попыток, повторений, outcomes и событий.
+- Gemini формирует 5-заданийные контекстные drill packs минимум 3 типов; выбор
+  проверяется локально, свободная формулировка — AI с допустимыми вариантами.
+- Напоминания opt-in: off/gentle/normal/intensive/aggressive, quiet hours
+  `Europe/Warsaw`, пауза на день и защита от повторной доставки.
+- Основные Telegram-экраны используют стабильный маршрут
+  `СИТУАЦИЯ → ФРАЗА → ЗАКРЕПЛЕНИЕ → ПОВТОР`.
+- SQLite для пользователей, попыток, повторений, drill sessions, outcomes и событий.
 - Health endpoint на порту 8080.
 - Docker image публикуется в ghcr.io/890su/tutorlaing.
 - Целевой runtime: srv-150, ~/services/tutorlaing.
@@ -31,6 +38,8 @@ Telegram-first адаптивный тренер польского для ру�
 - Public health: https://brain.sekond.pl/health.
 - Production AI key хранится только в защищённом server-side `.env`; Pro-квота
   старого ключа равна нулю, полный smoke-test проходит на gemini-3.5-flash.
+- Production drill smoke: 5 заданий 5 типов, 2 active-recall; AI-проверка
+  свободного ответа успешна. Локально проходят 31 тест.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

@@ -20,7 +20,12 @@
 - Gemini-анализ каждого ответа, естественная переформулировка и варианты;
 - перевод задания/комментария по запросу и разбор грамматики выбранного chunk;
 - отдельные настройки языка объяснений, перевода и изучаемого языка;
-- 24 автоматических теста учебного, AI, webhook и пользовательского цикла.
+- адаптивное закрепление из 5 заданий: выбор формы, окончание, дополнение фразы,
+  трансформация, порядок слов, исправление ошибки и свободное воспроизведение;
+- opt-in напоминания от мягкого до агрессивного режима, пауза на день и quiet
+  hours 22:00–08:00 по `Europe/Warsaw`;
+- маршрутный Telegram UI `СИТУАЦИЯ → ФРАЗА → ЗАКРЕПЛЕНИЕ → ПОВТОР`;
+- 31 автоматический тест учебного, AI, reminder, webhook и пользовательского цикла.
 
 Текущий production-интерфейс текстовый и использует гибридную оценку:
 `gemini-3.5-flash` анализирует каждый содержательный ответ, а rule-based движок
@@ -305,8 +310,8 @@ python -m unittest discover -s tests -v
 python -m tutorlaing.main
 ~~~
 
-Health endpoint по умолчанию доступен на http://127.0.0.1:8080/health при соответствующем binding. Команды бота: /start, /scenarios, /review, /review_now, /settings, /grammar, /privacy, /delete_me.
+Health endpoint по умолчанию доступен на http://127.0.0.1:8080/health при соответствующем binding. Команды бота: /start, /scenarios, /drill, /review, /review_now, /reminders, /settings, /grammar, /privacy, /delete_me.
 
 ## Текущий статус
 
-Стадия: AI-enabled техническая alpha развёрнута на srv-150 и доступна через @brnai_bot. GitHub является источником истины, GHCR — каналом доставки контейнера. Публичный health, защищённый webhook, SQLite-миграции и полный Gemini flow `analysis → variants → grammar → translation` проверены. Discovery, ручная проверка польского контента/AI-feedback, founder dogfooding и внешний concierge-тест остаются открытыми; технический deploy не считается прохождением этих продуктовых gates.
+Стадия: AI-enabled техническая alpha развёрнута на srv-150 и доступна через @brnai_bot. GitHub является источником истины, GHCR — каналом доставки контейнера. Публичный health, защищённый webhook, SQLite-миграции и полный Gemini flow `analysis → variants → grammar → translation → drills` проверены. Production smoke-test собрал 5 упражнений 5 разных типов и успешно проверил свободный ответ. Scheduler работает, но режим напоминаний у существующих и новых пользователей по умолчанию `off`. Discovery, ручная проверка польского контента/AI-feedback, founder dogfooding и внешний concierge-тест остаются открытыми; технический deploy не считается прохождением этих продуктовых gates.

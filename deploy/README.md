@@ -91,5 +91,7 @@ Tutorlaing volume is included.
 - Runtime containers: tutorlaing and n8n-mcp-projects-1
 - Persistent app volume: tutorlaing_tutorlaing-data
 - AI: Gemini enabled, model gemini-3.5-flash, consent v2 required
+- Adaptive drills: enabled; production smoke passed for 5 items / 5 types
+- Reminder scheduler: enabled; user mode defaults to off, Europe/Warsaw quiet hours
 - Old n8n, Google MCP and Twenty CRM containers/volumes: removed
 - Management bridge is intentionally retained until direct SSH is stable
