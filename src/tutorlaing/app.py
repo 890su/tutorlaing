@@ -6,22 +6,39 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from .ai import AIClient, AIError, GeminiClient, ResponseAnalysis
+from .ai import (
+    AIClient,
+    AIError,
+    DrillEvaluation,
+    DrillItem,
+    GeminiClient,
+    ResponseAnalysis,
+)
 from .config import Settings
 from .content import Scenario, load_scenarios
 from .engine import (
     evaluate_response,
+    normalize,
     review_due_at,
     review_interval_days,
     select_bottleneck,
 )
+from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
 from .telegram_api import TelegramAPI, TelegramError
+from .ui import card, progress, route
 
 
 LOGGER = logging.getLogger(__name__)
 CONSENT_VERSION = 2
 LANGUAGE_LABELS = {"ru": "Русский", "uk": "Українська", "en": "English", "pl": "Polski"}
+REMINDER_LABELS = {
+    "off": "выключены",
+    "gentle": "мягкие",
+    "normal": "обычные",
+    "intensive": "интенсивные",
+    "aggressive": "агрессивные",
+}
 
 
 class TutorlaingBot:
@@ -51,18 +68,27 @@ class TutorlaingBot:
         return allowed is None or chat_id in allowed
 
     def home(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
         due_count = len(self.storage.pending_reviews(chat_id))
-        review_label = (
-            f"🔁 Повторения ({due_count})" if due_count else "🔁 Проверить повторения"
-        )
+        reminder_label = REMINDER_LABELS.get(str(user["reminder_mode"]), "выключены")
+        if due_count:
+            primary = [{"text": f"↻ Повторить сейчас · {due_count}", "callback_data": "reviews:list"}]
+        else:
+            primary = [{"text": "▶ Начать ситуацию", "callback_data": "scenarios:list"}]
         self.telegram.send_message(
             chat_id,
-            "Что тренируем сегодня? Выберите ближайшую реальную ситуацию.",
+            card(
+                "Polski w praktyce",
+                f"Сегодня: повторов {due_count}\nНапоминания: {reminder_label}\n\nВыберите следующий шаг.",
+            ),
             [
-                [{"text": "🎯 Выбрать ситуацию", "callback_data": "scenarios:list"}],
-                [{"text": review_label, "callback_data": "reviews:list"}],
-                [{"text": "⚙️ Языки и настройки", "callback_data": "settings"}],
-                [{"text": "🔒 Данные и приватность", "callback_data": "privacy"}],
+                primary,
+                [
+                    {"text": "🧩 Закрепить", "callback_data": "drill:start"},
+                    {"text": "↻ Повторы", "callback_data": "reviews:list"},
+                ],
+                [{"text": f"🔔 Напоминания · {reminder_label}", "callback_data": "reminders"}],
+                [{"text": "⚙ Настройки", "callback_data": "settings"}],
             ],
         )
 
@@ -104,6 +130,8 @@ class TutorlaingBot:
                 [{"text": "📝 Язык объяснений", "callback_data": "settings:instruction"}],
                 [{"text": "🌐 Язык перевода", "callback_data": "settings:translation"}],
                 [{"text": "🎯 Изучаемый язык", "callback_data": "settings:target"}],
+                [{"text": "🔔 Напоминания", "callback_data": "reminders"}],
+                [{"text": "🔒 Данные и приватность", "callback_data": "privacy"}],
                 [{"text": "← Назад", "callback_data": "home"}],
             ],
         )
@@ -121,6 +149,43 @@ class TutorlaingBot:
         ]
         keyboard.append([{"text": "← К настройкам", "callback_data": "settings"}])
         self.telegram.send_message(chat_id, heading, keyboard)
+
+    def show_reminders(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        mode = str(user["reminder_mode"])
+        descriptions = {
+            "off": "Бот пишет только после ваших действий.",
+            "gentle": "До одного напоминания в день.",
+            "normal": "До двух: утром и вечером.",
+            "intensive": "До четырёх заданий в течение дня.",
+            "aggressive": "До шести микро-заданий с 08:00 до 22:00.",
+        }
+        paused = user["reminder_paused_until"]
+        pause_text = f"\nПауза действует до {paused}." if paused else ""
+        keyboard = []
+        for value, label in REMINDER_LABELS.items():
+            marker = "✓ " if value == mode else ""
+            keyboard.append(
+                [{"text": marker + label.capitalize(), "callback_data": f"reminder:set:{value}"}]
+            )
+        if mode != "off":
+            keyboard.append([{"text": "⏸ Пауза до завтра", "callback_data": "reminder:pause"}])
+        keyboard.append([{"text": "← Назад", "callback_data": "home"}])
+        self.telegram.send_message(
+            chat_id,
+            card(
+                "Напоминания",
+                f"Сейчас: {REMINDER_LABELS.get(mode, mode)}\n{descriptions.get(mode, '')}{pause_text}\n\n"
+                "Все режимы соблюдают тихие часы 22:00–08:00 (Europe/Warsaw).",
+            ),
+            keyboard,
+        )
+
+    def set_reminder_mode(self, chat_id: int, mode: str) -> None:
+        user = self.storage.get_user(chat_id)
+        next_at = next_reminder_at(mode, timezone_name=str(user["timezone"]))
+        self.storage.set_reminder_mode(chat_id, mode, next_at)
+        self.show_reminders(chat_id)
 
     def show_scenarios(self, chat_id: int) -> None:
         keyboard = [
@@ -181,6 +246,9 @@ class TutorlaingBot:
         if not scenario:
             self.telegram.send_message(chat_id, "Этот сценарий не найден.")
             return
+        current_user = self.storage.get_user(chat_id)
+        if current_user["current_drill"]:
+            self.storage.abandon_drill(str(current_user["current_drill"]), chat_id)
         self.storage.start_session(chat_id, scenario_id)
         description = self._instruction_text(
             chat_id,
@@ -189,9 +257,11 @@ class TutorlaingBot:
         )
         self.telegram.send_message(
             chat_id,
-            f"{scenario.title_ru} · {scenario.title_pl}\n\n"
-            f"{description}\n\n"
-            "Отвечайте по-польски. Ошибаться можно: сейчас важнее выполнить задачу.",
+            card(
+                f"{scenario.title_pl} · {scenario.title_ru}",
+                f"{description}\n\nОтвечайте по-польски. Ошибка здесь — материал для следующего шага.",
+                "СИТУАЦИЯ",
+            ),
         )
         self.send_scenario_step(chat_id, scenario, 0)
 
@@ -202,8 +272,9 @@ class TutorlaingBot:
         instruction = self._instruction_text(chat_id, step.context_ru, "scenario-step")
         self.telegram.send_message(
             chat_id,
-            f"Собеседник: {step.interlocutor_pl}\n\n"
-            f"Ваша задача: {instruction}",
+            f"{progress('Ситуация', step_index + 1, len(scenario.steps))}\n\n"
+            f"СОБЕСЕДНИК\n{step.interlocutor_pl}\n\n"
+            f"ВАША ЗАДАЧА\n{instruction}",
             [
                 [{"text": "💡 Подсказка", "callback_data": "hint"}],
                 [
@@ -387,7 +458,11 @@ class TutorlaingBot:
         block_label = self._instruction_text(chat_id, "Полезный блок:", "practice-label")
         self.telegram.send_message(
             chat_id,
-            f"{explanation}\n\n{block_label}\n{step.target_chunk}\n\n{instruction}",
+            card(
+                "Фраза для тренировки",
+                f"{explanation}\n\n{block_label}\n{step.target_chunk}\n\n{instruction}",
+                "ФРАЗА",
+            ),
             [[{"text": "Пропустить тренировку", "callback_data": "practice:skip"}]],
         )
 
@@ -459,8 +534,12 @@ class TutorlaingBot:
         )
         self.telegram.send_message(
             chat_id,
-            f"Сессия завершена. Проверка назначена через {interval} дн.\n\n"
-            "Когда примените польский в реальной ситуации, отметьте результат:",
+            card(
+                "Маршрут пройден",
+                f"Проверка назначена через {interval} дн.\n\n"
+                "Когда примените польский в реальной ситуации, отметьте результат:",
+                "ПОВТОР",
+            ),
             [
                 [
                     {
@@ -478,6 +557,7 @@ class TutorlaingBot:
                         "callback_data": f"outcome:{session_id}:failed",
                     }
                 ],
+                [{"text": "🧩 Закрепить эту фразу", "callback_data": "drill:start"}],
                 [{"text": "Выбрать ещё ситуацию", "callback_data": "scenarios:list"}],
             ],
         )
@@ -772,6 +852,324 @@ class TutorlaingBot:
             f"🌐 Перевод задания:\n{translated}" if translated else "Перевод сейчас недоступен.",
         )
 
+    @staticmethod
+    def _drill_item_from_row(row: Any) -> DrillItem:
+        return DrillItem.from_dict(
+            {
+                "type": row["item_type"],
+                "skill": row["skill"],
+                "prompt": row["prompt"],
+                "context": row["context"],
+                "options": json.loads(row["options_json"]),
+                "correct_answer": row["correct_answer"],
+                "accepted_answers": json.loads(row["accepted_answers_json"]),
+                "explanation": row["explanation"],
+                "hint": row["hint"],
+                "difficulty": row["difficulty"],
+            }
+        )
+
+    def start_drill(self, chat_id: int) -> None:
+        active = self.storage.active_drill(chat_id)
+        if active is not None:
+            self.send_drill_item(chat_id, str(active["id"]))
+            return
+        current = self.storage.get_user(chat_id)
+        if current["stage"] in {"scenario", "practice", "review"}:
+            self.telegram.send_message(
+                chat_id,
+                card(
+                    "Сначала закончите текущий шаг",
+                    "Ответьте на последнее задание. Закрепление появится сразу после сценария.",
+                ),
+            )
+            return
+        source = self.storage.latest_ai_analysis(chat_id)
+        if source is None:
+            self.telegram.send_message(
+                chat_id,
+                card(
+                    "Сначала нужна фраза",
+                    "Пройдите одну ситуацию. После ответа я соберу закрепление именно по вашему материалу.",
+                ),
+                [[{"text": "▶ Выбрать ситуацию", "callback_data": "scenarios:list"}], [{"text": "← Назад", "callback_data": "home"}]],
+            )
+            return
+        if self.ai is None:
+            self.telegram.send_message(chat_id, "Закрепление временно недоступно: AI выключен.")
+            return
+        analysis = ResponseAnalysis.from_dict(json.loads(source["result_json"]))
+        material = {
+            "learner_response": str(source["source_text"]),
+            "natural_response": analysis.natural_response,
+            "meaning_gaps": analysis.meaning_gaps,
+            "corrections": analysis.critical_corrections,
+            "optional_improvements": analysis.optional_improvements,
+            "grammar_chunks": [chunk.text for chunk in analysis.grammar_chunks],
+            "scenario_id": source["scenario_id"],
+        }
+        user = self.storage.get_user(chat_id)
+        self.telegram.send_message(
+            chat_id,
+            card("Закрепление", "Собираю 5 разных заданий по вашей последней фразе…", "ЗАКРЕПЛЕНИЕ"),
+        )
+        try:
+            pack = self.ai.generate_drill_pack(
+                material,
+                str(user["instruction_language"]),
+                str(user["target_language"]),
+            )
+        except AIError:
+            LOGGER.exception("AI drill generation failed")
+            self.storage.event(chat_id, "ai_fallback_used", {"operation": "drill_generation"})
+            self.telegram.send_message(
+                chat_id,
+                "Не удалось собрать задания. Основные сценарии и повторы продолжают работать.",
+                [[{"text": "Попробовать ещё раз", "callback_data": "drill:start"}], [{"text": "← В меню", "callback_data": "home"}]],
+            )
+            return
+        drill_id = self.storage.start_drill(
+            chat_id,
+            int(source["id"]),
+            pack.title,
+            pack.focus,
+            [item.to_dict() for item in pack.items],
+        )
+        self.send_drill_item(chat_id, drill_id)
+
+    def send_drill_item(self, chat_id: int, drill_id: str) -> None:
+        session = self.storage.drill_session(drill_id, chat_id)
+        index = int(session["current_index"])
+        row = self.storage.drill_item(drill_id, index)
+        item = self._drill_item_from_row(row)
+        if row["status"] == "answered":
+            self.telegram.send_message(
+                chat_id,
+                card("Ответ уже сохранён", "Продолжите к следующему заданию."),
+                [[{"text": "Дальше →", "callback_data": f"drill:next:{drill_id}"}]],
+            )
+            return
+        body = []
+        if item.context:
+            body.append(item.context)
+        body.append(item.prompt)
+        keyboard: list[list[dict[str, str]]] = []
+        if item.options:
+            labels = ("A", "B", "C", "D")
+            for option_index, option in enumerate(item.options):
+                keyboard.append(
+                    [
+                        {
+                            "text": f"{labels[option_index]} · {option}"[:60],
+                            "callback_data": f"drill:answer:{row['id']}:{option_index}",
+                        }
+                    ]
+                )
+        else:
+            body.append("Напишите ответ одним сообщением.")
+        keyboard.append(
+            [
+                {"text": "Подсказка", "callback_data": f"drill:hint:{row['id']}"},
+                {"text": "Пропустить", "callback_data": f"drill:skip:{row['id']}"},
+            ]
+        )
+        keyboard.append([{"text": "Закончить", "callback_data": "drill:stop"}])
+        self.telegram.send_message(
+            chat_id,
+            f"{progress('Закрепление', index + 1, int(session['total_items']))}\n\n"
+            + "\n\n".join(body),
+            keyboard,
+        )
+
+    def _evaluate_drill_response(
+        self, chat_id: int, item: DrillItem, response: str
+    ) -> DrillEvaluation:
+        if item.options:
+            correct = normalize(response) == normalize(item.correct_answer)
+            return DrillEvaluation(
+                correct=correct,
+                score=1.0 if correct else 0.0,
+                feedback="Форма выбрана верно." if correct else "Эта форма не подходит к контексту.",
+                corrected_answer=item.correct_answer,
+            )
+        user = self.storage.get_user(chat_id)
+        if self.ai is not None:
+            try:
+                return self.ai.evaluate_drill_answer(
+                    item,
+                    response,
+                    str(user["instruction_language"]),
+                    str(user["target_language"]),
+                )
+            except AIError:
+                LOGGER.exception("AI drill answer evaluation failed")
+                self.storage.event(chat_id, "ai_fallback_used", {"operation": "drill_evaluation"})
+        accepted = {normalize(value) for value in item.accepted_answers}
+        correct = normalize(response) in accepted
+        return DrillEvaluation(
+            correct=correct,
+            score=1.0 if correct else 0.0,
+            feedback="Ответ совпал с допустимым вариантом." if correct else "AI-проверка недоступна; показан образец.",
+            corrected_answer=item.correct_answer,
+        )
+
+    def answer_drill(self, chat_id: int, item_id: int, response: str) -> None:
+        user = self.storage.get_user(chat_id)
+        drill_id = user["current_drill"]
+        if user["stage"] != "drill" or not drill_id:
+            self.telegram.send_message(chat_id, "Это задание уже закрыто.")
+            return
+        session = self.storage.drill_session(str(drill_id), chat_id)
+        row = self.storage.drill_item(str(drill_id), int(session["current_index"]))
+        if int(row["id"]) != item_id or row["status"] != "pending":
+            self.telegram.send_message(chat_id, "Ответ уже учтён. Продолжите текущее задание.")
+            return
+        item = self._drill_item_from_row(row)
+        evaluation = self._evaluate_drill_response(chat_id, item, response)
+        self.storage.answer_drill_item(item_id, response, evaluation.score)
+        title = "ПОЛУЧИЛОСЬ" if evaluation.correct else "ПОПРАВИТЬ"
+        body = [evaluation.feedback]
+        if not evaluation.correct and evaluation.corrected_answer:
+            body.append(f"Верный вариант: {evaluation.corrected_answer}")
+        if item.explanation:
+            body.append(f"Почему: {item.explanation}")
+        self.telegram.send_message(
+            chat_id,
+            card(title, "\n\n".join(body)),
+            [[{"text": "Дальше →", "callback_data": f"drill:next:{drill_id}"}]],
+        )
+        self.storage.event(
+            chat_id,
+            "drill_item_answered",
+            {"drill_id": drill_id, "item_type": item.type, "score": evaluation.score},
+        )
+
+    def advance_drill(self, chat_id: int, drill_id: str) -> None:
+        user = self.storage.get_user(chat_id)
+        if user["stage"] != "drill" or str(user["current_drill"] or "") != drill_id:
+            self.home(chat_id)
+            return
+        if self.storage.advance_drill(drill_id, chat_id):
+            self.send_drill_item(chat_id, drill_id)
+            return
+        session = self.storage.drill_session(drill_id, chat_id)
+        correct = int(session["correct_count"])
+        total = int(session["total_items"])
+        self.telegram.send_message(
+            chat_id,
+            card(
+                "Закрепление завершено",
+                f"Результат: {correct} из {total}.\n\nСледующий шаг — применить форму в ситуации или вернуться к ней позже.",
+                "ЗАКРЕПЛЕНИЕ",
+            )
+            + "\n\n"
+            + route("ПОВТОР"),
+            [
+                [{"text": "▶ Новая ситуация", "callback_data": "scenarios:list"}],
+                [{"text": "↻ Повторы", "callback_data": "reviews:list"}],
+                [{"text": "← В меню", "callback_data": "home"}],
+            ],
+        )
+
+    def handle_drill_text(self, chat_id: int, text: str, user: Any) -> None:
+        drill_id = str(user["current_drill"])
+        session = self.storage.drill_session(drill_id, chat_id)
+        row = self.storage.drill_item(drill_id, int(session["current_index"]))
+        item = self._drill_item_from_row(row)
+        if item.options:
+            self.telegram.send_message(chat_id, "Выберите один из вариантов кнопкой.")
+            return
+        self.answer_drill(chat_id, int(row["id"]), text)
+
+    def answer_drill_choice(self, chat_id: int, item_id: int, option_index: int) -> None:
+        user = self.storage.get_user(chat_id)
+        drill_id = user["current_drill"]
+        if user["stage"] != "drill" or not drill_id:
+            self.telegram.send_message(chat_id, "Это задание уже закрыто.")
+            return
+        session = self.storage.drill_session(str(drill_id), chat_id)
+        row = self.storage.drill_item(str(drill_id), int(session["current_index"]))
+        item = self._drill_item_from_row(row)
+        if int(row["id"]) != item_id or not 0 <= option_index < len(item.options):
+            self.telegram.send_message(chat_id, "Вариант больше недоступен.")
+            return
+        self.answer_drill(chat_id, item_id, item.options[option_index])
+
+    def show_drill_hint(self, chat_id: int, item_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        drill_id = user["current_drill"]
+        if user["stage"] != "drill" or not drill_id:
+            return
+        session = self.storage.drill_session(str(drill_id), chat_id)
+        row = self.storage.drill_item(str(drill_id), int(session["current_index"]))
+        if int(row["id"]) != item_id:
+            return
+        item = self._drill_item_from_row(row)
+        self.storage.event(chat_id, "drill_hint_used", {"item_id": item_id})
+        self.telegram.send_message(chat_id, card("Подсказка", item.hint or "Посмотрите на контекст и согласование слов."))
+
+    def skip_drill_item(self, chat_id: int, item_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        drill_id = user["current_drill"]
+        if user["stage"] != "drill" or not drill_id:
+            return
+        session = self.storage.drill_session(str(drill_id), chat_id)
+        row = self.storage.drill_item(str(drill_id), int(session["current_index"]))
+        if int(row["id"]) != item_id or row["status"] != "pending":
+            return
+        item = self._drill_item_from_row(row)
+        self.storage.answer_drill_item(item_id, "[skipped]", 0.0)
+        self.telegram.send_message(
+            chat_id,
+            card("Пропущено", f"Верный вариант: {item.correct_answer}\n\nПочему: {item.explanation}"),
+            [[{"text": "Дальше →", "callback_data": f"drill:next:{drill_id}"}]],
+        )
+
+    def stop_drill(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        if user["current_drill"]:
+            self.storage.abandon_drill(str(user["current_drill"]), chat_id)
+        self.telegram.send_message(
+            chat_id,
+            card("Закрепление остановлено", "Прогресс этой короткой сессии закрыт."),
+            [[{"text": "← В меню", "callback_data": "home"}]],
+        )
+
+    def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
+        due = self.storage.pending_reviews(chat_id)
+        if due:
+            self.telegram.send_message(
+                chat_id,
+                card("Пора вернуть фразу", "Есть материал, который лучше повторить сейчас.", "ПОВТОР"),
+                [
+                    [{"text": "↻ Начать повтор", "callback_data": "reviews:list"}],
+                    [
+                        {"text": "⏸ Пауза до завтра", "callback_data": "reminder:pause"},
+                        {"text": "⚙ Режим", "callback_data": "reminders"},
+                    ],
+                ],
+            )
+            return
+        if mode in {"intensive", "aggressive"} and self.storage.latest_ai_analysis(chat_id):
+            self.telegram.send_message(
+                chat_id,
+                card("Микро-задание", "Сейчас будет одна конкретная форма из вашей практики."),
+                [[{"text": "⏸ Пауза до завтра", "callback_data": "reminder:pause"}]],
+            )
+            self.start_drill(chat_id)
+            return
+        self.telegram.send_message(
+            chat_id,
+            card("3 минуты польского", "Закрепите последнюю полезную фразу, пока она не ушла из памяти."),
+            [
+                [{"text": "🧩 Начать", "callback_data": "drill:start"}],
+                [
+                    {"text": "⏸ Пауза до завтра", "callback_data": "reminder:pause"},
+                    {"text": "⚙ Режим", "callback_data": "reminders"},
+                ],
+            ],
+        )
+
     def show_privacy(self, chat_id: int) -> None:
         self.telegram.send_message(
             chat_id,
@@ -829,6 +1227,12 @@ class TutorlaingBot:
         if command == "/settings":
             self.show_settings(chat_id)
             return
+        if command == "/reminders":
+            self.show_reminders(chat_id)
+            return
+        if command == "/drill":
+            self.start_drill(chat_id)
+            return
         if command == "/grammar":
             fragment = text.strip()[len(command) :].strip()
             if fragment:
@@ -852,6 +1256,8 @@ class TutorlaingBot:
             self.handle_practice_response(chat_id, text, user)
         elif stage == "review":
             self.handle_review_response(chat_id, text, user)
+        elif stage == "drill":
+            self.handle_drill_text(chat_id, text, user)
         else:
             self.home(chat_id)
 
@@ -883,6 +1289,32 @@ class TutorlaingBot:
             self.home(chat_id)
         elif data == "settings":
             self.show_settings(chat_id)
+        elif data == "reminders":
+            self.show_reminders(chat_id)
+        elif data.startswith("reminder:set:"):
+            self.set_reminder_mode(chat_id, data.rsplit(":", 1)[1])
+        elif data == "reminder:pause":
+            current = self.storage.get_user(chat_id)
+            until = pause_until_tomorrow(timezone_name=str(current["timezone"]))
+            self.storage.pause_reminders(chat_id, until)
+            self.telegram.send_message(
+                chat_id,
+                card("Пауза включена", "До завтра новых напоминаний не будет."),
+                [[{"text": "← В меню", "callback_data": "home"}]],
+            )
+        elif data == "drill:start":
+            self.start_drill(chat_id)
+        elif data.startswith("drill:answer:"):
+            _, _, item_id, option_index = data.split(":", 3)
+            self.answer_drill_choice(chat_id, int(item_id), int(option_index))
+        elif data.startswith("drill:hint:"):
+            self.show_drill_hint(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("drill:skip:"):
+            self.skip_drill_item(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("drill:next:"):
+            self.advance_drill(chat_id, data.split(":", 2)[2])
+        elif data == "drill:stop":
+            self.stop_drill(chat_id)
         elif data.startswith("settings:set:"):
             _, _, kind, language = data.split(":", 3)
             field = {
@@ -1040,6 +1472,8 @@ class TutorlaingBot:
                         {"command": "review", "description": "Повторения на сегодня"},
                         {"command": "review_now", "description": "Повторить сейчас"},
                         {"command": "settings", "description": "Языки и настройки"},
+                        {"command": "drill", "description": "Закрепить материал"},
+                        {"command": "reminders", "description": "Настроить напоминания"},
                         {"command": "grammar", "description": "Объяснить фрагмент"},
                         {"command": "privacy", "description": "Как хранятся данные"},
                         {"command": "delete_me", "description": "Удалить мои данные"},

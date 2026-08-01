@@ -74,6 +74,31 @@ class StorageTests(unittest.TestCase):
         self.storage.complete_update(123)
         self.assertFalse(self.storage.claim_update(123))
 
+    def test_drill_state_survives_item_transitions(self) -> None:
+        self.storage.ensure_user(88, "Learner")
+        self.storage.accept_consent(88, 2)
+        item = {
+            "type": "free_recall",
+            "skill": "chunk",
+            "prompt": "Odpowiedz",
+            "context": "Od kiedy?",
+            "options": [],
+            "correct_answer": "Od dwóch dni",
+            "accepted_answers": ["Od dwóch dni"],
+            "explanation": "Poprawnie",
+            "hint": "Od…",
+            "difficulty": 1,
+        }
+        drill_id = self.storage.start_drill(88, None, "Test", "Chunk", [item, item])
+        first = self.storage.drill_item(drill_id, 0)
+        self.storage.answer_drill_item(int(first["id"]), "Od dwóch dni", 1.0)
+        self.assertTrue(self.storage.advance_drill(drill_id, 88))
+        second = self.storage.drill_item(drill_id, 1)
+        self.storage.answer_drill_item(int(second["id"]), "Od dwóch dni", 1.0)
+        self.assertFalse(self.storage.advance_drill(drill_id, 88))
+        self.assertEqual("completed", self.storage.drill_session(drill_id)["status"])
+        self.assertEqual("idle", self.storage.get_user(88)["stage"])
+
 
 if __name__ == "__main__":
     unittest.main()

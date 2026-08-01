@@ -7,6 +7,7 @@ import threading
 from .app import TutorlaingBot
 from .config import Settings
 from .health import start_health_server
+from .reminders import ReminderScheduler
 from .storage import Storage
 
 
@@ -19,6 +20,10 @@ def main() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     storage = Storage(settings.data_dir / "tutorlaing.sqlite3")
     bot = TutorlaingBot(settings, storage)
+    reminder_scheduler = ReminderScheduler(
+        bot, storage, interval=settings.reminder_scan_seconds
+    )
+    reminder_scheduler.start()
     webhook_mode = bool(settings.telegram_webhook_url)
     health_server, _ = start_health_server(
         storage,
@@ -43,6 +48,7 @@ def main() -> None:
         else:
             bot.run_polling()
     finally:
+        reminder_scheduler.stop()
         health_server.server_close()
         storage.close()
 

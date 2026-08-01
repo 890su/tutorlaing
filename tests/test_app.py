@@ -3,7 +3,14 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from tutorlaing.ai import Alternative, GrammarChunk, ResponseAnalysis
+from tutorlaing.ai import (
+    Alternative,
+    DrillEvaluation,
+    DrillItem,
+    DrillPack,
+    GrammarChunk,
+    ResponseAnalysis,
+)
 from tutorlaing.app import TutorlaingBot
 from tutorlaing.config import Settings
 from tutorlaing.storage import Storage
@@ -61,6 +68,23 @@ class FakeAI:
             "contrast_example": "od dnia / przez dwa dni",
             "common_error": "Не использовать *od dwa dni.",
         }
+
+    def generate_drill_pack(self, *_args, **_kwargs) -> DrillPack:
+        return DrillPack(
+            title="Формы в аптеке",
+            focus="Длительность и описание симптома",
+            items=(
+                DrillItem("choose_form", "case", "Выберите форму", "Od ___ dni", ("dwóch", "dwa", "dwoma"), "dwóch", ("dwóch",), "После od нужен родительный.", "Спросите: от скольких?", 1),
+                DrillItem("fill_ending", "ending", "Вставьте окончание", "Nie mam gorączk__", (), "Nie mam gorączki", ("Nie mam gorączki",), "Родительный после nie mam.", "Форма: gorączki", 1),
+                DrillItem("transform", "number", "Скажите о двух симптомах", "Boli mnie gardło", (), "Bolą mnie gardło i głowa", ("Bolą mnie gardło i głowa",), "Два подлежащих требуют bolą.", "Boli → bolą", 2),
+                DrillItem("meaning_choice", "meaning", "Выберите смысл", "Od dwóch dni", ("в течение двух дней", "через два дня"), "в течение двух дней", ("в течение двух дней",), "Od отмечает начало длительности.", "Это началось раньше.", 1),
+                DrillItem("free_recall", "chunk", "Ответьте фармацевту", "Od kiedy?", (), "Od dwóch dni", ("Od dwóch dni", "Od dwóch dni boli mnie gardło"), "Короткий ответ достаточен.", "Начните с Od…", 2),
+            ),
+        )
+
+    def evaluate_drill_answer(self, item, response, *_args, **_kwargs) -> DrillEvaluation:
+        correct = response in item.accepted_answers
+        return DrillEvaluation(correct, 1.0 if correct else 0.0, "Проверено.", item.correct_answer)
 
 
 class AppFlowTests(unittest.TestCase):
@@ -166,6 +190,35 @@ class AppFlowTests(unittest.TestCase):
         self.assertIn("Od dwóch dni boli mnie gardło", self.telegram.messages[-1]["text"])
         bot.explain_grammar(chat_id, int(analysis["id"]), "0")
         self.assertIn("родительного падежа", self.telegram.messages[-1]["text"])
+
+    def test_contextual_drill_can_answer_choice_and_free_recall(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 12
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        bot.handle_text(chat_id, "Learner", "Od dwóch dni. Nie mam gorączki.")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło od dwóch dni.")
+        bot.start_drill(chat_id)
+        session = self.storage.active_drill(chat_id)
+        self.assertIsNotNone(session)
+        first = self.storage.drill_item(session["id"], 0)
+        bot.answer_drill_choice(chat_id, int(first["id"]), 0)
+        self.assertIn("ПОЛУЧИЛОСЬ", self.telegram.messages[-1]["text"])
+        bot.advance_drill(chat_id, session["id"])
+        second = self.storage.drill_item(session["id"], 1)
+        bot.answer_drill(chat_id, int(second["id"]), "Nie mam gorączki")
+        self.assertIn("ПОЛУЧИЛОСЬ", self.telegram.messages[-1]["text"])
+
+    def test_reminder_mode_is_configurable(self) -> None:
+        chat_id = 13
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+        self.bot.handle_callback(chat_id, "Learner", "cb", "reminder:set:aggressive")
+        user = self.storage.get_user(chat_id)
+        self.assertEqual("aggressive", user["reminder_mode"])
+        self.assertIsNotNone(user["reminder_next_at"])
 
 
 if __name__ == "__main__":

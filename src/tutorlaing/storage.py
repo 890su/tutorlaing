@@ -119,12 +119,49 @@ class Storage:
             completed_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS drill_sessions (
+            id TEXT PRIMARY KEY,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            source_analysis_id INTEGER,
+            title TEXT NOT NULL,
+            focus TEXT NOT NULL,
+            status TEXT NOT NULL,
+            current_index INTEGER NOT NULL DEFAULT 0,
+            total_items INTEGER NOT NULL,
+            correct_count INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS drill_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            drill_session_id TEXT NOT NULL REFERENCES drill_sessions(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            item_type TEXT NOT NULL,
+            skill TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            context TEXT NOT NULL,
+            options_json TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            accepted_answers_json TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            hint TEXT NOT NULL,
+            difficulty INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            user_answer TEXT,
+            score REAL,
+            answered_at TEXT,
+            UNIQUE(drill_session_id, position)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_reviews_due
             ON reviews(chat_id, status, due_at);
         CREATE INDEX IF NOT EXISTS idx_responses_session
             ON responses(session_id, phase, step_index);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
             ON ai_analyses(chat_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_drill_sessions_chat
+            ON drill_sessions(chat_id, status, started_at DESC);
         """
         with self._lock, self._connection:
             self._connection.executescript(schema)
@@ -137,6 +174,16 @@ class Storage:
             )
             self._ensure_column(
                 "users", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+            self._ensure_column("users", "current_drill", "TEXT")
+            self._ensure_column(
+                "users", "reminder_mode", "TEXT NOT NULL DEFAULT 'off'"
+            )
+            self._ensure_column("users", "reminder_next_at", "TEXT")
+            self._ensure_column("users", "reminder_paused_until", "TEXT")
+            self._ensure_column("users", "last_reminder_at", "TEXT")
+            self._ensure_column(
+                "users", "timezone", "TEXT NOT NULL DEFAULT 'Europe/Warsaw'"
             )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
@@ -204,6 +251,7 @@ class Storage:
             "current_step",
             "current_session",
             "current_review",
+            "current_drill",
         }
         invalid = set(values) - allowed
         if invalid:
@@ -370,6 +418,185 @@ class Storage:
             self._connection.execute(
                 "DELETE FROM telegram_updates WHERE update_id = ? AND status = 'processing'",
                 (update_id,),
+            )
+
+    def start_drill(
+        self,
+        chat_id: int,
+        source_analysis_id: int | None,
+        title: str,
+        focus: str,
+        items: list[dict[str, Any]],
+    ) -> str:
+        drill_id = str(uuid.uuid4())
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE chat_id = ? AND status = 'active'",
+                (now, chat_id),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO drill_sessions(
+                    id, chat_id, source_analysis_id, title, focus, status,
+                    total_items, started_at
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (drill_id, chat_id, source_analysis_id, title, focus, len(items), now),
+            )
+            for position, item in enumerate(items):
+                self._connection.execute(
+                    """
+                    INSERT INTO drill_items(
+                        drill_session_id, position, item_type, skill, prompt,
+                        context, options_json, correct_answer,
+                        accepted_answers_json, explanation, hint, difficulty
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        drill_id,
+                        position,
+                        item["type"],
+                        item["skill"],
+                        item["prompt"],
+                        item["context"],
+                        json.dumps(item.get("options", []), ensure_ascii=False),
+                        item["correct_answer"],
+                        json.dumps(item.get("accepted_answers", []), ensure_ascii=False),
+                        item["explanation"],
+                        item["hint"],
+                        int(item["difficulty"]),
+                    ),
+                )
+        self.set_user_state(chat_id, stage="drill", current_drill=drill_id)
+        self.event(chat_id, "drill_started", {"drill_id": drill_id, "items": len(items)})
+        return drill_id
+
+    def drill_session(self, drill_id: str, chat_id: int | None = None) -> sqlite3.Row:
+        query = "SELECT * FROM drill_sessions WHERE id = ?"
+        parameters: tuple[Any, ...] = (drill_id,)
+        if chat_id is not None:
+            query += " AND chat_id = ?"
+            parameters = (drill_id, chat_id)
+        with self._lock:
+            row = self._connection.execute(query, parameters).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown drill: {drill_id}")
+        return row
+
+    def active_drill(self, chat_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT * FROM drill_sessions WHERE chat_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1",
+                (chat_id,),
+            ).fetchone()
+
+    def drill_item(self, drill_id: str, position: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM drill_items WHERE drill_session_id = ? AND position = ?",
+                (drill_id, position),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown drill item: {drill_id}/{position}")
+        return row
+
+    def answer_drill_item(self, item_id: int, answer: str, score: float) -> None:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT drill_session_id, status FROM drill_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                raise KeyError(f"Drill item unavailable: {item_id}")
+            self._connection.execute(
+                "UPDATE drill_items SET status = 'answered', user_answer = ?, score = ?, answered_at = ? WHERE id = ?",
+                (answer, score, utc_now(), item_id),
+            )
+            if score >= 0.6:
+                self._connection.execute(
+                    "UPDATE drill_sessions SET correct_count = correct_count + 1 WHERE id = ?",
+                    (row["drill_session_id"],),
+                )
+
+    def advance_drill(self, drill_id: str, chat_id: int) -> bool:
+        session = self.drill_session(drill_id, chat_id)
+        next_index = int(session["current_index"]) + 1
+        if next_index >= int(session["total_items"]):
+            with self._lock, self._connection:
+                self._connection.execute(
+                    "UPDATE drill_sessions SET status = 'completed', completed_at = ? WHERE id = ?",
+                    (utc_now(), drill_id),
+                )
+            self.set_user_state(chat_id, stage="idle", current_drill=None)
+            self.event(chat_id, "drill_completed", {"drill_id": drill_id})
+            return False
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE drill_sessions SET current_index = ? WHERE id = ?",
+                (next_index, drill_id),
+            )
+        return True
+
+    def abandon_drill(self, drill_id: str, chat_id: int) -> None:
+        self.drill_session(drill_id, chat_id)
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE id = ? AND status = 'active'",
+                (utc_now(), drill_id),
+            )
+        self.set_user_state(chat_id, stage="idle", current_drill=None)
+        self.event(chat_id, "drill_abandoned", {"drill_id": drill_id})
+
+    def set_reminder_mode(
+        self, chat_id: int, mode: str, next_at: datetime | None
+    ) -> None:
+        if mode not in {"off", "gentle", "normal", "intensive", "aggressive"}:
+            raise ValueError(f"Unsupported reminder mode: {mode}")
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE users SET reminder_mode = ?, reminder_next_at = ?,
+                    reminder_paused_until = NULL, updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (mode, next_at.isoformat() if next_at else None, utc_now(), chat_id),
+            )
+        self.event(chat_id, "reminder_mode_changed", {"mode": mode})
+
+    def pause_reminders(self, chat_id: int, until: datetime) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET reminder_paused_until = ?, updated_at = ? WHERE chat_id = ?",
+                (until.isoformat(), utc_now(), chat_id),
+            )
+        self.event(chat_id, "reminders_paused", {"until": until.isoformat()})
+
+    def due_reminder_users(self, now: datetime) -> list[sqlite3.Row]:
+        current = now.isoformat()
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT * FROM users
+                    WHERE consent_version >= 2
+                      AND reminder_mode != 'off'
+                      AND reminder_next_at IS NOT NULL
+                      AND reminder_next_at <= ?
+                      AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
+                      AND stage = 'idle'
+                    ORDER BY reminder_next_at ASC
+                    """,
+                    (current, current),
+                ).fetchall()
+            )
+
+    def reserve_next_reminder(
+        self, chat_id: int, sent_at: datetime, next_at: datetime
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET last_reminder_at = ?, reminder_next_at = ? WHERE chat_id = ?",
+                (sent_at.isoformat(), next_at.isoformat(), chat_id),
             )
 
     def scenario_scores(self, session_id: str) -> list[tuple[int, float]]:

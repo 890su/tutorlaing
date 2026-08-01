@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from tutorlaing.ai import GeminiClient
+from tutorlaing.ai import DrillPack, GeminiClient
 from tutorlaing.content import load_scenarios
 
 
@@ -50,6 +50,31 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(1.0, analysis.score)
         self.assertEqual("od dwóch dni", analysis.grammar_chunks[0].text)
         self.assertEqual("gemini-3.5-flash", analysis.model)
+
+    def test_drill_pack_requires_variety_and_active_recall(self) -> None:
+        base = {
+            "skill": "case",
+            "context": "W aptece",
+            "correct_answer": "dwóch",
+            "accepted_answers": ["dwóch"],
+            "explanation": "Po od używamy dopełniacza.",
+            "hint": "od ilu?",
+            "difficulty": 1,
+        }
+        data = {
+            "title": "Przypadki",
+            "focus": "od dwóch dni",
+            "items": [
+                {**base, "type": "choose_form", "prompt": "Od ___ dni", "options": ["dwóch", "dwa"]},
+                {**base, "type": "meaning_choice", "prompt": "Wybierz sens", "options": ["dwóch", "dwa"]},
+                {**base, "type": "fill_ending", "prompt": "Uzupełnij", "options": []},
+                {**base, "type": "transform", "prompt": "Zmień formę", "options": []},
+                {**base, "type": "free_recall", "prompt": "Odpowiedz", "options": []},
+            ],
+        }
+        pack = DrillPack.from_dict(data)
+        self.assertEqual(5, len(pack.items))
+        self.assertGreaterEqual(len({item.type for item in pack.items}), 3)
 
 
 if __name__ == "__main__":

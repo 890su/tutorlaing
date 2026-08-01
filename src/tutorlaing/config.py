@@ -45,6 +45,7 @@ class Settings:
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash"
     ai_timeout: int = 45
+    reminder_scan_seconds: int = 60
 
     @property
     def ai_enabled(self) -> bool:
@@ -89,4 +90,7 @@ class Settings:
             gemini_api_key=gemini_api_key,
             gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.5-flash").strip(),
             ai_timeout=max(10, min(120, int(os.environ.get("AI_TIMEOUT", "45")))),
+            reminder_scan_seconds=max(
+                15, min(3600, int(os.environ.get("REMINDER_SCAN_SECONDS", "60")))
+            ),
         )
