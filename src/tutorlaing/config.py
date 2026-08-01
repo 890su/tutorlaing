@@ -41,6 +41,14 @@ class Settings:
     log_level: str
     telegram_webhook_url: str
     telegram_webhook_secret: str
+    ai_provider: str = "none"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-pro"
+    ai_timeout: int = 45
+
+    @property
+    def ai_enabled(self) -> bool:
+        return self.ai_provider == "gemini" and bool(self.gemini_api_key)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -58,6 +66,13 @@ class Settings:
         if webhook_url and not webhook_url.startswith("https://"):
             raise ValueError("TELEGRAM_WEBHOOK_URL must use https://")
 
+        ai_provider = os.environ.get("AI_PROVIDER", "none").strip().lower()
+        if ai_provider not in {"none", "gemini"}:
+            raise ValueError("AI_PROVIDER must be 'none' or 'gemini'")
+        gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if ai_provider == "gemini" and not gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required when AI_PROVIDER=gemini")
+
         return cls(
             telegram_bot_token=token,
             allowed_chat_ids=_parse_chat_ids(
@@ -70,4 +85,8 @@ class Settings:
             log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
             telegram_webhook_url=webhook_url,
             telegram_webhook_secret=webhook_secret,
+            ai_provider=ai_provider,
+            gemini_api_key=gemini_api_key,
+            gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-pro").strip(),
+            ai_timeout=max(10, min(120, int(os.environ.get("AI_TIMEOUT", "45")))),
         )

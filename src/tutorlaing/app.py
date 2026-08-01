@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
 
+from .ai import AIClient, AIError, GeminiClient, ResponseAnalysis
 from .config import Settings
 from .content import Scenario, load_scenarios
 from .engine import (
@@ -18,6 +20,8 @@ from .telegram_api import TelegramAPI, TelegramError
 
 
 LOGGER = logging.getLogger(__name__)
+CONSENT_VERSION = 2
+LANGUAGE_LABELS = {"ru": "Русский", "uk": "Українська", "en": "English", "pl": "Polski"}
 
 
 class TutorlaingBot:
@@ -26,10 +30,18 @@ class TutorlaingBot:
         settings: Settings,
         storage: Storage,
         telegram: TelegramAPI | None = None,
+        ai: AIClient | None = None,
     ):
         self.settings = settings
         self.storage = storage
         self.telegram = telegram or TelegramAPI(settings.telegram_bot_token)
+        self.ai = ai
+        if self.ai is None and settings.ai_enabled:
+            self.ai = GeminiClient(
+                settings.gemini_api_key,
+                settings.gemini_model,
+                settings.ai_timeout,
+            )
         self.scenarios = load_scenarios()
         self.offset = 0
         self.running = True
@@ -49,18 +61,21 @@ class TutorlaingBot:
             [
                 [{"text": "🎯 Выбрать ситуацию", "callback_data": "scenarios:list"}],
                 [{"text": review_label, "callback_data": "reviews:list"}],
+                [{"text": "⚙️ Языки и настройки", "callback_data": "settings"}],
                 [{"text": "🔒 Данные и приватность", "callback_data": "privacy"}],
             ],
         )
 
     def start(self, chat_id: int, first_name: str = "") -> None:
         user = self.storage.ensure_user(chat_id, first_name)
-        if not user["consent_at"]:
+        if not self._has_current_consent(user):
             self.telegram.send_message(
                 chat_id,
                 "Cześć! Я помогу подготовиться к реальным разговорам на польском.\n\n"
-                "Alpha-версия сохраняет ваши текстовые ответы, результаты и Telegram ID. "
-                "Голос не записывается. Данные можно удалить командой /delete_me.\n\n"
+                "Alpha сохраняет ваши текстовые ответы, результаты и Telegram ID. "
+                "Для персональной проверки учебная реплика и минимальный контекст "
+                "отправляются Google Gemini. Имя и Telegram ID в AI не передаются. "
+                "Голос не записывается. Все данные можно удалить командой /delete_me.\n\n"
                 "Продолжить?",
                 [
                     [{"text": "✅ Согласен и начать", "callback_data": "consent:accept"}],
@@ -69,6 +84,43 @@ class TutorlaingBot:
             )
             return
         self.home(chat_id)
+
+    @staticmethod
+    def _has_current_consent(user: Any) -> bool:
+        return bool(user["consent_at"]) and int(user["consent_version"]) >= CONSENT_VERSION
+
+    def show_settings(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        instruction = LANGUAGE_LABELS.get(user["instruction_language"], user["instruction_language"])
+        translation = LANGUAGE_LABELS.get(user["translation_language"], user["translation_language"])
+        target = LANGUAGE_LABELS.get(user["target_language"], user["target_language"])
+        self.telegram.send_message(
+            chat_id,
+            "Языковые настройки:\n\n"
+            f"Задания и объяснения: {instruction}\n"
+            f"Перевод по запросу: {translation}\n"
+            f"Изучаемый язык: {target}",
+            [
+                [{"text": "📝 Язык объяснений", "callback_data": "settings:instruction"}],
+                [{"text": "🌐 Язык перевода", "callback_data": "settings:translation"}],
+                [{"text": "🎯 Изучаемый язык", "callback_data": "settings:target"}],
+                [{"text": "← Назад", "callback_data": "home"}],
+            ],
+        )
+
+    def show_language_choices(self, chat_id: int, kind: str) -> None:
+        if kind == "target":
+            choices = [("pl", "🇵🇱 Polski")]
+            heading = "Сейчас доступен один проверяемый курс:"
+        else:
+            choices = [("ru", "🇷🇺 Русский"), ("uk", "🇺🇦 Українська"), ("en", "🇬🇧 English")]
+            heading = "Выберите язык:"
+        keyboard = [
+            [{"text": label, "callback_data": f"settings:set:{kind}:{code}"}]
+            for code, label in choices
+        ]
+        keyboard.append([{"text": "← К настройкам", "callback_data": "settings"}])
+        self.telegram.send_message(chat_id, heading, keyboard)
 
     def show_scenarios(self, chat_id: int) -> None:
         keyboard = [
@@ -87,17 +139,58 @@ class TutorlaingBot:
             keyboard,
         )
 
+    def _translate_text(
+        self, chat_id: int, text: str, language: str, context: str
+    ) -> str | None:
+        if language == "ru" and context.startswith("instruction"):
+            return text
+        if self.ai is None:
+            return None
+        self.storage.event(chat_id, "translation_requested", {"language": language, "context": context})
+        try:
+            result = self.ai.translate(text, language, context)
+        except AIError:
+            LOGGER.exception("AI translation failed")
+            self.storage.event(chat_id, "ai_analysis_failed", {"operation": "translation"})
+            return None
+        translation = str(result.get("translation", "")).strip()
+        note = str(result.get("note", "")).strip()
+        stored = {"translation": translation, "note": note}
+        self.storage.add_ai_analysis(
+            chat_id=chat_id,
+            operation="translation",
+            source_text=text,
+            result=stored,
+            provider=self.ai.provider,
+            model=self.ai.model,
+            prompt_version="translation-v1",
+            latency_ms=0,
+        )
+        if note:
+            return f"{translation}\n\n💬 {note}"
+        return translation
+
+    def _instruction_text(self, chat_id: int, text: str, context: str) -> str:
+        user = self.storage.get_user(chat_id)
+        language = str(user["instruction_language"])
+        translated = self._translate_text(chat_id, text, language, f"instruction:{context}")
+        return translated or text
+
     def begin_scenario(self, chat_id: int, scenario_id: str) -> None:
         scenario = self.scenarios.get(scenario_id)
         if not scenario:
             self.telegram.send_message(chat_id, "Этот сценарий не найден.")
             return
         self.storage.start_session(chat_id, scenario_id)
+        description = self._instruction_text(
+            chat_id,
+            f"Цель: {scenario.objective_ru}\nСитуация: {scenario.opening_ru}",
+            "scenario-opening",
+        )
         self.telegram.send_message(
             chat_id,
             f"{scenario.title_ru} · {scenario.title_pl}\n\n"
-            f"Цель: {scenario.objective_ru}\n"
-            f"Ситуация: {scenario.opening_ru}\n\n"
+            f"{description}\n\n"
             "Отвечайте по-польски. Ошибаться можно: сейчас важнее выполнить задачу.",
         )
         self.send_scenario_step(chat_id, scenario, 0)
@@ -106,21 +199,135 @@ class TutorlaingBot:
         self, chat_id: int, scenario: Scenario, step_index: int
     ) -> None:
         step = scenario.steps[step_index]
+        instruction = self._instruction_text(chat_id, step.context_ru, "scenario-step")
         self.telegram.send_message(
             chat_id,
             f"Собеседник: {step.interlocutor_pl}\n\n"
-            f"Ваша задача: {step.context_ru}",
+            f"Ваша задача: {instruction}",
             [
                 [{"text": "💡 Подсказка", "callback_data": "hint"}],
+                [
+                    {
+                        "text": "🌐 Перевести задание",
+                        "callback_data": f"task:translate:{scenario.id}:{step_index}",
+                    }
+                ],
                 [{"text": "✖ Завершить", "callback_data": "cancel"}],
             ],
         )
+
+    def _evaluate_with_ai(
+        self,
+        chat_id: int,
+        user: Any,
+        scenario: Scenario,
+        step_index: int,
+        response: str,
+    ) -> tuple[Any, ResponseAnalysis | None, int | None]:
+        step = scenario.steps[step_index]
+        rule_evaluation = evaluate_response(step, response)
+        if self.ai is None:
+            return rule_evaluation, None, None
+        self.storage.event(
+            chat_id,
+            "ai_analysis_requested",
+            {"operation": "response_analysis", "scenario_id": scenario.id},
+        )
+        try:
+            analysis = self.ai.analyze_response(
+                step,
+                response,
+                str(user["instruction_language"]),
+                str(user["target_language"]),
+                rule_evaluation.score,
+            )
+        except AIError:
+            LOGGER.exception("AI response analysis failed")
+            self.storage.event(
+                chat_id,
+                "ai_fallback_used",
+                {"operation": "response_analysis", "scenario_id": scenario.id},
+            )
+            return rule_evaluation, None, None
+
+        score = analysis.score
+        if analysis.task_achieved and score < 0.6:
+            score = 0.6
+        elif not analysis.task_achieved and score >= 0.6:
+            score = 0.59
+        evaluation = type(rule_evaluation)(
+            score,
+            rule_evaluation.matched_groups,
+            rule_evaluation.missing_groups,
+        )
+        analysis_id = self.storage.add_ai_analysis(
+            chat_id=chat_id,
+            session_id=str(user["current_session"]) if user["current_session"] else None,
+            scenario_id=scenario.id,
+            step_index=step_index,
+            operation="response_analysis",
+            source_text=response,
+            result=analysis.to_dict(),
+            provider=analysis.provider,
+            model=analysis.model,
+            prompt_version=analysis.prompt_version,
+            latency_ms=analysis.latency_ms,
+            usage=analysis.usage,
+        )
+        self.storage.event(
+            chat_id,
+            "ai_analysis_completed",
+            {
+                "operation": "response_analysis",
+                "scenario_id": scenario.id,
+                "model": analysis.model,
+                "latency_ms": analysis.latency_ms,
+            },
+        )
+        return evaluation, analysis, analysis_id
+
+    def _send_ai_feedback(
+        self, chat_id: int, analysis: ResponseAnalysis, analysis_id: int
+    ) -> None:
+        lines = [
+            "✅ Задача выполнена." if analysis.task_achieved else "🟡 Смысл понятен не полностью.",
+        ]
+        if analysis.positive_feedback:
+            lines.append(f"\nЧто уже хорошо: {analysis.positive_feedback}")
+        if analysis.critical_corrections:
+            lines.append("\nВажно исправить:")
+            lines.extend(f"• {item}" for item in analysis.critical_corrections)
+        elif analysis.optional_improvements:
+            lines.append("\nМожно улучшить:")
+            lines.extend(f"• {item}" for item in analysis.optional_improvements)
+        if analysis.natural_response:
+            lines.append(f"\nЕстественнее:\n{analysis.natural_response}")
+        if analysis.pragmatic_note:
+            lines.append(f"\nУместность: {analysis.pragmatic_note}")
+        keyboard: list[list[dict[str, str]]] = []
+        if analysis.alternatives:
+            keyboard.append(
+                [{"text": "🔁 Другие варианты", "callback_data": f"ai:variants:{analysis_id}"}]
+            )
+        keyboard.extend(
+            [
+                [{"text": "📚 Объяснить грамматику", "callback_data": f"ai:grammar:{analysis_id}"}],
+                [{"text": "🌐 Перевести комментарий", "callback_data": f"ai:translate:{analysis_id}"}],
+                [
+                    {"text": "👍 Полезно", "callback_data": f"ai:rate:{analysis_id}:up"},
+                    {"text": "👎 Не полезно", "callback_data": f"ai:rate:{analysis_id}:down"},
+                ],
+            ]
+        )
+        self.telegram.send_message(chat_id, "".join(lines), keyboard)
 
     def handle_scenario_response(self, chat_id: int, text: str, user: Any) -> None:
         scenario = self.scenarios[user["current_scenario"]]
         step_index = int(user["current_step"])
         step = scenario.steps[step_index]
-        evaluation = evaluate_response(step, text)
+        evaluation, analysis, analysis_id = self._evaluate_with_ai(
+            chat_id, user, scenario, step_index, text
+        )
         session_id = str(user["current_session"])
         self.storage.add_response(
             session_id,
@@ -131,7 +338,9 @@ class TutorlaingBot:
             evaluation.missing_groups,
         )
 
-        if evaluation.successful:
+        if analysis is not None and analysis_id is not None:
+            self._send_ai_feedback(chat_id, analysis, analysis_id)
+        elif evaluation.successful:
             self.telegram.send_message(chat_id, "✅ Коммуникативная задача выполнена.")
         else:
             self.telegram.send_message(
@@ -164,14 +373,21 @@ class TutorlaingBot:
                 "reason": step.bottleneck_ru,
             },
         )
-        self.telegram.send_message(
+        explanation = self._instruction_text(
             chat_id,
-            "Главное узкое место этой попытки:\n"
-            f"— {step.bottleneck_ru}.\n\n"
-            "Полезный блок:\n"
-            f"{step.target_chunk}\n\n"
+            f"Главное узкое место этой попытки: {step.bottleneck_ru}.",
+            "practice-bottleneck",
+        )
+        instruction = self._instruction_text(
+            chat_id,
             "Напишите эту мысль по-польски своими словами. Можно использовать образец, "
             "но не копируйте его механически.",
+            "practice-instruction",
+        )
+        block_label = self._instruction_text(chat_id, "Полезный блок:", "practice-label")
+        self.telegram.send_message(
+            chat_id,
+            f"{explanation}\n\n{block_label}\n{step.target_chunk}\n\n{instruction}",
             [[{"text": "Пропустить тренировку", "callback_data": "practice:skip"}]],
         )
 
@@ -180,7 +396,9 @@ class TutorlaingBot:
         step_index = int(user["current_step"])
         step = scenario.steps[step_index]
         session_id = str(user["current_session"])
-        evaluation = evaluate_response(step, text)
+        evaluation, analysis, analysis_id = self._evaluate_with_ai(
+            chat_id, user, scenario, step_index, text
+        )
         self.storage.add_response(
             session_id,
             step_index,
@@ -190,20 +408,28 @@ class TutorlaingBot:
             evaluation.missing_groups,
         )
         attempts = self.storage.response_count(session_id, "practice")
+        if analysis is not None and analysis_id is not None:
+            self._send_ai_feedback(chat_id, analysis, analysis_id)
         if evaluation.successful:
             self.telegram.send_message(
                 chat_id, "✅ Получилось. Теперь важно проверить фразу позже без подсказки."
             )
             self.finish_session(chat_id, scenario, session_id, step_index, evaluation.score)
         elif attempts < 2:
+            retry = self._instruction_text(
+                chat_id, "Пока не хватает части смысла. Попробуйте ещё раз:", "practice-retry"
+            )
             self.telegram.send_message(
                 chat_id,
-                f"Пока не хватает части смысла. Попробуйте ещё раз:\n{step.target_chunk}",
+                f"{retry}\n{step.target_chunk}",
             )
         else:
+            fallback = self._instruction_text(
+                chat_id, "Зафиксируем образец и вернёмся к нему позже:", "practice-fallback"
+            )
             self.telegram.send_message(
                 chat_id,
-                f"Зафиксируем образец и вернёмся к нему позже:\n{step.target_chunk}",
+                f"{fallback}\n{step.target_chunk}",
             )
             self.finish_session(chat_id, scenario, session_id, step_index, evaluation.score)
 
@@ -295,6 +521,7 @@ class TutorlaingBot:
             return
         scenario = self.scenarios[review["scenario_id"]]
         step = scenario.steps[int(review["step_index"])]
+        step_index = int(review["step_index"])
         self.storage.set_user_state(
             chat_id,
             stage="review",
@@ -307,8 +534,16 @@ class TutorlaingBot:
             chat_id,
             f"Похожая ситуация, без образца.\n\n"
             f"Собеседник: {step.interlocutor_pl}\n\n"
-            f"Ваша задача: {step.context_ru}",
-            [[{"text": "Отменить", "callback_data": "cancel"}]],
+            f"Ваша задача: {self._instruction_text(chat_id, step.context_ru, 'review-step')}",
+            [
+                [
+                    {
+                        "text": "🌐 Перевести задание",
+                        "callback_data": f"task:translate:{scenario.id}:{step_index}",
+                    }
+                ],
+                [{"text": "Отменить", "callback_data": "cancel"}],
+            ],
         )
 
     def handle_review_response(self, chat_id: int, text: str, user: Any) -> None:
@@ -316,7 +551,11 @@ class TutorlaingBot:
         review = self.storage.get_review(review_id, chat_id)
         scenario = self.scenarios[review["scenario_id"]]
         step_index = int(review["step_index"])
-        evaluation = evaluate_response(scenario.steps[step_index], text)
+        evaluation, analysis, analysis_id = self._evaluate_with_ai(
+            chat_id, user, scenario, step_index, text
+        )
+        if analysis is not None and analysis_id is not None:
+            self._send_ai_feedback(chat_id, analysis, analysis_id)
         self.storage.complete_review(review_id, evaluation.score)
         self.storage.event(
             chat_id,
@@ -355,12 +594,192 @@ class TutorlaingBot:
             chat_id, message, [[{"text": "В меню", "callback_data": "home"}]]
         )
 
+    def _stored_analysis(self, chat_id: int, analysis_id: int) -> tuple[Any, ResponseAnalysis]:
+        row = self.storage.get_ai_analysis(analysis_id, chat_id)
+        return row, ResponseAnalysis.from_dict(json.loads(row["result_json"]))
+
+    def show_variants(self, chat_id: int, analysis_id: int) -> None:
+        _, analysis = self._stored_analysis(chat_id, analysis_id)
+        if not analysis.alternatives:
+            self.telegram.send_message(chat_id, "Для этого ответа дополнительных вариантов нет.")
+            return
+        labels = {"neutral": "Нейтрально", "formal": "Формально", "informal": "Разговорно"}
+        blocks = []
+        for item in analysis.alternatives:
+            heading = labels.get(item.register, item.register)
+            nuance = f"\n{item.nuance}" if item.nuance else ""
+            blocks.append(f"{heading}:\n{item.text}{nuance}")
+        self.telegram.send_message(chat_id, "\n\n".join(blocks))
+        self.storage.event(chat_id, "natural_variants_requested", {"analysis_id": analysis_id})
+
+    def show_grammar_choices(self, chat_id: int, analysis_id: int) -> None:
+        _, analysis = self._stored_analysis(chat_id, analysis_id)
+        keyboard = [
+            [{"text": "Всё предложение", "callback_data": f"ai:g:{analysis_id}:all"}]
+        ]
+        for index, chunk in enumerate(analysis.grammar_chunks):
+            label = f"{chunk.text} — {chunk.label}"[:55]
+            keyboard.append(
+                [{"text": label, "callback_data": f"ai:g:{analysis_id}:{index}"}]
+            )
+        keyboard.append(
+            [{"text": "Ввести свой фрагмент", "callback_data": f"ai:g:{analysis_id}:custom"}]
+        )
+        self.telegram.send_message(chat_id, "Что разобрать?", keyboard)
+
+    def explain_grammar(self, chat_id: int, analysis_id: int, selection: str) -> None:
+        if self.ai is None:
+            self.telegram.send_message(chat_id, "AI-разбор сейчас недоступен.")
+            return
+        row, analysis = self._stored_analysis(chat_id, analysis_id)
+        sentence = analysis.natural_response or str(row["source_text"])
+        if selection == "custom":
+            self.telegram.send_message(
+                chat_id,
+                "Ответьте командой /grammar и укажите фрагмент, например:\n"
+                "/grammar od dwóch dni",
+            )
+            return
+        if selection == "all":
+            fragment = sentence
+        else:
+            try:
+                fragment = analysis.grammar_chunks[int(selection)].text
+            except (ValueError, IndexError):
+                self.telegram.send_message(chat_id, "Этот фрагмент больше недоступен.")
+                return
+        user = self.storage.get_user(chat_id)
+        try:
+            result = self.ai.explain_grammar(
+                sentence,
+                fragment,
+                str(user["instruction_language"]),
+                str(user["target_language"]),
+            )
+        except AIError:
+            LOGGER.exception("AI grammar explanation failed")
+            self.telegram.send_message(chat_id, "Не удалось получить разбор. Попробуйте позже.")
+            self.storage.event(chat_id, "ai_analysis_failed", {"operation": "grammar"})
+            return
+        self.storage.add_ai_analysis(
+            chat_id=chat_id,
+            operation="grammar",
+            source_text=fragment,
+            result=result,
+            provider=self.ai.provider,
+            model=self.ai.model,
+            prompt_version="grammar-v1",
+            latency_ms=0,
+            session_id=row["session_id"],
+            scenario_id=row["scenario_id"],
+            step_index=row["step_index"],
+        )
+        parts = [f"📚 {fragment}", f"\nЗначение: {result['meaning']}", f"\n{result['explanation']}"]
+        if result["contrast_example"]:
+            parts.append(f"\nСравните: {result['contrast_example']}")
+        if result["common_error"]:
+            parts.append(f"\nЧастая ошибка: {result['common_error']}")
+        self.telegram.send_message(chat_id, "".join(parts))
+        self.storage.event(
+            chat_id,
+            "grammar_explanation_requested",
+            {"analysis_id": analysis_id, "selection": selection},
+        )
+
+    def explain_custom_grammar(self, chat_id: int, fragment: str) -> None:
+        row = self.storage.latest_ai_analysis(chat_id)
+        if row is None:
+            self.telegram.send_message(chat_id, "Сначала напишите ответ в учебном сценарии.")
+            return
+        analysis = ResponseAnalysis.from_dict(json.loads(row["result_json"]))
+        sentence = analysis.natural_response or str(row["source_text"])
+        if self.ai is None:
+            self.telegram.send_message(chat_id, "AI-разбор сейчас недоступен.")
+            return
+        user = self.storage.get_user(chat_id)
+        try:
+            result = self.ai.explain_grammar(
+                sentence,
+                fragment,
+                str(user["instruction_language"]),
+                str(user["target_language"]),
+            )
+        except AIError:
+            LOGGER.exception("Custom grammar explanation failed")
+            self.telegram.send_message(chat_id, "Не удалось получить разбор. Попробуйте позже.")
+            return
+        self.storage.add_ai_analysis(
+            chat_id=chat_id,
+            operation="grammar",
+            source_text=fragment,
+            result=result,
+            provider=self.ai.provider,
+            model=self.ai.model,
+            prompt_version="grammar-v1",
+            latency_ms=0,
+            session_id=row["session_id"],
+            scenario_id=row["scenario_id"],
+            step_index=row["step_index"],
+        )
+        self.storage.event(
+            chat_id,
+            "grammar_explanation_requested",
+            {"analysis_id": int(row["id"]), "selection": "custom"},
+        )
+        self.telegram.send_message(
+            chat_id,
+            f"📚 {fragment}\n\nЗначение: {result['meaning']}\n\n"
+            f"{result['explanation']}\n\nСравните: {result['contrast_example']}"
+            + (f"\n\nЧастая ошибка: {result['common_error']}" if result["common_error"] else ""),
+        )
+
+    def translate_analysis(self, chat_id: int, analysis_id: int) -> None:
+        _, analysis = self._stored_analysis(chat_id, analysis_id)
+        source = "\n".join(
+            part
+            for part in [
+                analysis.positive_feedback,
+                *analysis.critical_corrections,
+                *analysis.optional_improvements,
+                analysis.natural_response,
+                analysis.pragmatic_note,
+                analysis.explanation,
+            ]
+            if part
+        )
+        user = self.storage.get_user(chat_id)
+        translated = self._translate_text(
+            chat_id, source, str(user["translation_language"]), "AI feedback"
+        )
+        self.telegram.send_message(
+            chat_id,
+            f"🌐 Перевод:\n{translated}" if translated else "Перевод сейчас недоступен.",
+        )
+
+    def translate_task(self, chat_id: int, scenario_id: str, step_index: int) -> None:
+        scenario = self.scenarios.get(scenario_id)
+        if scenario is None or not 0 <= step_index < len(scenario.steps):
+            self.telegram.send_message(chat_id, "Задание не найдено.")
+            return
+        step = scenario.steps[step_index]
+        source = f"{step.interlocutor_pl}\n{step.context_ru}"
+        user = self.storage.get_user(chat_id)
+        translated = self._translate_text(
+            chat_id, source, str(user["translation_language"]), "scenario task"
+        )
+        self.telegram.send_message(
+            chat_id,
+            f"🌐 Перевод задания:\n{translated}" if translated else "Перевод сейчас недоступен.",
+        )
+
     def show_privacy(self, chat_id: int) -> None:
         self.telegram.send_message(
             chat_id,
             "Alpha хранит Telegram ID, имя, текст ответов, оценки и расписание "
-            "повторений. Голос и контакты не собираются. Тексты не отправляются "
-            "в продуктовую аналитику или LLM.\n\n"
+            "повторений. Для проверки фразы её текст, текущая реплика и учебная "
+            "цель отправляются Google Gemini. Telegram ID, имя и история других "
+            "сценариев в AI не передаются. Голос и контакты не собираются. Полные "
+            "тексты не отправляются в продуктовую аналитику.\n\n"
             "Удалить все данные можно командой /delete_me.",
             [[{"text": "← Назад", "callback_data": "home"}]],
         )
@@ -391,11 +810,34 @@ class TutorlaingBot:
         if command in {"/start", "/menu"}:
             self.start(chat_id, first_name)
             return
-        if command == "/scenarios":
-            if user["consent_at"]:
-                self.show_scenarios(chat_id)
+        if command == "/privacy":
+            self.show_privacy(chat_id)
+            return
+        if command == "/delete_me":
+            self.telegram.send_message(
+                chat_id,
+                "Удалить профиль, ответы, AI-разборы и расписание? Это необратимо.",
+                [
+                    [{"text": "Да, удалить", "callback_data": "delete:confirm"}],
+                    [{"text": "Отмена", "callback_data": "home"}],
+                ],
+            )
+            return
+        if not self._has_current_consent(user):
+            self.start(chat_id, first_name)
+            return
+        if command == "/settings":
+            self.show_settings(chat_id)
+            return
+        if command == "/grammar":
+            fragment = text.strip()[len(command) :].strip()
+            if fragment:
+                self.explain_custom_grammar(chat_id, fragment)
             else:
-                self.start(chat_id, first_name)
+                self.telegram.send_message(chat_id, "Использование: /grammar <фрагмент>")
+            return
+        if command == "/scenarios":
+            self.show_scenarios(chat_id)
             return
         if command == "/review":
             self.show_reviews(chat_id)
@@ -403,23 +845,6 @@ class TutorlaingBot:
         if command == "/review_now":
             self.show_reviews(chat_id, include_future=True)
             return
-        if command == "/privacy":
-            self.show_privacy(chat_id)
-            return
-        if command == "/delete_me":
-            self.telegram.send_message(
-                chat_id,
-                "Удалить все ваши ответы, результаты и расписание? Это необратимо.",
-                [
-                    [{"text": "Да, удалить", "callback_data": "delete:confirm"}],
-                    [{"text": "Отмена", "callback_data": "home"}],
-                ],
-            )
-            return
-        if not user["consent_at"]:
-            self.start(chat_id, first_name)
-            return
-
         stage = user["stage"]
         if stage == "scenario":
             self.handle_scenario_response(chat_id, text, user)
@@ -443,17 +868,59 @@ class TutorlaingBot:
             LOGGER.warning("Could not acknowledge callback", exc_info=True)
 
         if data == "consent:accept":
-            self.storage.accept_consent(chat_id)
+            self.storage.accept_consent(chat_id, CONSENT_VERSION)
             self.home(chat_id)
+        elif data == "privacy":
+            self.show_privacy(chat_id)
+        elif data == "delete:confirm":
+            self.storage.delete_user(chat_id)
+            self.telegram.send_message(
+                chat_id, "Профиль, ответы и AI-разборы, связанные с Telegram ID, удалены."
+            )
+        elif not self._has_current_consent(user):
+            self.start(chat_id, first_name)
         elif data == "home":
             self.home(chat_id)
+        elif data == "settings":
+            self.show_settings(chat_id)
+        elif data.startswith("settings:set:"):
+            _, _, kind, language = data.split(":", 3)
+            field = {
+                "instruction": "instruction_language",
+                "translation": "translation_language",
+                "target": "target_language",
+            }.get(kind)
+            allowed = {"target": {"pl"}, "instruction": {"ru", "uk", "en"}, "translation": {"ru", "uk", "en"}}
+            if field and language in allowed.get(kind, set()):
+                self.storage.set_language(chat_id, field, language)
+                self.show_settings(chat_id)
+        elif data.startswith("settings:"):
+            self.show_language_choices(chat_id, data.split(":", 1)[1])
         elif data == "scenarios:list":
             self.show_scenarios(chat_id)
         elif data.startswith("scenario:"):
-            if user["consent_at"]:
-                self.begin_scenario(chat_id, data.split(":", 1)[1])
-            else:
-                self.start(chat_id, first_name)
+            self.begin_scenario(chat_id, data.split(":", 1)[1])
+        elif data.startswith("task:translate:"):
+            _, _, scenario_id, step_index = data.split(":", 3)
+            self.translate_task(chat_id, scenario_id, int(step_index))
+        elif data.startswith("ai:variants:"):
+            self.show_variants(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("ai:grammar:"):
+            self.show_grammar_choices(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("ai:g:"):
+            _, _, analysis_id, selection = data.split(":", 3)
+            self.explain_grammar(chat_id, int(analysis_id), selection)
+        elif data.startswith("ai:translate:"):
+            self.translate_analysis(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("ai:rate:"):
+            _, _, analysis_id, rating = data.split(":", 3)
+            if rating in {"up", "down"}:
+                self.storage.event(
+                    chat_id,
+                    "ai_feedback_rated",
+                    {"analysis_id": int(analysis_id), "rating": rating},
+                )
+                self.telegram.send_message(chat_id, "Спасибо, оценка сохранена.")
         elif data == "hint":
             current = self.storage.get_user(chat_id)
             if current["stage"] == "scenario":
@@ -464,7 +931,8 @@ class TutorlaingBot:
                     "hint_used",
                     {"scenario_id": scenario.id, "step_index": current["current_step"]},
                 )
-                self.telegram.send_message(chat_id, f"Подсказка: {step.hint_ru}")
+                hint = self._instruction_text(chat_id, step.hint_ru, "hint")
+                self.telegram.send_message(chat_id, f"Подсказка: {hint}")
         elif data == "practice:skip":
             current = self.storage.get_user(chat_id)
             if current["stage"] == "practice":
@@ -496,40 +964,43 @@ class TutorlaingBot:
                     "Спасибо. Реальный результат важнее количества пройденных уроков.",
                     [[{"text": "В меню", "callback_data": "home"}]],
                 )
-        elif data == "privacy":
-            self.show_privacy(chat_id)
-        elif data == "delete:confirm":
-            self.storage.delete_user(chat_id)
-            self.telegram.send_message(
-                chat_id, "Все связанные с вашим Telegram ID данные удалены."
-            )
         elif data == "cancel":
             self.cancel_activity(chat_id)
 
     def handle_update(self, update: dict[str, Any]) -> None:
-        if "message" in update:
-            message = update["message"]
-            text = message.get("text")
-            if not text:
-                self.telegram.send_message(
-                    int(message["chat"]["id"]),
-                    "В этой версии используйте текстовые ответы. Голос появится после проверки качества.",
-                )
-                return
-            chat_id = int(message["chat"]["id"])
-            first_name = str(message.get("from", {}).get("first_name", ""))
-            self.handle_text(chat_id, first_name, text)
-        elif "callback_query" in update:
-            callback = update["callback_query"]
-            message = callback.get("message")
-            if not message:
-                return
-            self.handle_callback(
-                int(message["chat"]["id"]),
-                str(callback.get("from", {}).get("first_name", "")),
-                str(callback["id"]),
-                str(callback.get("data", "")),
-            )
+        update_id = update.get("update_id")
+        if update_id is not None and not self.storage.claim_update(int(update_id)):
+            return
+        try:
+            if "message" in update:
+                message = update["message"]
+                text = message.get("text")
+                if not text:
+                    self.telegram.send_message(
+                        int(message["chat"]["id"]),
+                        "В этой версии используйте текстовые ответы. Голос появится после проверки качества.",
+                    )
+                else:
+                    chat_id = int(message["chat"]["id"])
+                    first_name = str(message.get("from", {}).get("first_name", ""))
+                    self.handle_text(chat_id, first_name, text)
+            elif "callback_query" in update:
+                callback = update["callback_query"]
+                message = callback.get("message")
+                if message:
+                    self.handle_callback(
+                        int(message["chat"]["id"]),
+                        str(callback.get("from", {}).get("first_name", "")),
+                        str(callback["id"]),
+                        str(callback.get("data", "")),
+                    )
+        except Exception:
+            if update_id is not None:
+                self.storage.release_update(int(update_id))
+            raise
+        else:
+            if update_id is not None:
+                self.storage.complete_update(int(update_id))
 
     def run_polling(self) -> None:
         LOGGER.info("Tutorlaing Telegram polling started")
@@ -568,6 +1039,8 @@ class TutorlaingBot:
                         {"command": "scenarios", "description": "Выбрать ситуацию"},
                         {"command": "review", "description": "Повторения на сегодня"},
                         {"command": "review_now", "description": "Повторить сейчас"},
+                        {"command": "settings", "description": "Языки и настройки"},
+                        {"command": "grammar", "description": "Объяснить фрагмент"},
                         {"command": "privacy", "description": "Как хранятся данные"},
                         {"command": "delete_me", "description": "Удалить мои данные"},
                     ]

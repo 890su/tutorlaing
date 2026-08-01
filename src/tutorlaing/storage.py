@@ -94,13 +94,60 @@ class Storage:
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS ai_analyses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            session_id TEXT,
+            scenario_id TEXT,
+            step_index INTEGER,
+            operation TEXT NOT NULL,
+            source_text TEXT NOT NULL,
+            result_json TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            latency_ms INTEGER NOT NULL,
+            usage_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS telegram_updates (
+            update_id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_reviews_due
             ON reviews(chat_id, status, due_at);
         CREATE INDEX IF NOT EXISTS idx_responses_session
             ON responses(session_id, phase, step_index);
+        CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
+            ON ai_analyses(chat_id, id DESC);
         """
         with self._lock, self._connection:
             self._connection.executescript(schema)
+            self._ensure_column("users", "consent_version", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(
+                "users", "instruction_language", "TEXT NOT NULL DEFAULT 'ru'"
+            )
+            self._ensure_column(
+                "users", "translation_language", "TEXT NOT NULL DEFAULT 'ru'"
+            )
+            self._ensure_column(
+                "users", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._connection.execute(f"PRAGMA table_info({table})")
+        }
+        if column not in columns:
+            self._connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
 
     def ensure_user(self, chat_id: int, first_name: str = "") -> sqlite3.Row:
         now = utc_now()
@@ -126,14 +173,29 @@ class Storage:
             raise KeyError(f"Unknown user: {chat_id}")
         return row
 
-    def accept_consent(self, chat_id: int) -> None:
+    def accept_consent(self, chat_id: int, version: int = 2) -> None:
         now = utc_now()
         with self._lock, self._connection:
             self._connection.execute(
-                "UPDATE users SET consent_at = ?, stage = 'idle', updated_at = ? WHERE chat_id = ?",
-                (now, now, chat_id),
+                "UPDATE users SET consent_at = ?, consent_version = ?, stage = 'idle', updated_at = ? WHERE chat_id = ?",
+                (now, version, now, chat_id),
             )
-        self.event(chat_id, "onboarding_completed")
+        self.event(chat_id, "onboarding_completed", {"consent_version": version})
+
+    def set_language(self, chat_id: int, field: str, language: str) -> None:
+        allowed = {
+            "instruction_language",
+            "translation_language",
+            "target_language",
+        }
+        if field not in allowed:
+            raise ValueError(f"Unsupported language field: {field}")
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"UPDATE users SET {field} = ?, updated_at = ? WHERE chat_id = ?",
+                (language, utc_now(), chat_id),
+            )
+        self.event(chat_id, "language_setting_changed", {"field": field, "value": language})
 
     def set_user_state(self, chat_id: int, **values: Any) -> None:
         allowed = {
@@ -202,9 +264,9 @@ class Storage:
         response_text: str,
         score: float,
         missing_groups: tuple[int, ...],
-    ) -> None:
+    ) -> int:
         with self._lock, self._connection:
-            self._connection.execute(
+            cursor = self._connection.execute(
                 """
                 INSERT INTO responses(
                     session_id, step_index, phase, response_text, score,
@@ -220,6 +282,94 @@ class Storage:
                     json.dumps(missing_groups),
                     utc_now(),
                 ),
+            )
+        return int(cursor.lastrowid)
+
+    def add_ai_analysis(
+        self,
+        chat_id: int,
+        operation: str,
+        source_text: str,
+        result: dict[str, Any],
+        provider: str,
+        model: str,
+        prompt_version: str,
+        latency_ms: int,
+        usage: dict[str, Any] | None = None,
+        status: str = "completed",
+        session_id: str | None = None,
+        scenario_id: str | None = None,
+        step_index: int | None = None,
+    ) -> int:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO ai_analyses(
+                    chat_id, session_id, scenario_id, step_index, operation,
+                    source_text, result_json, provider, model, prompt_version,
+                    latency_ms, usage_json, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chat_id,
+                    session_id,
+                    scenario_id,
+                    step_index,
+                    operation,
+                    source_text,
+                    json.dumps(result, ensure_ascii=False),
+                    provider,
+                    model,
+                    prompt_version,
+                    latency_ms,
+                    json.dumps(usage or {}, ensure_ascii=False),
+                    status,
+                    utc_now(),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def get_ai_analysis(self, analysis_id: int, chat_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM ai_analyses WHERE id = ? AND chat_id = ?",
+                (analysis_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown AI analysis: {analysis_id}")
+        return row
+
+    def latest_ai_analysis(self, chat_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self._connection.execute(
+                """
+                SELECT * FROM ai_analyses
+                WHERE chat_id = ? AND operation = 'response_analysis'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (chat_id,),
+            ).fetchone()
+
+    def claim_update(self, update_id: int) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "INSERT OR IGNORE INTO telegram_updates(update_id, status, created_at) VALUES (?, 'processing', ?)",
+                (update_id, utc_now()),
+            )
+        return cursor.rowcount == 1
+
+    def complete_update(self, update_id: int) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE telegram_updates SET status = 'completed', completed_at = ? WHERE update_id = ?",
+                (utc_now(), update_id),
+            )
+
+    def release_update(self, update_id: int) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "DELETE FROM telegram_updates WHERE update_id = ? AND status = 'processing'",
+                (update_id,),
             )
 
     def scenario_scores(self, session_id: str) -> list[tuple[int, float]]:

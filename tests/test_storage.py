@@ -47,6 +47,33 @@ class StorageTests(unittest.TestCase):
         self.assertEqual("abandoned", self.storage.session(first)["status"])
         self.assertEqual("active", self.storage.session(second)["status"])
 
+    def test_language_settings_and_ai_data_are_deleted_with_user(self) -> None:
+        self.storage.ensure_user(77, "Learner")
+        self.storage.accept_consent(77, 2)
+        self.storage.set_language(77, "instruction_language", "uk")
+        analysis_id = self.storage.add_ai_analysis(
+            chat_id=77,
+            operation="response_analysis",
+            source_text="Dzień dobry",
+            result={"task_achieved": True},
+            provider="gemini",
+            model="test-model",
+            prompt_version="test-v1",
+            latency_ms=12,
+        )
+        self.assertEqual("uk", self.storage.get_user(77)["instruction_language"])
+        self.assertEqual(analysis_id, self.storage.latest_ai_analysis(77)["id"])
+        self.storage.delete_user(77)
+        self.assertIsNone(self.storage.latest_ai_analysis(77))
+
+    def test_telegram_update_is_claimed_once_and_can_be_retried_after_failure(self) -> None:
+        self.assertTrue(self.storage.claim_update(123))
+        self.assertFalse(self.storage.claim_update(123))
+        self.storage.release_update(123)
+        self.assertTrue(self.storage.claim_update(123))
+        self.storage.complete_update(123)
+        self.assertFalse(self.storage.claim_update(123))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from tutorlaing.ai import Alternative, GrammarChunk, ResponseAnalysis
 from tutorlaing.app import TutorlaingBot
 from tutorlaing.config import Settings
 from tutorlaing.storage import Storage
@@ -23,6 +24,43 @@ class FakeTelegram:
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.callbacks.append(callback_id)
+
+
+class FakeAI:
+    provider = "gemini"
+    model = "fake-pro"
+
+    def analyze_response(self, *_args, **_kwargs) -> ResponseAnalysis:
+        return ResponseAnalysis(
+            task_achieved=True,
+            score=0.9,
+            confidence=0.95,
+            positive_feedback="Смысл полностью понятен.",
+            meaning_gaps=(),
+            critical_corrections=(),
+            optional_improvements=("Можно сделать фразу короче.",),
+            natural_response="Boli mnie gardło od dwóch dni.",
+            alternatives=(Alternative("Od dwóch dni boli mnie gardło.", "neutral", "Тот же смысл."),),
+            grammar_chunks=(GrammarChunk("od dwóch dni", "длительность"),),
+            pragmatic_note="Фраза уместна.",
+            explanation="Коммуникативная задача решена.",
+            provider=self.provider,
+            model=self.model,
+            prompt_version="test-v1",
+            latency_ms=10,
+            usage={"promptTokenCount": 12},
+        )
+
+    def translate(self, text: str, *_args, **_kwargs) -> dict[str, str]:
+        return {"translation": f"TRANSLATED: {text}", "note": ""}
+
+    def explain_grammar(self, *_args, **_kwargs) -> dict[str, str]:
+        return {
+            "meaning": "в течение двух дней",
+            "explanation": "Предлог od требует родительного падежа.",
+            "contrast_example": "od dnia / przez dwa dni",
+            "common_error": "Не использовать *od dwa dni.",
+        }
 
 
 class AppFlowTests(unittest.TestCase):
@@ -96,6 +134,38 @@ class AppFlowTests(unittest.TestCase):
         bot = TutorlaingBot(settings, self.storage, self.telegram)
         bot.handle_text(2, "Unknown", "/start")
         self.assertIn("закрытая alpha", self.telegram.messages[-1]["text"])
+
+    def test_existing_consent_requires_ai_disclosure_upgrade(self) -> None:
+        self.storage.ensure_user(8, "Existing")
+        self.storage.accept_consent(8, 1)
+        self.bot.start(8, "Existing")
+        self.assertIn("Google Gemini", self.telegram.messages[-1]["text"])
+
+    def test_language_setting_is_persisted(self) -> None:
+        self.storage.ensure_user(9, "Learner")
+        self.storage.accept_consent(9, 2)
+        self.bot.handle_callback(9, "Learner", "cb", "settings:set:instruction:uk")
+        self.assertEqual("uk", self.storage.get_user(9)["instruction_language"])
+
+    def test_ai_feedback_variants_and_grammar_are_available(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 11
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+
+        feedback = next(
+            message for message in reversed(self.telegram.messages) if "Естественнее" in message["text"]
+        )
+        self.assertIn("Boli mnie gardło od dwóch dni", feedback["text"])
+        analysis = self.storage.latest_ai_analysis(chat_id)
+        self.assertIsNotNone(analysis)
+
+        bot.show_variants(chat_id, int(analysis["id"]))
+        self.assertIn("Od dwóch dni boli mnie gardło", self.telegram.messages[-1]["text"])
+        bot.explain_grammar(chat_id, int(analysis["id"]), "0")
+        self.assertIn("родительного падежа", self.telegram.messages[-1]["text"])
 
 
 if __name__ == "__main__":
