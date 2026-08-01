@@ -50,10 +50,12 @@ n8n-mcp-projects-1 временно сохранён как management SSH bridg
 
 ## 2026-08-01 — Gemini-first hybrid analysis
 
-Первый AI provider — Gemini через собственный provider-agnostic gateway;
-качественная модель по умолчанию — `gemini-2.5-pro`. Рабочий ключ из защищённой
-серверной конфигурации Brainless проверен с production VM, но не переносится в
-Git или документацию. AI анализирует каждый содержательный ответ. Rule-based
+Первый AI provider — Gemini через собственный provider-agnostic gateway.
+Рабочая модель — `gemini-3.5-flash`: на имеющемся ключе она прошла полный
+structured-output smoke-test, тогда как Pro-модели имеют нулевую квоту без
+billing. Это эксплуатационное ограничение, а не оптимизация стоимости. Рабочий
+ключ из защищённой серверной конфигурации Brainless проверен с production VM,
+но не переносится в Git или документацию. AI анализирует каждый содержательный ответ. Rule-based
 оценка остаётся обязательным fallback при timeout, rate limit, ошибке provider
 или невалидной структуре результата.
 

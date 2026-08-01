@@ -219,7 +219,7 @@ class GeminiClient:
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-pro",
+        model: str = "gemini-3.5-flash",
         timeout: int = 45,
         opener: Callable[..., Any] = urllib.request.urlopen,
     ):

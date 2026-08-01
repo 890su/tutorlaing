@@ -43,7 +43,7 @@ class Settings:
     telegram_webhook_secret: str
     ai_provider: str = "none"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-pro"
+    gemini_model: str = "gemini-3.5-flash"
     ai_timeout: int = 45
 
     @property
@@ -87,6 +87,6 @@ class Settings:
             telegram_webhook_secret=webhook_secret,
             ai_provider=ai_provider,
             gemini_api_key=gemini_api_key,
-            gemini_model=os.environ.get("GEMINI_MODEL", "gemini-2.5-pro").strip(),
+            gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.5-flash").strip(),
             ai_timeout=max(10, min(120, int(os.environ.get("AI_TIMEOUT", "45")))),
         )

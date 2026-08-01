@@ -17,8 +17,9 @@ Telegram-first адаптивный тренер польского для ру�
 - Telegram Bot API через long polling.
 - 8 курируемых JSON-сценариев.
 - Rule-based диагностика коммуникативных смысловых групп.
-- Следующий утверждённый increment: Gemini-анализ каждого содержательного
-  ответа, naturalness/variants, перевод по запросу и grammar drill-down.
+- Gemini 3.5 Flash анализирует каждый содержательный ответ; доступны
+  naturalness/variants, перевод по запросу и grammar drill-down.
+- Rule-based диагностика остаётся fallback при отказе или невалидном ответе AI.
 - Языковая модель профиля разделяет instruction, translation и target language;
   первый target остаётся польским.
 - SQLite для пользователей, попыток, повторений, outcomes и событий.
@@ -28,6 +29,8 @@ Telegram-first адаптивный тренер польского для ру�
 - Production bot: @brnai_bot.
 - Telegram webhook: https://brain.sekond.pl/telegram/webhook.
 - Public health: https://brain.sekond.pl/health.
+- Production AI key хранится только в защищённом server-side `.env`; Pro-квота
+  старого ключа равна нулю, полный smoke-test проходит на gemini-3.5-flash.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

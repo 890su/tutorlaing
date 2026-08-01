@@ -45,7 +45,7 @@ class ConfigTests(unittest.TestCase):
         with patch.dict(os.environ, environment, clear=True):
             settings = Settings.from_env()
         self.assertTrue(settings.ai_enabled)
-        self.assertEqual("gemini-2.5-pro", settings.gemini_model)
+        self.assertEqual("gemini-3.5-flash", settings.gemini_model)
 
 
 if __name__ == "__main__":

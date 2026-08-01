@@ -49,7 +49,7 @@ class GeminiClientTests(unittest.TestCase):
         self.assertTrue(analysis.task_achieved)
         self.assertEqual(1.0, analysis.score)
         self.assertEqual("od dwóch dni", analysis.grammar_chunks[0].text)
-        self.assertEqual("gemini-2.5-pro", analysis.model)
+        self.assertEqual("gemini-3.5-flash", analysis.model)
 
 
 if __name__ == "__main__":

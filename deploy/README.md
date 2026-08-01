@@ -15,8 +15,8 @@ stores runtime data in a named Docker volume.
 ## Required secrets
 
 Create ~/services/tutorlaing/.env on the VM using .env.example as the schema.
-Required values are TELEGRAM_BOT_TOKEN and, for a closed alpha,
-TELEGRAM_ALLOWED_CHAT_IDS.
+Required values are TELEGRAM_BOT_TOKEN, AI_PROVIDER, GEMINI_API_KEY and
+GEMINI_MODEL and, for a closed alpha, TELEGRAM_ALLOWED_CHAT_IDS.
 Production compose sets TELEGRAM_WEBHOOK_URL. The random
 TELEGRAM_WEBHOOK_SECRET is stored in the server-only .env with mode 600.
 Local development may leave all webhook settings empty for polling.
@@ -30,6 +30,10 @@ protected .env:
     unset secret
 
 Do not paste the generated value into GitHub, documentation or command output.
+The Gemini key is copied directly from an existing protected server-side secret
+store into this `.env`; never print it. The verified model for the current key
+is `gemini-3.5-flash`. Pro models currently return a zero-quota response until
+billing is enabled.
 
 Port 5678 is mapped to the app because the existing Cloudflare route for
 brain.sekond.pl already targets localhost:5678. Port 8080 remains available
@@ -86,5 +90,6 @@ Tutorlaing volume is included.
 - Webhook: https://brain.sekond.pl/telegram/webhook
 - Runtime containers: tutorlaing and n8n-mcp-projects-1
 - Persistent app volume: tutorlaing_tutorlaing-data
+- AI: Gemini enabled, model gemini-3.5-flash, consent v2 required
 - Old n8n, Google MCP and Twenty CRM containers/volumes: removed
 - Management bridge is intentionally retained until direct SSH is stable
