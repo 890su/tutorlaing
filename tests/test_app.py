@@ -448,7 +448,9 @@ class AppFlowTests(unittest.TestCase):
             for button in row
         ]
         self.assertIn("Не помню", buttons)
-        self.assertIn("A · У меня болит горло", buttons)
+        self.assertTrue(
+            any(button.endswith("· У меня болит горло") for button in buttons)
+        )
 
         first = self.storage.drill_item(str(session["id"]), 0)
         bot.handle_callback(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
+from random import SystemRandom
 from typing import Any
 
-from .ai import AIClient, AIError, PhraseTranslation
+from .ai import AIClient, AIError, DrillPack, PhraseTranslation
 from .catalog import ScenarioCatalog
 from .content import Scenario
 from .contracts import (
@@ -29,6 +31,35 @@ LANGUAGE_LABELS = {
     "en": "English",
     "pl": "Polski",
 }
+
+
+def shuffle_flashcard_options(
+    pack: DrillPack, randomizer: SystemRandom | None = None
+) -> DrillPack:
+    """Randomize answer positions while keeping every flashcard unambiguous.
+
+    The AI is allowed to return options in any order and often puts the correct
+    one first.  We therefore enforce varied positions in application code.  A
+    five-card pack uses every A-D position at least once.
+    """
+
+    rng = randomizer or SystemRandom()
+    positions = list(range(4))
+    positions.extend(rng.randrange(4) for _ in range(max(0, len(pack.items) - 4)))
+    rng.shuffle(positions)
+
+    items = []
+    for item, correct_position in zip(pack.items, positions, strict=True):
+        options = list(item.options)
+        if item.type != "flashcard" or len(options) != 4:
+            items.append(item)
+            continue
+        options.remove(item.correct_answer)
+        rng.shuffle(options)
+        options.insert(correct_position, item.correct_answer)
+        items.append(replace(item, options=tuple(options)))
+
+    return replace(pack, items=tuple(items))
 
 
 class PracticeToolkit:
@@ -215,6 +246,9 @@ class PracticeToolkit:
                 surface="toolkit_error",
             )
             return
+
+        if mode == "cards":
+            pack = shuffle_flashcard_options(pack)
 
         if used_fallback:
             self.store.event(

@@ -1,6 +1,8 @@
 import unittest
+from random import Random
 
 from tutorlaing.toolkit_fallback import build_toolkit_fallback
+from tutorlaing.toolkit import shuffle_flashcard_options
 
 
 class ToolkitFallbackTests(unittest.TestCase):
@@ -21,6 +23,27 @@ class ToolkitFallbackTests(unittest.TestCase):
         self.assertTrue(all(item.type == "flashcard" for item in pack.items))
         self.assertTrue(all(len(item.options) == 4 for item in pack.items))
         self.assertTrue(all(item.correct_answer in item.options for item in pack.items))
+
+    def test_flashcard_correct_answers_use_all_button_positions(self) -> None:
+        material = {
+            "phrases": [
+                {
+                    "target_phrase": f"Phrase {index}",
+                    "practical_meaning_ru": f"Meaning {index}",
+                }
+                for index in range(6)
+            ]
+        }
+
+        pack = shuffle_flashcard_options(
+            build_toolkit_fallback("cards", material, "en"), Random(7)
+        )
+
+        correct_positions = [
+            item.options.index(item.correct_answer) for item in pack.items
+        ]
+        self.assertEqual({0, 1, 2, 3}, set(correct_positions))
+        self.assertTrue(all(len(set(item.options)) == 4 for item in pack.items))
 
     def test_topic_pack_preserves_variety_and_active_recall(self) -> None:
         material = {
