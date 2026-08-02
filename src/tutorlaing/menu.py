@@ -51,7 +51,7 @@ class LearnerMenu:
             review_label = f"{review_label} · {due_count}"
         scenarios = self.catalog.for_user(user)
         snapshot = self.progress_service.build(chat_id, scenarios)
-        resume = self._resume_action(user)
+        resume = self.resume_action(user)
         if resume:
             primary = [
                 {
@@ -425,7 +425,9 @@ class LearnerMenu:
         return str(self.store.get_user(chat_id)["instruction_language"])
 
     @staticmethod
-    def _resume_action(user: Any) -> str | None:
+    def resume_action(user: Any) -> str | None:
+        if user["toolkit_input_mode"]:
+            return "toolkit:translate:" + str(user["toolkit_input_mode"])
         stage = str(user["stage"])
         if stage in {"scenario", "practice", "review"}:
             return "task:resume"
@@ -433,6 +435,4 @@ class LearnerMenu:
             return "assignment:next"
         if stage == "drill" and user["current_drill"]:
             return "drill:resume"
-        if stage == "toolkit_input" and user["toolkit_input_mode"]:
-            return f"toolkit:translate:{user['toolkit_input_mode']}"
         return None

@@ -75,7 +75,7 @@ flowchart LR
 | `workspace.py` | Политика одной текущей карточки | `WorkspaceStore`, `TelegramGateway` | edit текущей либо один безопасный send |
 | `update_dispatcher.py` | Dedupe и нормализация Telegram update | `UpdateStore`, `TelegramGateway`, `UpdateTarget` | Один вызов text/callback handler; failed update доступен для retry |
 | `reminders.py` | Расчёт слотов и атомарная доставка | `ReminderStore`, `ReminderDelivery` | Не более одного assignment на зарезервированный slot |
-| `toolkit.py` | Карточки, перевод фраз и тематические тренировки | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Drill session либо одна карточка вариантов перевода |
+| `toolkit.py` | Независимый слой карточек, перевода и тематических тренировок | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Stateless-перевод либо временный drill с возвратом основной активности |
 | `app.py` | Composition root и orchestration учебной state machine | concrete adapters + application services | Переходы scenario/practice/review/drill |
 | `storage.py` | SQLite schema, migrations и транзакционные операции | вызовы портов | Персистентное состояние и audit events |
 
@@ -133,6 +133,9 @@ Protocols являются структурными: `Storage` и `TelegramAPI` 
    integration test через `TutorlaingBot`.
 8. Экран имеет один главный action; возврат к родителю называет назначение, а
    необратимое завершение активного flow требует подтверждения.
+9. Вспомогательный инструмент не уничтожает основной learner state: текстовый
+   tool хранит только свой input mode, drill-tool использует один сохраняемый
+   snapshot и атомарный restore. Вложенные drill-tools не создаются.
 
 ## Следующий технический backlog
 

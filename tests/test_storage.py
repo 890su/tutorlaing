@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tutorlaing.storage import Storage
@@ -147,6 +147,7 @@ class StorageTests(unittest.TestCase):
         self.storage.close()
         connection = sqlite3.connect(path)
         connection.execute("ALTER TABLE users DROP COLUMN toolkit_input_mode")
+        connection.execute("ALTER TABLE users DROP COLUMN suspended_activity_json")
         connection.execute("ALTER TABLE drill_sessions DROP COLUMN mode")
         connection.commit()
         connection.close()
@@ -164,7 +165,26 @@ class StorageTests(unittest.TestCase):
             )
         }
         self.assertIn("toolkit_input_mode", user_columns)
+        self.assertIn("suspended_activity_json", user_columns)
         self.assertIn("mode", drill_columns)
+
+    def test_phrase_input_temporarily_suppresses_scheduled_delivery(self) -> None:
+        chat_id = 89
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+        now = datetime.now(timezone.utc)
+        self.storage.set_reminder_mode(chat_id, "normal", now - timedelta(minutes=1))
+        self.storage.set_user_state(
+            chat_id,
+            stage="waiting",
+            pending_assignment='{"kind":"scenario"}',
+            toolkit_input_mode="to_target",
+        )
+
+        self.assertEqual([], self.storage.due_reminder_users(now))
+
+        self.storage.set_user_state(chat_id, toolkit_input_mode=None)
+        self.assertEqual(chat_id, self.storage.due_reminder_users(now)[0]["chat_id"])
 
 
 if __name__ == "__main__":

@@ -475,7 +475,10 @@ class AppFlowTests(unittest.TestCase):
         bot.handle_callback(
             chat_id, "Learner", "translate", "toolkit:translate:to_target"
         )
-        self.assertEqual("toolkit_input", self.storage.get_user(chat_id)["stage"])
+        self.assertEqual("idle", self.storage.get_user(chat_id)["stage"])
+        self.assertEqual(
+            "to_target", self.storage.get_user(chat_id)["toolkit_input_mode"]
+        )
         before = len(self.telegram.messages)
         bot.handle_text(chat_id, "Learner", "Можете говорить медленнее?")
 
@@ -514,6 +517,103 @@ class AppFlowTests(unittest.TestCase):
         }
         self.assertGreaterEqual(len(item_types), 3)
         self.assertIn("СЦЕНАРИЙ", self.telegram.messages[-1]["text"])
+
+    def test_phrase_tool_does_not_replace_an_active_scenario(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 28
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        before = self.storage.get_user(chat_id)
+        session_id = str(before["current_session"])
+
+        bot.handle_callback(
+            chat_id, "Learner", "translate", "toolkit:translate:to_target"
+        )
+        during = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", during["stage"])
+        self.assertEqual(session_id, during["current_session"])
+        self.assertEqual("to_target", during["toolkit_input_mode"])
+
+        bot.handle_text(chat_id, "Learner", "Можете говорить медленнее?")
+
+        after = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", after["stage"])
+        self.assertEqual(session_id, after["current_session"])
+        self.assertIsNone(after["toolkit_input_mode"])
+        self.assertEqual(0, self.storage.response_count(session_id, "scenario"))
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("task:resume", callbacks)
+
+    def test_toolkit_cards_restore_an_active_scenario_after_completion(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 29
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        scenario_session = str(self.storage.get_user(chat_id)["current_session"])
+
+        bot.handle_callback(chat_id, "Learner", "cards", "toolkit:start:cards")
+
+        overlay = self.storage.get_user(chat_id)
+        self.assertEqual("drill", overlay["stage"])
+        self.assertIsNotNone(overlay["suspended_activity_json"])
+        self.assertEqual("active", self.storage.session(scenario_session)["status"])
+
+        drill_id = str(overlay["current_drill"])
+        for _ in range(5):
+            session = self.storage.drill_session(drill_id, chat_id)
+            item = self.storage.drill_item(drill_id, int(session["current_index"]))
+            bot.handle_callback(
+                chat_id, "Learner", "skip", f"drill:skip:{item['id']}"
+            )
+            bot.handle_callback(
+                chat_id, "Learner", "next", f"drill:next:{drill_id}"
+            )
+
+        restored = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", restored["stage"])
+        self.assertEqual(scenario_session, restored["current_session"])
+        self.assertIsNone(restored["suspended_activity_json"])
+        self.assertEqual("active", self.storage.session(scenario_session)["status"])
+        self.assertEqual(
+            "task:resume", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
+        )
+
+    def test_toolkit_drill_can_temporarily_overlay_another_drill(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 30
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        pack = FakeAI().generate_drill_pack()
+        original_drill = self.storage.start_drill(
+            chat_id,
+            None,
+            pack.title,
+            pack.focus,
+            [item.to_dict() for item in pack.items],
+        )
+
+        bot.handle_callback(chat_id, "Learner", "cards", "toolkit:start:cards")
+
+        overlay_drill = str(self.storage.get_user(chat_id)["current_drill"])
+        self.assertNotEqual(original_drill, overlay_drill)
+        self.assertEqual("active", self.storage.drill_session(original_drill)["status"])
+        self.assertEqual("toolkit_cards", self.storage.drill_session(overlay_drill)["mode"])
+
+        bot.handle_callback(chat_id, "Learner", "stop", "drill:stop")
+
+        restored = self.storage.get_user(chat_id)
+        self.assertEqual("drill", restored["stage"])
+        self.assertEqual(original_drill, restored["current_drill"])
+        self.assertEqual(original_drill, self.storage.active_drill(chat_id)["id"])
+        self.assertEqual(
+            "drill:resume", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
+        )
 
     def test_home_has_one_recommended_action_without_duplicate_reviews(self) -> None:
         chat_id = 23

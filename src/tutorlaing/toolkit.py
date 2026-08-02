@@ -51,55 +51,61 @@ class PracticeToolkit:
 
     def show_menu(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
-        if user["stage"] == "toolkit_input":
-            self.store.set_user_state(chat_id, stage="idle", toolkit_input_mode=None)
+        if user["toolkit_input_mode"]:
+            values: dict[str, Any] = {"toolkit_input_mode": None}
+            if user["stage"] == "toolkit_input":
+                values["stage"] = "idle"
+            self.store.set_user_state(chat_id, **values)
+            user = self.store.get_user(chat_id)
         language = str(user["instruction_language"])
         target = LANGUAGE_LABELS.get(
             str(user["target_language"]), str(user["target_language"])
         )
+        keyboard: Keyboard = [
+            [
+                {
+                    "text": tr(language, "toolkit.my_material"),
+                    "callback_data": "drill:start",
+                }
+            ],
+            [
+                {
+                    "text": tr(language, "toolkit.cards"),
+                    "callback_data": "toolkit:start:cards",
+                }
+            ],
+            [
+                {
+                    "text": tr(
+                        language, "toolkit.translate_to_named", target=target
+                    ),
+                    "callback_data": "toolkit:translate:to_target",
+                }
+            ],
+            [
+                {
+                    "text": tr(
+                        language, "toolkit.translate_from_named", target=target
+                    ),
+                    "callback_data": "toolkit:translate:from_target",
+                },
+            ],
+            [
+                {
+                    "text": tr(language, "toolkit.topic"),
+                    "callback_data": "toolkit:topics",
+                }
+            ],
+            home_row(language),
+        ]
+        self._prepend_activity_return(keyboard, user, language)
         self.workspace.show(
             chat_id,
             card(
                 tr(language, "toolkit.title"),
                 tr(language, "toolkit.summary"),
             ),
-            [
-                [
-                    {
-                        "text": tr(language, "toolkit.my_material"),
-                        "callback_data": "drill:start",
-                    }
-                ],
-                [
-                    {
-                        "text": tr(language, "toolkit.cards"),
-                        "callback_data": "toolkit:start:cards",
-                    }
-                ],
-                [
-                    {
-                        "text": tr(
-                            language, "toolkit.translate_to_named", target=target
-                        ),
-                        "callback_data": "toolkit:translate:to_target",
-                    }
-                ],
-                [
-                    {
-                        "text": tr(
-                            language, "toolkit.translate_from_named", target=target
-                        ),
-                        "callback_data": "toolkit:translate:from_target",
-                    },
-                ],
-                [
-                    {
-                        "text": tr(language, "toolkit.topic"),
-                        "callback_data": "toolkit:topics",
-                    }
-                ],
-                home_row(language),
-            ],
+            keyboard,
             surface="toolkit",
         )
 
@@ -135,7 +141,7 @@ class PracticeToolkit:
         user = self.store.get_user(chat_id)
         language = str(user["instruction_language"])
         active = self.store.active_drill(chat_id)
-        if active is not None:
+        if active is not None and str(active["mode"]).startswith("toolkit_"):
             self.workspace.show(
                 chat_id,
                 card(
@@ -153,9 +159,6 @@ class PracticeToolkit:
                 ],
                 surface="toolkit_active",
             )
-            return
-        if user["stage"] not in {"idle", "new"}:
-            self._show_busy(chat_id, language)
             return
         if self.ai is None:
             self._show_ai_unavailable(chat_id, language)
@@ -210,6 +213,7 @@ class PracticeToolkit:
             )
             return
 
+        self.store.suspend_activity(chat_id)
         drill_id = self.store.start_drill(
             chat_id,
             None,
@@ -217,6 +221,7 @@ class PracticeToolkit:
             pack.focus,
             [item.to_dict() for item in pack.items],
             mode=f"toolkit_{mode}",
+            replace_active=False,
         )
         self.store.event(
             chat_id,
@@ -231,13 +236,6 @@ class PracticeToolkit:
             raise ValueError(f"Unsupported phrase mode: {mode}")
         user = self.store.get_user(chat_id)
         language = str(user["instruction_language"])
-        if self.store.active_drill(chat_id) is not None or user["stage"] not in {
-            "idle",
-            "new",
-            "toolkit_input",
-        }:
-            self._show_busy(chat_id, language)
-            return
         source_language, target_language = self._translation_direction(user, mode)
         if source_language == target_language:
             self.workspace.show(
@@ -258,8 +256,10 @@ class PracticeToolkit:
                 surface="toolkit_translation_conflict",
             )
             return
-        self.store.set_user_state(
-            chat_id, stage="toolkit_input", toolkit_input_mode=mode
+        self.store.set_user_state(chat_id, toolkit_input_mode=mode)
+        keyboard: Keyboard = [back_row(language, "toolkit", "toolkit")]
+        self._prepend_activity_return(
+            keyboard, user, language, cancel_phrase_input=True
         )
         self.workspace.show(
             chat_id,
@@ -272,9 +272,7 @@ class PracticeToolkit:
                     target=LANGUAGE_LABELS.get(target_language, target_language),
                 ),
             ),
-            [
-                back_row(language, "toolkit", "toolkit")
-            ],
+            keyboard,
             surface="toolkit_phrase_input",
         )
 
@@ -287,10 +285,14 @@ class PracticeToolkit:
             return
         phrase = text.strip()
         if not phrase or len(phrase) > 4000:
+            keyboard: Keyboard = [back_row(language, "toolkit", "toolkit")]
+            self._prepend_activity_return(
+                keyboard, user, language, cancel_phrase_input=True
+            )
             self.workspace.show(
                 chat_id,
                 tr(language, "toolkit.phrase_invalid"),
-                [back_row(language, "toolkit", "toolkit")],
+                keyboard,
                 force_new=True,
                 surface="toolkit_phrase_input",
             )
@@ -317,21 +319,25 @@ class PracticeToolkit:
                 "ai_fallback_used",
                 {"operation": "phrase_translation", "direction": mode},
             )
+            keyboard: Keyboard = [
+                [
+                    {
+                        "text": tr(language, "toolkit.retry"),
+                        "callback_data": f"toolkit:translate:{mode}",
+                    }
+                ],
+                back_row(language, "toolkit", "toolkit"),
+            ]
+            self._prepend_activity_return(
+                keyboard, user, language, cancel_phrase_input=True
+            )
             self.workspace.show(
                 chat_id,
                 card(
                     tr(language, "toolkit.error_title"),
                     tr(language, "toolkit.translation_error"),
                 ),
-                [
-                    [
-                        {
-                            "text": tr(language, "toolkit.retry"),
-                            "callback_data": f"toolkit:translate:{mode}",
-                        }
-                    ],
-                    back_row(language, "toolkit", "toolkit"),
-                ],
+                keyboard,
                 force_new=True,
                 surface="toolkit_error",
             )
@@ -348,7 +354,10 @@ class PracticeToolkit:
             prompt_version="phrase-translation-v1",
             latency_ms=0,
         )
-        self.store.set_user_state(chat_id, stage="idle", toolkit_input_mode=None)
+        values: dict[str, Any] = {"toolkit_input_mode": None}
+        if user["stage"] == "toolkit_input":
+            values["stage"] = "idle"
+        self.store.set_user_state(chat_id, **values)
         self.store.event(
             chat_id,
             "phrase_translated",
@@ -373,22 +382,26 @@ class PracticeToolkit:
                 tr(language, "toolkit.translation_note", note=result.usage_note)
             )
         swapped = "from_target" if mode == "to_target" else "to_target"
+        keyboard: Keyboard = [
+            [
+                {
+                    "text": tr(language, "toolkit.another_phrase"),
+                    "callback_data": f"toolkit:translate:{mode}",
+                },
+                {
+                    "text": tr(language, "toolkit.swap"),
+                    "callback_data": f"toolkit:translate:{swapped}",
+                },
+            ],
+            back_row(language, "toolkit", "toolkit"),
+        ]
+        self._prepend_activity_return(
+            keyboard, self.store.get_user(chat_id), language
+        )
         self.workspace.show(
             chat_id,
             card(tr(language, "toolkit.translation_result"), "\n\n".join(blocks)),
-            [
-                [
-                    {
-                        "text": tr(language, "toolkit.another_phrase"),
-                        "callback_data": f"toolkit:translate:{mode}",
-                    },
-                    {
-                        "text": tr(language, "toolkit.swap"),
-                        "callback_data": f"toolkit:translate:{swapped}",
-                    },
-                ],
-                back_row(language, "toolkit", "toolkit"),
-            ],
+            keyboard,
             force_new=True,
             surface="toolkit_translation_result",
         )
@@ -461,34 +474,55 @@ class PracticeToolkit:
             else scenario.title_pl
         )
 
-    def _show_busy(self, chat_id: int, language: str) -> None:
-        user = self.store.get_user(chat_id)
-        resume_callback = "drill:resume" if user["current_drill"] else "task:resume"
-        self.workspace.show(
-            chat_id,
-            card(
-                tr(language, "toolkit.busy_title"),
-                tr(language, "toolkit.busy_summary"),
-            ),
-            [
-                [
-                    {
-                        "text": tr(language, "action.resume_task"),
-                        "callback_data": resume_callback,
-                    }
-                ],
-                home_row(language),
-            ],
-            surface="toolkit_busy",
-        )
-
     def _show_ai_unavailable(self, chat_id: int, language: str) -> None:
+        user = self.store.get_user(chat_id)
+        keyboard: Keyboard = [back_row(language, "toolkit", "toolkit")]
+        self._prepend_activity_return(
+            keyboard,
+            user,
+            language,
+            cancel_phrase_input=bool(user["toolkit_input_mode"]),
+        )
         self.workspace.show(
             chat_id,
             card(
                 tr(language, "toolkit.error_title"),
                 tr(language, "toolkit.ai_unavailable"),
             ),
-            [back_row(language, "toolkit", "toolkit")],
+            keyboard,
             surface="toolkit_error",
         )
+
+    @staticmethod
+    def _resume_callback(user: Any) -> str | None:
+        stage = str(user["stage"])
+        if stage in {"scenario", "practice", "review"}:
+            return "task:resume"
+        if stage == "waiting" and user["pending_assignment"]:
+            return "assignment:next"
+        if stage == "drill" and user["current_drill"]:
+            return "drill:resume"
+        return None
+
+    @classmethod
+    def _prepend_activity_return(
+        cls,
+        keyboard: Keyboard,
+        user: Any,
+        language: str,
+        *,
+        cancel_phrase_input: bool = False,
+    ) -> None:
+        resume = cls._resume_callback(user)
+        if resume:
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": tr(language, "action.return_to_activity"),
+                        "callback_data": (
+                            "toolkit:resume" if cancel_phrase_input else resume
+                        ),
+                    }
+                ],
+            )

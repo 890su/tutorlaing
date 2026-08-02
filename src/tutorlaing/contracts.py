@@ -133,6 +133,8 @@ class ToolkitStore(Protocol):
 
     def set_user_state(self, chat_id: int, **values: Any) -> None: ...
 
+    def suspend_activity(self, chat_id: int) -> bool: ...
+
     def active_drill(self, chat_id: int) -> Any | None: ...
 
     def start_drill(
@@ -143,6 +145,7 @@ class ToolkitStore(Protocol):
         focus: str,
         items: list[dict[str, Any]],
         mode: str = "adaptive",
+        replace_active: bool = True,
     ) -> str: ...
 
     def add_ai_analysis(

@@ -13,6 +13,17 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+ACTIVITY_FIELDS = (
+    "stage",
+    "current_scenario",
+    "current_step",
+    "current_session",
+    "current_review",
+    "current_drill",
+    "pending_assignment",
+)
+
+
 class Storage:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -41,6 +52,7 @@ class Storage:
             current_review INTEGER,
             current_drill TEXT,
             toolkit_input_mode TEXT,
+            suspended_activity_json TEXT,
             pending_assignment TEXT,
             workspace_message_id INTEGER,
             consent_version INTEGER NOT NULL DEFAULT 0,
@@ -196,6 +208,7 @@ class Storage:
             )
             self._ensure_column("users", "current_drill", "TEXT")
             self._ensure_column("users", "toolkit_input_mode", "TEXT")
+            self._ensure_column("users", "suspended_activity_json", "TEXT")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column(
@@ -222,6 +235,9 @@ class Storage:
             )
             self._ensure_column(
                 "sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+            self._connection.execute(
+                "UPDATE users SET stage = 'idle' WHERE stage = 'toolkit_input'"
             )
             self._connection.execute(
                 "UPDATE ai_analyses SET target_language = 'pl' "
@@ -305,6 +321,7 @@ class Storage:
             "current_review",
             "current_drill",
             "toolkit_input_mode",
+            "suspended_activity_json",
             "pending_assignment",
             "workspace_message_id",
         }
@@ -318,6 +335,62 @@ class Storage:
             self._connection.execute(
                 f"UPDATE users SET {assignments} WHERE chat_id = ?", parameters
             )
+
+    def suspend_activity(self, chat_id: int) -> bool:
+        """Move the current learning activity aside for a temporary tool drill."""
+        with self._lock, self._connection:
+            user = self._connection.execute(
+                "SELECT * FROM users WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            if user is None:
+                raise KeyError(f"Unknown user: {chat_id}")
+            if user["suspended_activity_json"] or user["stage"] in {"idle", "new"}:
+                return False
+            snapshot = {field: user[field] for field in ACTIVITY_FIELDS}
+            self._connection.execute(
+                """
+                UPDATE users
+                SET stage = 'idle', current_scenario = NULL, current_step = 0,
+                    current_session = NULL, current_review = NULL,
+                    current_drill = NULL, pending_assignment = NULL,
+                    toolkit_input_mode = NULL, suspended_activity_json = ?,
+                    updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (json.dumps(snapshot, ensure_ascii=False), utc_now(), chat_id),
+            )
+        self.event(chat_id, "activity_suspended", {"stage": snapshot["stage"]})
+        return True
+
+    def restore_suspended_activity(self, chat_id: int) -> bool:
+        """Restore an activity after a temporary tool drill completes or stops."""
+        with self._lock, self._connection:
+            stage = self._restore_suspended_activity_locked(chat_id)
+            if stage is None:
+                return False
+        self.event(chat_id, "activity_restored", {"stage": stage})
+        return True
+
+    def _restore_suspended_activity_locked(self, chat_id: int) -> str | None:
+        user = self._connection.execute(
+            "SELECT suspended_activity_json FROM users WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        if user is None:
+            raise KeyError(f"Unknown user: {chat_id}")
+        if not user["suspended_activity_json"]:
+            return None
+        snapshot = json.loads(str(user["suspended_activity_json"]))
+        values = [snapshot.get(field) for field in ACTIVITY_FIELDS]
+        assignments = ", ".join(f"{field} = ?" for field in ACTIVITY_FIELDS)
+        self._connection.execute(
+            f"""
+            UPDATE users SET {assignments}, suspended_activity_json = NULL,
+                updated_at = ? WHERE chat_id = ?
+            """,
+            (*values, utc_now(), chat_id),
+        )
+        return str(snapshot.get("stage") or "idle")
 
     def start_session(self, chat_id: int, scenario_id: str) -> str:
         session_id = str(uuid.uuid4())
@@ -494,15 +567,25 @@ class Storage:
         focus: str,
         items: list[dict[str, Any]],
         mode: str = "adaptive",
+        replace_active: bool = True,
     ) -> str:
         drill_id = str(uuid.uuid4())
         now = utc_now()
         target_language = str(self.get_user(chat_id)["target_language"])
         with self._lock, self._connection:
-            self._connection.execute(
-                "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE chat_id = ? AND status = 'active'",
-                (now, chat_id),
-            )
+            if not replace_active:
+                current = self._connection.execute(
+                    "SELECT current_drill FROM users WHERE chat_id = ?", (chat_id,)
+                ).fetchone()
+                if current is None:
+                    raise KeyError(f"Unknown user: {chat_id}")
+                if current["current_drill"]:
+                    return str(current["current_drill"])
+            if replace_active:
+                self._connection.execute(
+                    "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE chat_id = ? AND status = 'active'",
+                    (now, chat_id),
+                )
             self._connection.execute(
                 """
                 INSERT INTO drill_sessions(
@@ -546,7 +629,10 @@ class Storage:
                         int(item["difficulty"]),
                     ),
                 )
-        self.set_user_state(chat_id, stage="drill", current_drill=drill_id)
+            self._connection.execute(
+                "UPDATE users SET stage = 'drill', current_drill = ?, updated_at = ? WHERE chat_id = ?",
+                (drill_id, now, chat_id),
+            )
         self.event(
             chat_id,
             "drill_started",
@@ -569,7 +655,12 @@ class Storage:
     def active_drill(self, chat_id: int) -> sqlite3.Row | None:
         with self._lock:
             return self._connection.execute(
-                "SELECT * FROM drill_sessions WHERE chat_id = ? AND status = 'active' ORDER BY started_at DESC LIMIT 1",
+                """
+                SELECT drill_sessions.* FROM drill_sessions
+                JOIN users ON users.current_drill = drill_sessions.id
+                WHERE users.chat_id = ? AND drill_sessions.status = 'active'
+                LIMIT 1
+                """,
                 (chat_id,),
             ).fetchone()
 
@@ -609,8 +700,15 @@ class Storage:
                     "UPDATE drill_sessions SET status = 'completed', completed_at = ? WHERE id = ?",
                     (utc_now(), drill_id),
                 )
-            self.set_user_state(chat_id, stage="idle", current_drill=None)
+                restored_stage = self._restore_suspended_activity_locked(chat_id)
+                if restored_stage is None:
+                    self._connection.execute(
+                        "UPDATE users SET stage = 'idle', current_drill = NULL, updated_at = ? WHERE chat_id = ?",
+                        (utc_now(), chat_id),
+                    )
             self.event(chat_id, "drill_completed", {"drill_id": drill_id})
+            if restored_stage is not None:
+                self.event(chat_id, "activity_restored", {"stage": restored_stage})
             return False
         with self._lock, self._connection:
             self._connection.execute(
@@ -626,8 +724,15 @@ class Storage:
                 "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE id = ? AND status = 'active'",
                 (utc_now(), drill_id),
             )
-        self.set_user_state(chat_id, stage="idle", current_drill=None)
+            restored_stage = self._restore_suspended_activity_locked(chat_id)
+            if restored_stage is None:
+                self._connection.execute(
+                    "UPDATE users SET stage = 'idle', current_drill = NULL, updated_at = ? WHERE chat_id = ?",
+                    (utc_now(), chat_id),
+                )
         self.event(chat_id, "drill_abandoned", {"drill_id": drill_id})
+        if restored_stage is not None:
+            self.event(chat_id, "activity_restored", {"stage": restored_stage})
 
     def set_reminder_mode(
         self, chat_id: int, mode: str, next_at: datetime | None
@@ -665,6 +770,7 @@ class Storage:
                       AND reminder_next_at IS NOT NULL
                       AND reminder_next_at <= ?
                       AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
+                      AND toolkit_input_mode IS NULL
                       AND stage IN ('idle', 'drill', 'waiting')
                     ORDER BY reminder_next_at ASC
                     """,

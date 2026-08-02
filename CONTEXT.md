@@ -48,6 +48,11 @@ Telegram-first адаптивный тренер практического яз
   translation↔target с natural/formal/informal вариантами и тематический
   drill pack без обязательной предыдущей сессии. Все packs используют общую
   drill state machine и reminder delivery.
+- Phrase translation является stateless overlay и не заменяет `stage`.
+  Карточки, тематический pack и `Мои ошибки` сохраняют основную активность в
+  `suspended_activity_json`, работают как временный drill и атомарно
+  восстанавливают scenario/review/waiting/drill после complete или stop.
+  Scheduler не доставляет напоминание, пока ожидается фраза для перевода.
 - SQLite для пользователей, попыток, повторений, drill sessions, outcomes и событий.
 - Health endpoint на порту 8080.
 - Docker image публикуется в ghcr.io/890su/tutorlaing.
@@ -63,7 +68,7 @@ Telegram-first адаптивный тренер практического яз
   SQLite скрыт за узкими Protocol-портами. Архитектура описана в
   docs/ARCHITECTURE.md и защищена regression test.
 - Production drill smoke: 5 заданий 5 типов, 2 active-recall; AI-проверка
-  свободного ответа успешна. Локально проходят 62 теста.
+  свободного ответа успешна. Локально проходят 66 тестов.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

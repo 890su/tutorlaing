@@ -164,6 +164,29 @@ class TutorlaingBot:
     def show_scenarios(self, chat_id: int) -> None:
         self.menu.show_scenarios(chat_id)
 
+    def resume_activity(self, chat_id: int) -> None:
+        """Render whichever learning activity currently owns the profile state."""
+        current = self.storage.get_user(chat_id)
+        if current["stage"] == "drill" and current["current_drill"]:
+            self.send_drill_item(chat_id, str(current["current_drill"]))
+        elif current["stage"] == "scenario" and current["current_scenario"]:
+            scenario = self._scenarios_for_user(current)[current["current_scenario"]]
+            self.send_scenario_step(chat_id, scenario, int(current["current_step"]))
+        elif (
+            current["stage"] == "practice"
+            and current["current_scenario"]
+            and current["current_session"]
+        ):
+            scenario = self._scenarios_for_user(current)[current["current_scenario"]]
+            self.begin_practice(chat_id, scenario, str(current["current_session"]))
+        elif current["stage"] == "review" and current["current_review"]:
+            self.begin_review(chat_id, int(current["current_review"]))
+        elif current["stage"] == "waiting":
+            if not self.send_pending_assignment(chat_id):
+                self.home(chat_id)
+        else:
+            self.home(chat_id)
+
     def _translate_text(
         self, chat_id: int, text: str, language: str, context: str
     ) -> str | None:
@@ -683,15 +706,6 @@ class TutorlaingBot:
             self._schedule_next_assignment(chat_id)
             return
         current = self.storage.get_user(chat_id)
-        if current["stage"] in {"scenario", "practice", "review", "waiting"}:
-            self.telegram.send_message(
-                chat_id,
-                card(
-                    "Сначала закончите текущий шаг",
-                    "Ответьте на последнее задание. Закрепление появится сразу после сценария.",
-                ),
-            )
-            return
         source = self.storage.latest_ai_analysis(
             chat_id, str(current["target_language"])
         )
@@ -745,12 +759,14 @@ class TutorlaingBot:
                 ],
             )
             return
+        self.storage.suspend_activity(chat_id)
         drill_id = self.storage.start_drill(
             chat_id,
             int(source["id"]),
             pack.title,
             pack.focus,
             [item.to_dict() for item in pack.items],
+            replace_active=False,
         )
         self.send_drill_item(chat_id, drill_id, scheduled=scheduled)
         self._schedule_next_assignment(chat_id)
@@ -935,6 +951,27 @@ class TutorlaingBot:
         session = self.storage.drill_session(drill_id, chat_id)
         correct = int(session["correct_count"])
         total = int(session["total_items"])
+        keyboard = [
+            [
+                {
+                    "text": self._t(chat_id, "action.toolkit"),
+                    "callback_data": "toolkit",
+                }
+            ],
+            [{"text": self._t(chat_id, "action.reviews"), "callback_data": "reviews:list"}],
+            home_row(self._language(chat_id)),
+        ]
+        resume = self.menu.resume_action(self.storage.get_user(chat_id))
+        if resume:
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": self._t(chat_id, "action.return_to_activity"),
+                        "callback_data": resume,
+                    }
+                ],
+            )
         self._workspace(
             chat_id,
             card(
@@ -945,16 +982,7 @@ class TutorlaingBot:
             )
             + "\n\n"
             + route("REVIEW", self._language(chat_id)),
-            [
-                [
-                    {
-                        "text": self._t(chat_id, "action.toolkit"),
-                        "callback_data": "toolkit",
-                    }
-                ],
-                [{"text": self._t(chat_id, "action.reviews"), "callback_data": "reviews:list"}],
-                home_row(self._language(chat_id)),
-            ],
+            keyboard,
             surface="drill_complete",
         )
 
@@ -1033,10 +1061,22 @@ class TutorlaingBot:
         user = self.storage.get_user(chat_id)
         if user["current_drill"]:
             self.storage.abandon_drill(str(user["current_drill"]), chat_id)
+        keyboard = [home_row(self._language(chat_id))]
+        resume = self.menu.resume_action(self.storage.get_user(chat_id))
+        if resume:
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": self._t(chat_id, "action.return_to_activity"),
+                        "callback_data": resume,
+                    }
+                ],
+            )
         self.telegram.send_message(
             chat_id,
             card("Закрепление остановлено", "Прогресс этой короткой сессии закрыт."),
-            [home_row(self._language(chat_id))],
+            keyboard,
         )
 
     def confirm_finish(self, chat_id: int, *, drill: bool = False) -> None:
@@ -1108,6 +1148,9 @@ class TutorlaingBot:
 
     def cancel_activity(self, chat_id: int, notify: bool = True) -> None:
         current = self.storage.get_user(chat_id)
+        if current["current_drill"]:
+            self.storage.abandon_drill(str(current["current_drill"]), chat_id)
+            current = self.storage.get_user(chat_id)
         self.storage.abandon_session(current["current_session"])
         if current["current_drill"]:
             self.storage.abandon_drill(str(current["current_drill"]), chat_id)
@@ -1120,6 +1163,7 @@ class TutorlaingBot:
             current_review=None,
             pending_assignment=None,
             toolkit_input_mode=None,
+            suspended_activity_json=None,
         )
         if notify:
             self.telegram.send_message(
@@ -1134,6 +1178,9 @@ class TutorlaingBot:
             return
         user = self.storage.ensure_user(chat_id, first_name)
         command = text.strip().split(maxsplit=1)[0].lower()
+        if command.startswith("/") and user["toolkit_input_mode"]:
+            self.storage.set_user_state(chat_id, toolkit_input_mode=None)
+            user = self.storage.get_user(chat_id)
         if command in {"/start", "/menu"}:
             self.start(chat_id, first_name)
             return
@@ -1184,6 +1231,9 @@ class TutorlaingBot:
         if command == "/review_now":
             self.show_reviews(chat_id, include_future=True)
             return
+        if user["toolkit_input_mode"]:
+            self.toolkit.handle_phrase(chat_id, text)
+            return
         stage = user["stage"]
         if stage == "scenario":
             self.handle_scenario_response(chat_id, text, user)
@@ -1193,8 +1243,6 @@ class TutorlaingBot:
             self.handle_review_response(chat_id, text, user)
         elif stage == "drill":
             self.handle_drill_text(chat_id, text, user)
-        elif stage == "toolkit_input":
-            self.toolkit.handle_phrase(chat_id, text)
         elif stage == "waiting":
             self.telegram.send_message(
                 chat_id,
@@ -1215,6 +1263,14 @@ class TutorlaingBot:
             self.telegram.answer_callback(callback_id)
         except TelegramError:
             LOGGER.warning("Could not acknowledge callback", exc_info=True)
+
+        if (
+            user["toolkit_input_mode"]
+            and data not in {"toolkit", "toolkit:resume"}
+            and not data.startswith("toolkit:translate:")
+        ):
+            self.storage.set_user_state(chat_id, toolkit_input_mode=None)
+            user = self.storage.get_user(chat_id)
 
         if data == "consent:accept":
             self.storage.accept_consent(chat_id, CONSENT_VERSION)
@@ -1244,6 +1300,9 @@ class TutorlaingBot:
             self.toolkit.start_pack(chat_id, data.split(":", 2)[2])
         elif data.startswith("toolkit:translate:"):
             self.toolkit.ask_for_phrase(chat_id, data.split(":", 2)[2])
+        elif data == "toolkit:resume":
+            self.storage.set_user_state(chat_id, toolkit_input_mode=None)
+            self.resume_activity(chat_id)
         elif data == "settings":
             self.show_settings(chat_id)
         elif data == "progress":
@@ -1274,11 +1333,7 @@ class TutorlaingBot:
         elif data.startswith("drill:next:"):
             self.advance_drill(chat_id, data.split(":", 2)[2])
         elif data == "drill:resume":
-            current = self.storage.get_user(chat_id)
-            if current["stage"] == "drill" and current["current_drill"]:
-                self.send_drill_item(chat_id, str(current["current_drill"]))
-            else:
-                self.home(chat_id)
+            self.resume_activity(chat_id)
         elif data == "drill:stop:confirm":
             self.confirm_finish(chat_id, drill=True)
         elif data == "assignment:next":
@@ -1322,28 +1377,7 @@ class TutorlaingBot:
             _, _, scenario_id, step_index = data.split(":", 3)
             self.translate_task(chat_id, scenario_id, int(step_index))
         elif data == "task:resume":
-            current = self.storage.get_user(chat_id)
-            if current["stage"] == "scenario" and current["current_scenario"]:
-                scenario = self._scenarios_for_user(current)[current["current_scenario"]]
-                self.send_scenario_step(chat_id, scenario, int(current["current_step"]))
-            elif (
-                current["stage"] == "practice"
-                and current["current_scenario"]
-                and current["current_session"]
-            ):
-                scenario = self._scenarios_for_user(current)[
-                    current["current_scenario"]
-                ]
-                self.begin_practice(
-                    chat_id, scenario, str(current["current_session"])
-                )
-            elif current["stage"] == "review" and current["current_review"]:
-                self.begin_review(chat_id, int(current["current_review"]))
-            elif current["stage"] == "waiting":
-                if not self.send_pending_assignment(chat_id):
-                    self.home(chat_id)
-            else:
-                self.home(chat_id)
+            self.resume_activity(chat_id)
         elif data.startswith("ai:variants:"):
             self.show_variants(chat_id, int(data.rsplit(":", 1)[1]))
         elif data.startswith("ai:result:"):
