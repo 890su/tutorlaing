@@ -66,6 +66,43 @@ class StorageTests(unittest.TestCase):
         self.storage.delete_user(77)
         self.assertIsNone(self.storage.latest_ai_analysis(77))
 
+    def test_latest_analysis_is_scoped_to_target_language(self) -> None:
+        self.storage.ensure_user(78, "Learner")
+        polish = self.storage.add_ai_analysis(
+            chat_id=78,
+            operation="response_analysis",
+            target_language="pl",
+            source_text="Dzień dobry",
+            result={"task_achieved": True},
+            provider="gemini",
+            model="test-model",
+            prompt_version="test-v1",
+            latency_ms=1,
+        )
+        english = self.storage.add_ai_analysis(
+            chat_id=78,
+            operation="response_analysis",
+            target_language="en",
+            source_text="Good morning",
+            result={"task_achieved": True},
+            provider="gemini",
+            model="test-model",
+            prompt_version="test-v1",
+            latency_ms=1,
+        )
+        self.assertEqual(polish, self.storage.latest_ai_analysis(78, "pl")["id"])
+        self.assertEqual(english, self.storage.latest_ai_analysis(78, "en")["id"])
+
+    def test_reviews_are_scoped_to_target_language(self) -> None:
+        self.storage.ensure_user(79, "Learner")
+        self.storage.accept_consent(79, 2)
+        self.storage.schedule_review(
+            79, "pharmacy", 0, datetime.now(timezone.utc), 2
+        )
+        self.assertEqual(1, len(self.storage.pending_reviews(79)))
+        self.storage.set_language(79, "target_language", "en")
+        self.assertEqual([], self.storage.pending_reviews(79))
+
     def test_telegram_update_is_claimed_once_and_can_be_retried_after_failure(self) -> None:
         self.assertTrue(self.storage.claim_update(123))
         self.assertFalse(self.storage.claim_update(123))

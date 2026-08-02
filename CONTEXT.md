@@ -2,13 +2,13 @@
 project_id: tutorlaing
 project_type: telegram-service
 status: alpha
-updated: 2026-08-01
+updated: 2026-08-02
 ---
 
 # Tutorlaing context
 
-Telegram-first адаптивный тренер польского для русскоязычного мигранта в
-Польше. Главная единица ценности — повторно выполненная жизненная задача без
+Telegram-first адаптивный тренер практического языка для мигранта в Польше;
+первая пара target languages — польский и английский. Главная единица ценности — повторно выполненная жизненная задача без
 критической подсказки, а не число уроков.
 
 ## Current implementation
@@ -16,17 +16,19 @@ Telegram-first адаптивный тренер польского для ру�
 - Python 3.11+, без runtime-зависимостей.
 - Telegram Bot API через production webhook; long polling оставлен локальным
   fallback.
-- 8 курируемых JSON-сценариев.
+- 8 курируемых бытовых ситуаций в польской и английской версиях.
 - Rule-based диагностика коммуникативных смысловых групп.
 - Gemini 3.5 Flash анализирует каждый содержательный ответ; доступны
   naturalness/variants, перевод по запросу и grammar drill-down.
 - Rule-based диагностика остаётся fallback при отказе или невалидном ответе AI.
 - Языковая модель профиля разделяет instruction, translation и target language;
-  первый target остаётся польским.
+  explanation/translation поддерживают `ru/uk/en/pl`, target — `pl/en`.
 - Gemini формирует 5-заданийные контекстные drill packs минимум 3 типов; выбор
   проверяется локально, свободная формулировка — AI с допустимыми вариантами.
 - Напоминания opt-in: off/gentle/normal/intensive/aggressive, quiet hours
-  `Europe/Warsaw`, пауза на день и защита от повторной доставки.
+  `Europe/Warsaw`, пауза на день и защита от повторной доставки. Scheduler
+  видит состояния `idle`, `waiting` и `drill`: один tick доставляет ровно одно
+  queued assignment или продолжает один drill item.
 - Основные Telegram-экраны используют стабильный маршрут
   `СИТУАЦИЯ → ФРАЗА → ЗАКРЕПЛЕНИЕ → ПОВТОР`.
 - SQLite для пользователей, попыток, повторений, drill sessions, outcomes и событий.
@@ -39,7 +41,7 @@ Telegram-first адаптивный тренер польского для ру�
 - Production AI key хранится только в защищённом server-side `.env`; Pro-квота
   старого ключа равна нулю, полный smoke-test проходит на gemini-3.5-flash.
 - Production drill smoke: 5 заданий 5 типов, 2 active-recall; AI-проверка
-  свободного ответа успешна. Локально проходят 31 тест.
+  свободного ответа успешна. Локально проходят 40 тестов.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

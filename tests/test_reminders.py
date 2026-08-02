@@ -42,6 +42,47 @@ class ReminderTests(unittest.TestCase):
             self.assertGreater(storage.get_user(55)["reminder_next_at"], now.isoformat())
             storage.close()
 
+    def test_scheduler_delivers_while_drill_waits_for_continuation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(56, "Learner")
+            storage.accept_consent(56, 2)
+            item = {
+                "type": "free_recall",
+                "skill": "chunk",
+                "prompt": "Answer",
+                "context": "Context",
+                "options": [],
+                "correct_answer": "Answer",
+                "accepted_answers": ["Answer"],
+                "explanation": "Why",
+                "hint": "Hint",
+                "difficulty": 1,
+            }
+            storage.start_drill(56, None, "Test", "Test", [item])
+            now = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
+            storage.set_reminder_mode(56, "normal", now - timedelta(minutes=1))
+            bot = FakeReminderBot()
+            scheduler = ReminderScheduler(bot, storage, interval=60)
+            self.assertEqual(1, scheduler.tick(now))
+            self.assertEqual([(56, "normal")], bot.sent)
+            storage.close()
+
+    def test_scheduler_does_not_deliver_during_quiet_hours(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(57, "Learner")
+            storage.accept_consent(57, 2)
+            now = datetime(2026, 8, 1, 21, 0, tzinfo=timezone.utc)
+            storage.set_reminder_mode(57, "aggressive", now - timedelta(minutes=1))
+            bot = FakeReminderBot()
+            scheduler = ReminderScheduler(bot, storage, interval=60)
+            self.assertEqual(0, scheduler.tick(now))
+            self.assertEqual([], bot.sent)
+            next_at = datetime.fromisoformat(storage.get_user(57)["reminder_next_at"])
+            self.assertGreater(next_at, now)
+            storage.close()
+
 
 if __name__ == "__main__":
     unittest.main()

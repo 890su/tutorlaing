@@ -21,6 +21,16 @@ REMINDER_SLOTS = {
 }
 
 
+def is_delivery_time(
+    now: datetime | None = None, timezone_name: str = "Europe/Warsaw"
+) -> bool:
+    current_utc = now or datetime.now(timezone.utc)
+    if current_utc.tzinfo is None:
+        current_utc = current_utc.replace(tzinfo=timezone.utc)
+    local_now = current_utc.astimezone(ZoneInfo(timezone_name))
+    return 8 <= local_now.hour < 22
+
+
 def next_reminder_at(
     mode: str,
     now: datetime | None = None,
@@ -84,6 +94,9 @@ class ReminderScheduler:
             mode = str(user["reminder_mode"])
             next_at = next_reminder_at(mode, current, str(user["timezone"]))
             if next_at is None:
+                continue
+            if not is_delivery_time(current, str(user["timezone"])):
+                self.storage.schedule_next_reminder(chat_id, next_at)
                 continue
             self.storage.reserve_next_reminder(chat_id, current, next_at)
             try:

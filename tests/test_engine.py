@@ -20,6 +20,17 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(8, len(self.scenarios))
         self.assertTrue(all(len(scenario.steps) >= 2 for scenario in self.scenarios.values()))
 
+    def test_english_course_contains_equivalent_scenarios(self) -> None:
+        scenarios = load_scenarios("en")
+        self.assertEqual(set(self.scenarios), set(scenarios))
+        pharmacy = scenarios["pharmacy"]
+        self.assertEqual("At the pharmacy", pharmacy.title_pl)
+        self.assertTrue(
+            evaluate_response(
+                pharmacy.steps[1], "For two days. I don't have a fever."
+            ).successful
+        )
+
     def test_normalize_accepts_missing_polish_diacritics(self) -> None:
         self.assertEqual("prosze isc w lewo", normalize("Proszę iść w lewo!"))
 

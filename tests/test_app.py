@@ -122,9 +122,11 @@ class AppFlowTests(unittest.TestCase):
             "Igor",
             "Dzień dobry. Boli mnie gardło i potrzebuję czegoś na ból.",
         )
+        self.bot.handle_callback(chat_id, "Igor", "next1", "assignment:next")
         self.bot.handle_text(
             chat_id, "Igor", "Od dwóch dni. Nie mam gorączki."
         )
+        self.bot.handle_callback(chat_id, "Igor", "next2", "assignment:next")
         self.assertEqual("practice", self.storage.get_user(chat_id)["stage"])
 
         self.bot.handle_text(
@@ -171,6 +173,23 @@ class AppFlowTests(unittest.TestCase):
         self.bot.handle_callback(9, "Learner", "cb", "settings:set:instruction:uk")
         self.assertEqual("uk", self.storage.get_user(9)["instruction_language"])
 
+    def test_polish_explanations_and_english_target_are_available(self) -> None:
+        chat_id = 10
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+        self.bot.handle_callback(
+            chat_id, "Learner", "cb1", "settings:set:instruction:pl"
+        )
+        self.bot.handle_callback(
+            chat_id, "Learner", "cb2", "settings:set:target:en"
+        )
+        user = self.storage.get_user(chat_id)
+        self.assertEqual("pl", user["instruction_language"])
+        self.assertEqual("en", user["target_language"])
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        self.assertIn("AT THE PHARMACY", self.telegram.messages[-2]["text"])
+        self.assertIn("How can I help you?", self.telegram.messages[-1]["text"])
+
     def test_ai_feedback_variants_and_grammar_are_available(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
         chat_id = 11
@@ -198,7 +217,9 @@ class AppFlowTests(unittest.TestCase):
         bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
         bot.begin_scenario(chat_id, "pharmacy")
         bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        bot.handle_callback(chat_id, "Learner", "next1", "assignment:next")
         bot.handle_text(chat_id, "Learner", "Od dwóch dni. Nie mam gorączki.")
+        bot.handle_callback(chat_id, "Learner", "next2", "assignment:next")
         bot.handle_text(chat_id, "Learner", "Boli mnie gardło od dwóch dni.")
         bot.start_drill(chat_id)
         session = self.storage.active_drill(chat_id)
@@ -219,6 +240,69 @@ class AppFlowTests(unittest.TestCase):
         user = self.storage.get_user(chat_id)
         self.assertEqual("aggressive", user["reminder_mode"])
         self.assertIsNotNone(user["reminder_next_at"])
+
+    def test_scheduled_reminder_advances_answered_drill_one_item(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 14
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        bot.handle_callback(chat_id, "Learner", "next1", "assignment:next")
+        bot.handle_text(chat_id, "Learner", "Od dwóch dni. Nie mam gorączki.")
+        bot.handle_callback(chat_id, "Learner", "next2", "assignment:next")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło od dwóch dni.")
+        bot.set_reminder_mode(chat_id, "normal")
+        bot.start_drill(chat_id)
+        session = self.storage.active_drill(chat_id)
+        first = self.storage.drill_item(session["id"], 0)
+        bot.answer_drill_choice(chat_id, int(first["id"]), 0)
+        before = len(self.telegram.messages)
+
+        bot.send_scheduled_reminder(chat_id, "normal")
+
+        self.assertEqual(before + 1, len(self.telegram.messages))
+        self.assertIn("2/5", self.telegram.messages[-1]["text"])
+        self.assertEqual(1, self.storage.active_drill(chat_id)["current_index"])
+
+    def test_normal_reminder_starts_exactly_one_assignment(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 15
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        bot.handle_callback(chat_id, "Learner", "next1", "assignment:next")
+        bot.handle_text(chat_id, "Learner", "Od dwóch dni. Nie mam gorączki.")
+        bot.handle_callback(chat_id, "Learner", "next2", "assignment:next")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło od dwóch dni.")
+        before = len(self.telegram.messages)
+
+        bot.send_scheduled_reminder(chat_id, "normal")
+
+        self.assertEqual(before + 1, len(self.telegram.messages))
+        self.assertIn("1/5", self.telegram.messages[-1]["text"])
+
+    def test_scenario_waits_for_button_or_scheduled_next_assignment(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 16
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.set_reminder_mode(chat_id, "normal")
+        bot.begin_scenario(chat_id, "pharmacy")
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        self.assertEqual("waiting", self.storage.get_user(chat_id)["stage"])
+        self.assertEqual(
+            "Следующее задание →",
+            self.telegram.messages[-1]["keyboard"][0][0]["text"],
+        )
+        before = len(self.telegram.messages)
+
+        bot.send_scheduled_reminder(chat_id, "normal")
+
+        self.assertEqual(before + 1, len(self.telegram.messages))
+        self.assertIn("2/2", self.telegram.messages[-1]["text"])
+        self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
 
 
 if __name__ == "__main__":

@@ -45,8 +45,13 @@ def _step_from_dict(data: dict[str, Any]) -> ScenarioStep:
     )
 
 
-def load_scenarios() -> dict[str, Scenario]:
-    path = files("tutorlaing").joinpath("content/scenarios.json")
+def load_scenarios(target_language: str = "pl") -> dict[str, Scenario]:
+    filenames = {"pl": "scenarios.json", "en": "scenarios.en.json"}
+    try:
+        filename = filenames[target_language]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported scenario language: {target_language}") from exc
+    path = files("tutorlaing").joinpath(f"content/{filename}")
     raw = json.loads(path.read_text(encoding="utf-8"))
     scenarios: dict[str, Scenario] = {}
     for item in raw["scenarios"]:

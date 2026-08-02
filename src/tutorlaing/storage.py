@@ -70,6 +70,7 @@ class Storage:
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
             scenario_id TEXT NOT NULL,
             step_index INTEGER NOT NULL,
+            target_language TEXT NOT NULL DEFAULT 'pl',
             due_at TEXT NOT NULL,
             interval_days INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
@@ -101,6 +102,7 @@ class Storage:
             scenario_id TEXT,
             step_index INTEGER,
             operation TEXT NOT NULL,
+            target_language TEXT,
             source_text TEXT NOT NULL,
             result_json TEXT NOT NULL,
             provider TEXT NOT NULL,
@@ -176,6 +178,7 @@ class Storage:
                 "users", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
             )
             self._ensure_column("users", "current_drill", "TEXT")
+            self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column(
                 "users", "reminder_mode", "TEXT NOT NULL DEFAULT 'off'"
             )
@@ -184,6 +187,14 @@ class Storage:
             self._ensure_column("users", "last_reminder_at", "TEXT")
             self._ensure_column(
                 "users", "timezone", "TEXT NOT NULL DEFAULT 'Europe/Warsaw'"
+            )
+            self._ensure_column("ai_analyses", "target_language", "TEXT")
+            self._ensure_column(
+                "reviews", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+            self._connection.execute(
+                "UPDATE ai_analyses SET target_language = 'pl' "
+                "WHERE target_language IS NULL AND operation = 'response_analysis'"
             )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
@@ -252,6 +263,7 @@ class Storage:
             "current_session",
             "current_review",
             "current_drill",
+            "pending_assignment",
         }
         invalid = set(values) - allowed
         if invalid:
@@ -287,6 +299,7 @@ class Storage:
             current_step=0,
             current_session=session_id,
             current_review=None,
+            pending_assignment=None,
         )
         self.event(chat_id, "scenario_started", {"scenario_id": scenario_id})
         return session_id
@@ -348,15 +361,16 @@ class Storage:
         session_id: str | None = None,
         scenario_id: str | None = None,
         step_index: int | None = None,
+        target_language: str | None = None,
     ) -> int:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """
                 INSERT INTO ai_analyses(
-                    chat_id, session_id, scenario_id, step_index, operation,
+                    chat_id, session_id, scenario_id, step_index, operation, target_language,
                     source_text, result_json, provider, model, prompt_version,
                     latency_ms, usage_json, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chat_id,
@@ -364,6 +378,7 @@ class Storage:
                     scenario_id,
                     step_index,
                     operation,
+                    target_language,
                     source_text,
                     json.dumps(result, ensure_ascii=False),
                     provider,
@@ -387,15 +402,22 @@ class Storage:
             raise KeyError(f"Unknown AI analysis: {analysis_id}")
         return row
 
-    def latest_ai_analysis(self, chat_id: int) -> sqlite3.Row | None:
+    def latest_ai_analysis(
+        self, chat_id: int, target_language: str | None = None
+    ) -> sqlite3.Row | None:
+        language_filter = " AND target_language = ?" if target_language else ""
+        parameters: tuple[Any, ...] = (
+            (chat_id, target_language) if target_language else (chat_id,)
+        )
         with self._lock:
             return self._connection.execute(
-                """
+                f"""
                 SELECT * FROM ai_analyses
                 WHERE chat_id = ? AND operation = 'response_analysis'
+                {language_filter}
                 ORDER BY id DESC LIMIT 1
                 """,
-                (chat_id,),
+                parameters,
             ).fetchone()
 
     def claim_update(self, update_id: int) -> bool:
@@ -583,7 +605,7 @@ class Storage:
                       AND reminder_next_at IS NOT NULL
                       AND reminder_next_at <= ?
                       AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
-                      AND stage = 'idle'
+                      AND stage IN ('idle', 'drill', 'waiting')
                     ORDER BY reminder_next_at ASC
                     """,
                     (current, current),
@@ -598,6 +620,36 @@ class Storage:
                 "UPDATE users SET last_reminder_at = ?, reminder_next_at = ? WHERE chat_id = ?",
                 (sent_at.isoformat(), next_at.isoformat(), chat_id),
             )
+
+    def schedule_next_reminder(
+        self, chat_id: int, next_at: datetime | None
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET reminder_next_at = ?, updated_at = ? WHERE chat_id = ?",
+                (next_at.isoformat() if next_at else None, utc_now(), chat_id),
+            )
+
+    def queue_assignment(self, chat_id: int, assignment: str) -> None:
+        self.set_user_state(
+            chat_id, stage="waiting", pending_assignment=assignment
+        )
+        self.event(chat_id, "assignment_queued", {"assignment": assignment})
+
+    def claim_pending_assignment(self, chat_id: int) -> str | None:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT pending_assignment FROM users WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+            if row is None or not row["pending_assignment"]:
+                return None
+            assignment = str(row["pending_assignment"])
+            self._connection.execute(
+                "UPDATE users SET pending_assignment = NULL, updated_at = ? WHERE chat_id = ?",
+                (utc_now(), chat_id),
+            )
+        return assignment
 
     def scenario_scores(self, session_id: str) -> list[tuple[int, float]]:
         with self._lock:
@@ -658,18 +710,20 @@ class Storage:
         due_at: datetime,
         interval_days: int,
     ) -> int:
+        target_language = str(self.get_user(chat_id)["target_language"])
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """
                 INSERT INTO reviews(
-                    chat_id, scenario_id, step_index, due_at,
+                    chat_id, scenario_id, step_index, target_language, due_at,
                     interval_days, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     chat_id,
                     scenario_id,
                     step_index,
+                    target_language,
                     due_at.isoformat(),
                     interval_days,
                     utc_now(),
@@ -680,8 +734,12 @@ class Storage:
         return review_id
 
     def pending_reviews(self, chat_id: int, include_future: bool = False) -> list[sqlite3.Row]:
-        query = "SELECT * FROM reviews WHERE chat_id = ? AND status = 'pending'"
-        parameters: list[Any] = [chat_id]
+        target_language = str(self.get_user(chat_id)["target_language"])
+        query = (
+            "SELECT * FROM reviews WHERE chat_id = ? AND target_language = ? "
+            "AND status = 'pending'"
+        )
+        parameters: list[Any] = [chat_id, target_language]
         if not include_future:
             query += " AND due_at <= ?"
             parameters.append(utc_now())
