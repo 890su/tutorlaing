@@ -19,6 +19,7 @@ from tutorlaing.storage import Storage
 class FakeTelegram:
     def __init__(self) -> None:
         self.messages: list[dict[str, Any]] = []
+        self.edits: list[dict[str, Any]] = []
         self.callbacks: list[str] = []
 
     def send_message(
@@ -26,8 +27,38 @@ class FakeTelegram:
         chat_id: int,
         text: str,
         keyboard: list[list[dict[str, str]]] | None = None,
-    ) -> None:
-        self.messages.append({"chat_id": chat_id, "text": text, "keyboard": keyboard})
+    ) -> dict[str, Any]:
+        message = {
+            "chat_id": chat_id,
+            "message_id": len(self.messages) + 1,
+            "text": text,
+            "keyboard": keyboard,
+        }
+        self.messages.append(message)
+        return message
+
+    def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        keyboard: list[list[dict[str, str]]] | None = None,
+    ) -> dict[str, Any]:
+        edit = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "keyboard": keyboard,
+        }
+        for message in self.messages:
+            if message["chat_id"] == chat_id and message["message_id"] == message_id:
+                message.update(edit)
+                break
+        self.edits.append(edit)
+        return edit
+
+    def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
+        return None
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.callbacks.append(callback_id)
@@ -85,6 +116,9 @@ class FakeAI:
     def evaluate_drill_answer(self, item, response, *_args, **_kwargs) -> DrillEvaluation:
         correct = response in item.accepted_answers
         return DrillEvaluation(correct, 1.0 if correct else 0.0, "Проверено.", item.correct_answer)
+
+    def glossary_notes(self, *_args, **_kwargs) -> list[dict[str, str]]:
+        return []
 
 
 class AppFlowTests(unittest.TestCase):
@@ -187,7 +221,7 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual("pl", user["instruction_language"])
         self.assertEqual("en", user["target_language"])
         self.bot.begin_scenario(chat_id, "pharmacy")
-        self.assertIn("AT THE PHARMACY", self.telegram.messages[-2]["text"])
+        self.assertIn("AT THE PHARMACY", self.telegram.messages[-1]["text"])
         self.assertIn("How can I help you?", self.telegram.messages[-1]["text"])
 
     def test_ai_feedback_variants_and_grammar_are_available(self) -> None:
@@ -303,6 +337,53 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual(before + 1, len(self.telegram.messages))
         self.assertIn("2/2", self.telegram.messages[-1]["text"])
         self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+
+    def test_immediate_learning_flow_edits_one_workspace_message(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 17
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        self.assertEqual(1, len(self.telegram.messages))
+
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        self.assertEqual(1, len(self.telegram.messages))
+        self.assertGreaterEqual(len(self.telegram.edits), 3)
+        self.assertEqual("Следующее задание →", self.telegram.messages[0]["keyboard"][0][0]["text"])
+
+        bot.handle_callback(chat_id, "Learner", "next", "assignment:next")
+        self.assertEqual(1, len(self.telegram.messages))
+        self.assertIn("2/2", self.telegram.messages[0]["text"])
+
+    def test_progress_and_interface_follow_instruction_language(self) -> None:
+        chat_id = 18
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+        self.storage.set_language(chat_id, "instruction_language", "pl")
+        self.storage.set_learner_level(chat_id, "B1")
+
+        self.bot.show_progress(chat_id)
+
+        self.assertIn("Bieżący poziom roboczy: B1", self.telegram.messages[-1]["text"])
+        self.assertIn("NAJBLIŻSZY PLAN", self.telegram.messages[-1]["text"])
+        self.bot.show_reminders(chat_id)
+        self.assertIn("PRZYPOMNIENIA", self.telegram.messages[-1]["text"])
+
+    def test_two_levels_harder_term_can_get_translation_footnote(self) -> None:
+        class GlossaryAI(FakeAI):
+            def glossary_notes(self, *_args, **_kwargs) -> list[dict[str, str]]:
+                return [{"term": "pomóc", "translation": "помочь", "cefr": "C1"}]
+
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=GlossaryAI())
+        chat_id = 19
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        self.storage.set_learner_level(chat_id, "B1")
+
+        bot.begin_scenario(chat_id, "pharmacy")
+
+        self.assertIn("СНОСКА", self.telegram.messages[-1]["text"])
+        self.assertIn("pomóc — помочь (C1)", self.telegram.messages[-1]["text"])
 
 
 if __name__ == "__main__":

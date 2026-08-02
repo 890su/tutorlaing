@@ -31,6 +31,13 @@ Telegram-first адаптивный тренер практического яз
   queued assignment или продолжает один drill item.
 - Основные Telegram-экраны используют стабильный маршрут
   `СИТУАЦИЯ → ФРАЗА → ЗАКРЕПЛЕНИЕ → ПОВТОР`.
+- Основной интерфейс, задания и объяснения следуют instruction language
+  (`ru/uk/en/pl`). Учебный поток живёт в одном редактируемом workspace-message;
+  scheduled reminder создаёт одно новое сообщение для Telegram notification.
+- Профиль хранит рабочий уровень A0–C1. AI может добавить до двух сносок на
+  translation language только для target-language материала минимум на два
+  уровня сложнее. Экран прогресса показывает закреплённое, фокус и три
+  ближайшие ситуации; это не официальный CEFR.
 - SQLite для пользователей, попыток, повторений, drill sessions, outcomes и событий.
 - Health endpoint на порту 8080.
 - Docker image публикуется в ghcr.io/890su/tutorlaing.
@@ -41,7 +48,7 @@ Telegram-first адаптивный тренер практического яз
 - Production AI key хранится только в защищённом server-side `.env`; Pro-квота
   старого ключа равна нулю, полный smoke-test проходит на gemini-3.5-flash.
 - Production drill smoke: 5 заданий 5 типов, 2 active-recall; AI-проверка
-  свободного ответа успешна. Локально проходят 40 тестов.
+  свободного ответа успешна. Локально проходят 45 тестов.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

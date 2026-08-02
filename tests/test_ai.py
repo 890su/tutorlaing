@@ -76,6 +76,31 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(5, len(pack.items))
         self.assertGreaterEqual(len({item.type for item in pack.items}), 3)
 
+    def test_glossary_returns_only_exact_terms_and_skips_c1(self) -> None:
+        payload = {
+            "notes": [
+                {"term": "zaświadczenie", "translation": "справка", "cefr": "C1"},
+                {"term": "absent", "translation": "лишнее", "cefr": "C1"},
+            ]
+        }
+        envelope = {
+            "candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]
+        }
+        calls = []
+
+        def opener(*args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeHTTPResponse(envelope)
+
+        client = GeminiClient("test-key", opener=opener)
+        notes = client.glossary_notes(
+            "Potrzebuję zaświadczenie.", "B1", "pl", "ru"
+        )
+
+        self.assertEqual([{"term": "zaświadczenie", "translation": "справка", "cefr": "C1"}], notes)
+        self.assertEqual([], client.glossary_notes("Dowolny tekst", "C1", "pl", "ru"))
+        self.assertEqual(1, len(calls))
+
 
 if __name__ == "__main__":
     unittest.main()

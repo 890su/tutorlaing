@@ -67,6 +67,27 @@ class TelegramAPI:
             params["reply_markup"] = {"inline_keyboard": keyboard}
         return self.call("sendMessage", params)
 
+    def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        keyboard: list[list[dict[str, str]]] | None = None,
+    ) -> Any:
+        return self.call(
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text[:4096],
+                "disable_web_page_preview": True,
+                "reply_markup": {"inline_keyboard": keyboard or []},
+            },
+        )
+
+    def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
+        self.call("sendChatAction", {"chat_id": chat_id, "action": action})
+
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         params: dict[str, Any] = {"callback_query_id": callback_id}
         if text:

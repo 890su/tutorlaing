@@ -39,6 +39,19 @@ class Storage:
             current_step INTEGER NOT NULL DEFAULT 0,
             current_session TEXT,
             current_review INTEGER,
+            current_drill TEXT,
+            pending_assignment TEXT,
+            workspace_message_id INTEGER,
+            consent_version INTEGER NOT NULL DEFAULT 0,
+            instruction_language TEXT NOT NULL DEFAULT 'ru',
+            translation_language TEXT NOT NULL DEFAULT 'ru',
+            target_language TEXT NOT NULL DEFAULT 'pl',
+            learner_level TEXT NOT NULL DEFAULT 'A1',
+            reminder_mode TEXT NOT NULL DEFAULT 'off',
+            reminder_next_at TEXT,
+            reminder_paused_until TEXT,
+            last_reminder_at TEXT,
+            timezone TEXT NOT NULL DEFAULT 'Europe/Warsaw',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -47,6 +60,7 @@ class Storage:
             id TEXT PRIMARY KEY,
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
             scenario_id TEXT NOT NULL,
+            target_language TEXT NOT NULL DEFAULT 'pl',
             status TEXT NOT NULL,
             bottleneck_step INTEGER,
             average_score REAL,
@@ -124,6 +138,7 @@ class Storage:
         CREATE TABLE IF NOT EXISTS drill_sessions (
             id TEXT PRIMARY KEY,
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            target_language TEXT NOT NULL DEFAULT 'pl',
             source_analysis_id INTEGER,
             title TEXT NOT NULL,
             focus TEXT NOT NULL,
@@ -179,6 +194,10 @@ class Storage:
             )
             self._ensure_column("users", "current_drill", "TEXT")
             self._ensure_column("users", "pending_assignment", "TEXT")
+            self._ensure_column("users", "workspace_message_id", "INTEGER")
+            self._ensure_column(
+                "users", "learner_level", "TEXT NOT NULL DEFAULT 'A1'"
+            )
             self._ensure_column(
                 "users", "reminder_mode", "TEXT NOT NULL DEFAULT 'off'"
             )
@@ -191,6 +210,12 @@ class Storage:
             self._ensure_column("ai_analyses", "target_language", "TEXT")
             self._ensure_column(
                 "reviews", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+            self._ensure_column(
+                "drill_sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+            self._ensure_column(
+                "sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
             )
             self._connection.execute(
                 "UPDATE ai_analyses SET target_language = 'pl' "
@@ -255,6 +280,16 @@ class Storage:
             )
         self.event(chat_id, "language_setting_changed", {"field": field, "value": language})
 
+    def set_learner_level(self, chat_id: int, level: str) -> None:
+        if level not in {"A0", "A1", "A2", "B1", "B2", "C1"}:
+            raise ValueError(f"Unsupported learner level: {level}")
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET learner_level = ?, updated_at = ? WHERE chat_id = ?",
+                (level, utc_now(), chat_id),
+            )
+        self.event(chat_id, "learner_level_changed", {"level": level})
+
     def set_user_state(self, chat_id: int, **values: Any) -> None:
         allowed = {
             "stage",
@@ -264,6 +299,7 @@ class Storage:
             "current_review",
             "current_drill",
             "pending_assignment",
+            "workspace_message_id",
         }
         invalid = set(values) - allowed
         if invalid:
@@ -279,6 +315,7 @@ class Storage:
     def start_session(self, chat_id: int, scenario_id: str) -> str:
         session_id = str(uuid.uuid4())
         now = utc_now()
+        target_language = str(self.get_user(chat_id)["target_language"])
         with self._lock, self._connection:
             self._connection.execute(
                 """
@@ -289,8 +326,8 @@ class Storage:
                 (now, chat_id),
             )
             self._connection.execute(
-                "INSERT INTO sessions(id, chat_id, scenario_id, status, started_at) VALUES (?, ?, ?, 'active', ?)",
-                (session_id, chat_id, scenario_id, now),
+                "INSERT INTO sessions(id, chat_id, scenario_id, target_language, status, started_at) VALUES (?, ?, ?, ?, 'active', ?)",
+                (session_id, chat_id, scenario_id, target_language, now),
             )
         self.set_user_state(
             chat_id,
@@ -452,6 +489,7 @@ class Storage:
     ) -> str:
         drill_id = str(uuid.uuid4())
         now = utc_now()
+        target_language = str(self.get_user(chat_id)["target_language"])
         with self._lock, self._connection:
             self._connection.execute(
                 "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE chat_id = ? AND status = 'active'",
@@ -460,11 +498,20 @@ class Storage:
             self._connection.execute(
                 """
                 INSERT INTO drill_sessions(
-                    id, chat_id, source_analysis_id, title, focus, status,
+                    id, chat_id, source_analysis_id, title, focus, target_language, status,
                     total_items, started_at
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
-                (drill_id, chat_id, source_analysis_id, title, focus, len(items), now),
+                (
+                    drill_id,
+                    chat_id,
+                    source_analysis_id,
+                    title,
+                    focus,
+                    target_language,
+                    len(items),
+                    now,
+                ),
             )
             for position, item in enumerate(items):
                 self._connection.execute(
@@ -613,13 +660,17 @@ class Storage:
             )
 
     def reserve_next_reminder(
-        self, chat_id: int, sent_at: datetime, next_at: datetime
-    ) -> None:
+        self, chat_id: int, expected_at: str, sent_at: datetime, next_at: datetime
+    ) -> bool:
         with self._lock, self._connection:
-            self._connection.execute(
-                "UPDATE users SET last_reminder_at = ?, reminder_next_at = ? WHERE chat_id = ?",
-                (sent_at.isoformat(), next_at.isoformat(), chat_id),
+            cursor = self._connection.execute(
+                """
+                UPDATE users SET last_reminder_at = ?, reminder_next_at = ?
+                WHERE chat_id = ? AND reminder_next_at = ?
+                """,
+                (sent_at.isoformat(), next_at.isoformat(), chat_id, expected_at),
             )
+        return cursor.rowcount == 1
 
     def schedule_next_reminder(
         self, chat_id: int, next_at: datetime | None
@@ -792,3 +843,51 @@ class Storage:
                 self._connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             )
         return {"database": "ok", "users": user_count}
+
+    def progress_evidence(self, chat_id: int) -> dict[str, Any]:
+        user = self.get_user(chat_id)
+        target_language = str(user["target_language"])
+        with self._lock:
+            sessions = list(
+                self._connection.execute(
+                    """
+                    SELECT scenario_id, COUNT(*) AS attempts,
+                           MAX(COALESCE(average_score, 0)) AS best_score
+                    FROM sessions
+                    WHERE chat_id = ? AND target_language = ? AND status = 'completed'
+                    GROUP BY scenario_id
+                    """,
+                    (chat_id, target_language),
+                ).fetchall()
+            )
+            reviews = list(
+                self._connection.execute(
+                    """
+                    SELECT scenario_id,
+                           SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+                           MAX(CASE WHEN status = 'completed' THEN COALESCE(score, 0) ELSE 0 END) AS best_score,
+                           SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending
+                    FROM reviews
+                    WHERE chat_id = ? AND target_language = ?
+                    GROUP BY scenario_id
+                    """,
+                    (chat_id, target_language),
+                ).fetchall()
+            )
+            drills = self._connection.execute(
+                """
+                SELECT COUNT(*) AS completed,
+                       COALESCE(AVG(CASE WHEN status = 'completed' THEN correct_count * 1.0 / total_items END), 0) AS average
+                FROM drill_sessions
+                WHERE chat_id = ? AND target_language = ? AND status = 'completed'
+                """,
+                (chat_id, target_language),
+            ).fetchone()
+        return {
+            "level": str(user["learner_level"]),
+            "target_language": target_language,
+            "sessions": [dict(row) for row in sessions],
+            "reviews": [dict(row) for row in reviews],
+            "completed_drills": int(drills["completed"] or 0),
+            "drill_average": float(drills["average"] or 0),
+        }

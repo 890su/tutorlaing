@@ -83,6 +83,24 @@ class ReminderTests(unittest.TestCase):
             self.assertGreater(next_at, now)
             storage.close()
 
+    def test_stale_scheduler_snapshot_cannot_send_a_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            database = Path(temp) / "test.sqlite3"
+            first = Storage(database)
+            second = Storage(database)
+            first.ensure_user(58, "Learner")
+            first.accept_consent(58, 2)
+            now = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
+            due_at = now - timedelta(minutes=1)
+            next_at = now + timedelta(hours=1)
+            first.set_reminder_mode(58, "normal", due_at)
+            stale_value = str(second.due_reminder_users(now)[0]["reminder_next_at"])
+
+            self.assertTrue(first.reserve_next_reminder(58, stale_value, now, next_at))
+            self.assertFalse(second.reserve_next_reminder(58, stale_value, now, next_at))
+            first.close()
+            second.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -98,7 +98,10 @@ class ReminderScheduler:
             if not is_delivery_time(current, str(user["timezone"])):
                 self.storage.schedule_next_reminder(chat_id, next_at)
                 continue
-            self.storage.reserve_next_reminder(chat_id, current, next_at)
+            if not self.storage.reserve_next_reminder(
+                chat_id, str(user["reminder_next_at"]), current, next_at
+            ):
+                continue
             try:
                 self.bot.send_scheduled_reminder(chat_id, mode)
                 sent += 1
