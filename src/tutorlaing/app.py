@@ -599,6 +599,7 @@ class TutorlaingBot:
         analysis: ResponseAnalysis,
         analysis_id: int,
         continuation: bool = False,
+        force_new: bool = False,
     ) -> None:
         language = self._language(chat_id)
         lines = [
@@ -644,6 +645,7 @@ class TutorlaingBot:
             chat_id,
             "".join(lines),
             keyboard,
+            force_new=force_new,
             surface="scenario_feedback",
         )
 
@@ -675,7 +677,11 @@ class TutorlaingBot:
 
         if analysis is not None and analysis_id is not None:
             self._send_ai_feedback(
-                chat_id, analysis, analysis_id, continuation=True
+                chat_id,
+                analysis,
+                analysis_id,
+                continuation=True,
+                force_new=True,
             )
         elif evaluation.successful:
             self._workspace(
@@ -683,6 +689,8 @@ class TutorlaingBot:
                 "✅ Коммуникативная задача выполнена.\n\n"
                 + self._drill_continuation_text(chat_id),
                 [[{"text": "Следующее задание →", "callback_data": "assignment:next"}]],
+                force_new=True,
+                surface="scenario_feedback",
             )
         else:
             self._workspace(
@@ -690,6 +698,7 @@ class TutorlaingBot:
                 "Ответ принят. В конце выберу одно главное затруднение для короткой тренировки.\n\n"
                 + self._drill_continuation_text(chat_id),
                 [[{"text": self._t(chat_id, "action.next"), "callback_data": "assignment:next"}]],
+                force_new=True,
                 surface="scenario_feedback",
             )
 
@@ -792,7 +801,7 @@ class TutorlaingBot:
         )
         attempts = self.storage.response_count(session_id, "practice")
         if analysis is not None and analysis_id is not None:
-            self._send_ai_feedback(chat_id, analysis, analysis_id)
+            self._send_ai_feedback(chat_id, analysis, analysis_id, force_new=True)
         if evaluation.successful:
             self.finish_session(chat_id, scenario, session_id, step_index, evaluation.score)
         elif attempts < 2:
@@ -955,7 +964,7 @@ class TutorlaingBot:
             chat_id, user, scenario, step_index, text
         )
         if analysis is not None and analysis_id is not None:
-            self._send_ai_feedback(chat_id, analysis, analysis_id)
+            self._send_ai_feedback(chat_id, analysis, analysis_id, force_new=True)
         self.storage.complete_review(review_id, evaluation.score)
         self.storage.event(
             chat_id,
@@ -1415,7 +1424,9 @@ class TutorlaingBot:
             corrected_answer=item.correct_answer,
         )
 
-    def answer_drill(self, chat_id: int, item_id: int, response: str) -> None:
+    def answer_drill(
+        self, chat_id: int, item_id: int, response: str, *, force_new: bool = False
+    ) -> None:
         user = self.storage.get_user(chat_id)
         drill_id = user["current_drill"]
         if user["stage"] != "drill" or not drill_id:
@@ -1441,6 +1452,7 @@ class TutorlaingBot:
             chat_id,
             card(title, "\n\n".join(body)),
             [[{"text": self._t(chat_id, "action.next"), "callback_data": f"drill:next:{drill_id}"}]],
+            force_new=force_new,
             surface="drill_feedback",
         )
         self.storage.event(
@@ -1498,7 +1510,7 @@ class TutorlaingBot:
         if item.options:
             self._workspace(chat_id, self._t(chat_id, "drill.choose"), surface="drill_task")
             return
-        self.answer_drill(chat_id, int(row["id"]), text)
+        self.answer_drill(chat_id, int(row["id"]), text, force_new=True)
 
     def answer_drill_choice(self, chat_id: int, item_id: int, option_index: int) -> None:
         user = self.storage.get_user(chat_id)

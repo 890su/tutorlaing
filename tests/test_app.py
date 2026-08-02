@@ -347,13 +347,13 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual(1, len(self.telegram.messages))
 
         bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
-        self.assertEqual(1, len(self.telegram.messages))
-        self.assertGreaterEqual(len(self.telegram.edits), 3)
-        self.assertEqual("Следующее задание →", self.telegram.messages[0]["keyboard"][0][0]["text"])
+        self.assertEqual(2, len(self.telegram.messages))
+        self.assertGreaterEqual(len(self.telegram.edits), 2)
+        self.assertEqual("Следующее задание →", self.telegram.messages[-1]["keyboard"][0][0]["text"])
 
         bot.handle_callback(chat_id, "Learner", "next", "assignment:next")
-        self.assertEqual(1, len(self.telegram.messages))
-        self.assertIn("2/2", self.telegram.messages[0]["text"])
+        self.assertEqual(2, len(self.telegram.messages))
+        self.assertIn("2/2", self.telegram.messages[-1]["text"])
 
     def test_progress_and_interface_follow_instruction_language(self) -> None:
         chat_id = 18
