@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .privacy import CONSENT_VERSION
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -278,7 +280,7 @@ class Storage:
             raise KeyError(f"Unknown user: {chat_id}")
         return row
 
-    def accept_consent(self, chat_id: int, version: int = 2) -> None:
+    def accept_consent(self, chat_id: int, version: int = CONSENT_VERSION) -> None:
         now = utc_now()
         with self._lock, self._connection:
             self._connection.execute(
@@ -765,7 +767,7 @@ class Storage:
                 self._connection.execute(
                     """
                     SELECT * FROM users
-                    WHERE consent_version >= 2
+                    WHERE consent_version >= ?
                       AND reminder_mode != 'off'
                       AND reminder_next_at IS NOT NULL
                       AND reminder_next_at <= ?
@@ -774,7 +776,7 @@ class Storage:
                       AND stage IN ('idle', 'drill', 'waiting')
                     ORDER BY reminder_next_at ASC
                     """,
-                    (current, current),
+                    (CONSENT_VERSION, current, current),
                 ).fetchall()
             )
 

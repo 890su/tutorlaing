@@ -9,6 +9,7 @@ from .contracts import Keyboard, MenuStore
 from .i18n import tr
 from .language_support import LanguageSupport
 from .navigation import back_row, home_row
+from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
 from .reminders import next_reminder_at
 from .ui import card, progress
@@ -22,7 +23,6 @@ LANGUAGE_LABELS = {
     "pl": "Polski",
 }
 REMINDER_MODES = ("off", "gentle", "normal", "intensive", "aggressive")
-CONSENT_VERSION = 2
 
 
 class LearnerMenu:
@@ -145,7 +145,7 @@ class LearnerMenu:
             "Cześć! Я помогу подготовиться к реальным разговорам на новом языке.\n\n"
             "Alpha сохраняет ваши текстовые ответы, результаты и Telegram ID. "
             "Для персональной проверки учебная реплика и минимальный контекст "
-            "отправляются Google Gemini. Имя и Telegram ID в AI не передаются. "
+            "отправляются OpenAI или Google Gemini. Имя и Telegram ID в AI не передаются. "
             "Голос не записывается. Все данные можно удалить командой /delete_me.\n\n"
             "Продолжить?",
             [
@@ -401,7 +401,7 @@ class LearnerMenu:
         text = (
             "Alpha хранит Telegram ID, имя, текст ответов, оценки и расписание "
             "повторений. Для проверки фразы её текст, текущая реплика и учебная "
-            "цель отправляются Google Gemini. Telegram ID, имя и история других "
+            "цель отправляются OpenAI или Google Gemini. Telegram ID, имя и история других "
             "сценариев в AI не передаются. Голос и контакты не собираются. Полные "
             "тексты не отправляются в продуктовую аналитику.\n\n"
             "Удалить все данные можно командой /delete_me."

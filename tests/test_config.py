@@ -47,6 +47,28 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(settings.ai_enabled)
         self.assertEqual("gemini-3.5-flash", settings.gemini_model)
 
+    def test_openai_primary_and_gemini_fallback_are_configured(self) -> None:
+        environment = {
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "AI_PROVIDER": "openai",
+            "AI_FALLBACK_PROVIDER": "gemini",
+            "OPENAI_API_KEY": "openai-test-key",
+            "GEMINI_API_KEY": "gemini-test-key",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            settings = Settings.from_env()
+        self.assertTrue(settings.ai_enabled)
+        self.assertEqual("openai", settings.ai_provider)
+        self.assertEqual("gemini", settings.ai_fallback_provider)
+        self.assertEqual("gpt-5.6-sol", settings.openai_model)
+        self.assertEqual("low", settings.openai_reasoning_effort)
+
+    def test_openai_provider_requires_key(self) -> None:
+        environment = {"TELEGRAM_BOT_TOKEN": "test-token", "AI_PROVIDER": "openai"}
+        with patch.dict(os.environ, environment, clear=True):
+            with self.assertRaises(ValueError):
+                Settings.from_env()
+
 
 if __name__ == "__main__":
     unittest.main()

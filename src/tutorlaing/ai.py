@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -10,6 +12,7 @@ from typing import Any, Callable, Protocol
 from .content import ScenarioStep
 
 
+LOGGER = logging.getLogger(__name__)
 PROMPT_VERSION = "response-analysis-v1"
 LANGUAGE_NAMES = {"ru": "Russian", "uk": "Ukrainian", "en": "English", "pl": "Polish"}
 
@@ -840,3 +843,171 @@ class GeminiClient:
             if term and term in text and translation and cefr in levels[1:]:
                 notes.append({"term": term, "translation": translation, "cefr": cefr})
         return notes
+
+
+class OpenAIClient(GeminiClient):
+    """OpenAI Responses API adapter reusing the shared tutoring prompt contract."""
+
+    provider = "openai"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-5.6-sol",
+        timeout: int = 45,
+        reasoning_effort: str = "low",
+        opener: Callable[..., Any] = urllib.request.urlopen,
+    ):
+        if not api_key:
+            raise ValueError("OpenAI API key is required")
+        if reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("Unsupported OpenAI reasoning effort")
+        self.api_key = api_key
+        self.model = model
+        self.timeout = timeout
+        self.reasoning_effort = reasoning_effort
+        self._opener = opener
+
+    @staticmethod
+    def _output_text(envelope: dict[str, Any]) -> str:
+        chunks: list[str] = []
+        for output in envelope.get("output", []):
+            if not isinstance(output, dict):
+                continue
+            for content in output.get("content", []):
+                if isinstance(content, dict) and content.get("type") == "output_text":
+                    chunks.append(str(content.get("text", "")))
+        return "".join(chunks)
+
+    def _generate(
+        self, system_instruction: str, prompt: str, schema: dict[str, Any]
+    ) -> tuple[dict[str, Any], int, dict[str, Any]]:
+        payload = {
+            "model": self.model,
+            "instructions": system_instruction,
+            "input": prompt,
+            "reasoning": {"effort": self.reasoning_effort},
+            "max_output_tokens": 8192,
+            "store": False,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "tutorlaing_response",
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+        }
+        request = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "TutorlaingBot/0.2",
+            },
+        )
+        last_error: Exception | None = None
+        for attempt in range(2):
+            started = time.monotonic()
+            try:
+                with self._opener(request, timeout=self.timeout) as response:
+                    envelope = json.loads(response.read().decode("utf-8"))
+                latency_ms = int((time.monotonic() - started) * 1000)
+                raw = self._output_text(envelope)
+                if not raw:
+                    raise AIError("OpenAI returned no output text")
+                decoded = json.loads(raw)
+                if not isinstance(decoded, dict):
+                    raise AIError("OpenAI returned a non-object JSON value")
+                return decoded, latency_ms, dict(envelope.get("usage", {}))
+            except urllib.error.HTTPError as exc:
+                last_error = exc
+                if exc.code not in {408, 409, 429, 500, 502, 503, 504} or attempt == 1:
+                    break
+                time.sleep(0.5 * (attempt + 1))
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, AIError) as exc:
+                last_error = exc
+                if attempt == 1:
+                    break
+                time.sleep(0.5 * (attempt + 1))
+        if isinstance(last_error, urllib.error.HTTPError):
+            raise AIError(f"OpenAI request failed with HTTP {last_error.code}") from last_error
+        raise AIError(f"OpenAI request failed: {type(last_error).__name__}") from last_error
+
+
+class FailoverAIClient:
+    """AIClient decorator that temporarily bypasses a failing primary provider."""
+
+    def __init__(
+        self,
+        primary: AIClient,
+        fallback: AIClient,
+        cooldown_seconds: int = 300,
+    ):
+        self.primary = primary
+        self.fallback = fallback
+        self.cooldown_seconds = max(0, cooldown_seconds)
+        self._primary_open_until = 0.0
+        self._lock = threading.Lock()
+        self._local = threading.local()
+
+    @property
+    def provider(self) -> str:
+        client = getattr(self._local, "last_client", self.primary)
+        return client.provider
+
+    @property
+    def model(self) -> str:
+        client = getattr(self._local, "last_client", self.primary)
+        return client.model
+
+    def _primary_available(self) -> bool:
+        with self._lock:
+            return time.monotonic() >= self._primary_open_until
+
+    def _open_primary_circuit(self) -> None:
+        with self._lock:
+            self._primary_open_until = time.monotonic() + self.cooldown_seconds
+
+    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        if self._primary_available():
+            try:
+                result = getattr(self.primary, method)(*args, **kwargs)
+                self._local.last_client = self.primary
+                return result
+            except AIError:
+                self._open_primary_circuit()
+                LOGGER.warning(
+                    "Primary AI provider failed; using fallback",
+                    extra={"provider": self.primary.provider, "operation": method},
+                    exc_info=True,
+                )
+        result = getattr(self.fallback, method)(*args, **kwargs)
+        self._local.last_client = self.fallback
+        return result
+
+    def analyze_response(self, *args: Any, **kwargs: Any) -> ResponseAnalysis:
+        return self._call("analyze_response", *args, **kwargs)
+
+    def translate(self, *args: Any, **kwargs: Any) -> dict[str, str]:
+        return self._call("translate", *args, **kwargs)
+
+    def explain_grammar(self, *args: Any, **kwargs: Any) -> dict[str, str]:
+        return self._call("explain_grammar", *args, **kwargs)
+
+    def generate_drill_pack(self, *args: Any, **kwargs: Any) -> DrillPack:
+        return self._call("generate_drill_pack", *args, **kwargs)
+
+    def generate_toolkit_pack(self, *args: Any, **kwargs: Any) -> DrillPack:
+        return self._call("generate_toolkit_pack", *args, **kwargs)
+
+    def translate_with_variants(self, *args: Any, **kwargs: Any) -> PhraseTranslation:
+        return self._call("translate_with_variants", *args, **kwargs)
+
+    def evaluate_drill_answer(self, *args: Any, **kwargs: Any) -> DrillEvaluation:
+        return self._call("evaluate_drill_answer", *args, **kwargs)
+
+    def glossary_notes(self, *args: Any, **kwargs: Any) -> list[dict[str, str]]:
+        return self._call("glossary_notes", *args, **kwargs)

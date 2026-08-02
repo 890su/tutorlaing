@@ -5,6 +5,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from tutorlaing.reminders import ReminderScheduler, next_reminder_at, pause_until_tomorrow
+from tutorlaing.privacy import CONSENT_VERSION
 from tutorlaing.storage import Storage
 
 
@@ -32,7 +33,7 @@ class ReminderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             storage = Storage(Path(temp) / "test.sqlite3")
             storage.ensure_user(55, "Learner")
-            storage.accept_consent(55, 2)
+            storage.accept_consent(55, CONSENT_VERSION)
             now = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
             storage.set_reminder_mode(55, "gentle", now - timedelta(minutes=1))
             bot = FakeReminderBot()
@@ -46,7 +47,7 @@ class ReminderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             storage = Storage(Path(temp) / "test.sqlite3")
             storage.ensure_user(56, "Learner")
-            storage.accept_consent(56, 2)
+            storage.accept_consent(56, CONSENT_VERSION)
             item = {
                 "type": "free_recall",
                 "skill": "chunk",
@@ -72,7 +73,7 @@ class ReminderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             storage = Storage(Path(temp) / "test.sqlite3")
             storage.ensure_user(57, "Learner")
-            storage.accept_consent(57, 2)
+            storage.accept_consent(57, CONSENT_VERSION)
             now = datetime(2026, 8, 1, 21, 0, tzinfo=timezone.utc)
             storage.set_reminder_mode(57, "aggressive", now - timedelta(minutes=1))
             bot = FakeReminderBot()
@@ -89,7 +90,7 @@ class ReminderTests(unittest.TestCase):
             first = Storage(database)
             second = Storage(database)
             first.ensure_user(58, "Learner")
-            first.accept_consent(58, 2)
+            first.accept_consent(58, CONSENT_VERSION)
             now = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
             due_at = now - timedelta(minutes=1)
             next_at = now + timedelta(hours=1)

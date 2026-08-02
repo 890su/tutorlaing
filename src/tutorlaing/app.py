@@ -10,7 +10,9 @@ from .ai import (
     AIError,
     DrillEvaluation,
     DrillItem,
+    FailoverAIClient,
     GeminiClient,
+    OpenAIClient,
     ResponseAnalysis,
 )
 from .config import Settings
@@ -26,8 +28,9 @@ from .i18n import tr
 from .feedback import FeedbackPresenter
 from .evaluation_service import ResponseEvaluator
 from .language_support import LanguageSupport
-from .menu import CONSENT_VERSION, LearnerMenu
+from .menu import LearnerMenu
 from .navigation import home_row
+from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
@@ -57,11 +60,15 @@ class TutorlaingBot:
         self.telegram = telegram or TelegramAPI(settings.telegram_bot_token)
         self.ai = ai
         if self.ai is None and settings.ai_enabled:
-            self.ai = GeminiClient(
-                settings.gemini_api_key,
-                settings.gemini_model,
-                settings.ai_timeout,
-            )
+            primary = self._build_ai_provider(settings.ai_provider)
+            if settings.ai_fallback_provider == "none":
+                self.ai = primary
+            else:
+                self.ai = FailoverAIClient(
+                    primary,
+                    self._build_ai_provider(settings.ai_fallback_provider),
+                    settings.ai_failover_cooldown,
+                )
         self.catalog = ScenarioCatalog()
         self.workspace = TelegramWorkspace(storage, self.telegram)
         self.language_support = LanguageSupport(storage, self.ai)
@@ -85,6 +92,22 @@ class TutorlaingBot:
         )
         self.offset = 0
         self.running = True
+
+    def _build_ai_provider(self, provider: str) -> AIClient:
+        if provider == "gemini":
+            return GeminiClient(
+                self.settings.gemini_api_key,
+                self.settings.gemini_model,
+                self.settings.ai_timeout,
+            )
+        if provider == "openai":
+            return OpenAIClient(
+                self.settings.openai_api_key,
+                self.settings.openai_model,
+                self.settings.ai_timeout,
+                self.settings.openai_reasoning_effort,
+            )
+        raise ValueError(f"Unsupported AI provider: {provider}")
 
     def is_allowed(self, chat_id: int) -> bool:
         allowed = self.settings.allowed_chat_ids

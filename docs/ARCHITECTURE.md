@@ -16,7 +16,7 @@
   обратную зависимость application → composition;
 - Telegram `callback_data` и пользовательские состояния представлены строками,
   поэтому опечатки обнаруживаются только во время выполнения;
-- `ai.py` содержит и модели результата, и порт провайдера, и Gemini adapter;
+- `ai.py` содержит модели результата, порт, OpenAI/Gemini adapters и failover;
 - границы модулей не проверялись автоматически.
 
 После первого этапа:
@@ -54,7 +54,9 @@ flowchart LR
     WS --> PORTS
     PORTS --> DB["Storage / SQLite adapter"]
     PORTS --> API["TelegramAPI adapter"]
-    PORTS --> GEM["GeminiClient adapter"]
+    PORTS --> ROUTER["FailoverAIClient"]
+    ROUTER --> OAI["OpenAIClient / Responses API"]
+    ROUTER --> GEM["GeminiClient adapter"]
 ```
 
 Правило: composition и adapters могут знать application-модули; application
@@ -76,6 +78,7 @@ flowchart LR
 | `update_dispatcher.py` | Dedupe и нормализация Telegram update | `UpdateStore`, `TelegramGateway`, `UpdateTarget` | Один вызов text/callback handler; failed update доступен для retry |
 | `reminders.py` | Расчёт слотов и атомарная доставка | `ReminderStore`, `ReminderDelivery` | Не более одного assignment на зарезервированный slot |
 | `toolkit.py` | Независимый слой карточек, перевода и тематических тренировок | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Stateless-перевод либо временный drill с возвратом основной активности |
+| `toolkit_fallback.py` | Детерминированные карточки/topic packs без внешнего AI | Курируемый material + instruction language | Валидный `DrillPack` с теми же invariants |
 | `app.py` | Composition root и orchestration учебной state machine | concrete adapters + application services | Переходы scenario/practice/review/drill |
 | `storage.py` | SQLite schema, migrations и транзакционные операции | вызовы портов | Персистентное состояние и audit events |
 
@@ -115,10 +118,14 @@ Protocols являются структурными: `Storage` и `TelegramAPI` 
 
 ### AI provider
 
-`ai.py` пока объединяет DTO/schema, `AIClient` и Gemini adapter. Перед вторым
-провайдером нужно выделить `ai_models.py`, provider port и adapters, а также
-централизованные timeout/retry/cost policies. До второго провайдера это
-контролируемый долг.
+`AIClient` реализуют `OpenAIClient` (Responses API) и `GeminiClient`;
+`FailoverAIClient` декорирует их без изменения application contracts и
+временно размыкает primary circuit после `AIError`. Общие tutoring prompts и
+schemas сейчас повторно используются через наследование `OpenAIClient` от
+`GeminiClient`. Это прагматичный compatibility layer, но имена providers не
+должны становиться доменной иерархией. Следующий refactor — выделить DTO/schema,
+общий prompted client и два независимых transport adapters, сохранив текущие
+контрактные tests.
 
 ## Правила дальнейших изменений
 
@@ -146,6 +153,7 @@ Protocols являются структурными: `Storage` и `TelegramAPI` 
 3. Вынести schema migrations из `Storage` и тестировать upgrade с каждой
    поддерживаемой предыдущей версии.
 4. Типизировать callback actions и learner stages через enum/value objects.
-5. Разделить AI models/port/Gemini adapter перед подключением второго provider.
+5. Разделить AI models/port, общий prompt service и OpenAI/Gemini transport
+   adapters без изменения `AIClient` и failover semantics.
 6. Добавить formatter/linter/type-checker в CI после устранения исторических
    нарушений, без массового изменения продуктового кода одним коммитом.

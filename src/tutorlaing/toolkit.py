@@ -15,6 +15,7 @@ from .contracts import (
 )
 from .i18n import tr
 from .navigation import back_row, home_row
+from .toolkit_fallback import build_toolkit_fallback
 from .ui import card
 from .workspace import TelegramWorkspace
 
@@ -160,10 +161,6 @@ class PracticeToolkit:
                 surface="toolkit_active",
             )
             return
-        if self.ai is None:
-            self._show_ai_unavailable(chat_id, language)
-            return
-
         try:
             material = self._pack_material(user, mode, scenario_id)
         except KeyError:
@@ -177,19 +174,25 @@ class PracticeToolkit:
             ),
             surface="toolkit_preparing",
         )
+        used_fallback = self.ai is None
         try:
-            pack = self.ai.generate_toolkit_pack(
-                mode,
-                material,
-                language,
-                str(user["target_language"]),
-                str(user["translation_language"]),
-            )
+            if self.ai is None:
+                pack = build_toolkit_fallback(mode, material, language)
+            else:
+                try:
+                    pack = self.ai.generate_toolkit_pack(
+                        mode,
+                        material,
+                        language,
+                        str(user["target_language"]),
+                        str(user["translation_language"]),
+                    )
+                except AIError:
+                    LOGGER.exception("AI toolkit pack generation failed")
+                    used_fallback = True
+                    pack = build_toolkit_fallback(mode, material, language)
         except AIError:
-            LOGGER.exception("AI toolkit pack generation failed")
-            self.store.event(
-                chat_id, "ai_fallback_used", {"operation": f"toolkit_{mode}"}
-            )
+            LOGGER.exception("Toolkit fallback pack generation failed")
             self.workspace.show(
                 chat_id,
                 card(
@@ -212,6 +215,11 @@ class PracticeToolkit:
                 surface="toolkit_error",
             )
             return
+
+        if used_fallback:
+            self.store.event(
+                chat_id, "ai_fallback_used", {"operation": f"toolkit_{mode}"}
+            )
 
         self.store.suspend_activity(chat_id)
         drill_id = self.store.start_drill(

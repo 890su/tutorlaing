@@ -42,14 +42,19 @@ class Settings:
     telegram_webhook_url: str
     telegram_webhook_secret: str
     ai_provider: str = "none"
+    ai_fallback_provider: str = "none"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.6-sol"
+    openai_reasoning_effort: str = "low"
     ai_timeout: int = 45
+    ai_failover_cooldown: int = 300
     reminder_scan_seconds: int = 60
 
     @property
     def ai_enabled(self) -> bool:
-        return self.ai_provider == "gemini" and bool(self.gemini_api_key)
+        return self.ai_provider != "none"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -68,11 +73,32 @@ class Settings:
             raise ValueError("TELEGRAM_WEBHOOK_URL must use https://")
 
         ai_provider = os.environ.get("AI_PROVIDER", "none").strip().lower()
-        if ai_provider not in {"none", "gemini"}:
-            raise ValueError("AI_PROVIDER must be 'none' or 'gemini'")
+        providers = {"none", "gemini", "openai"}
+        if ai_provider not in providers:
+            raise ValueError("AI_PROVIDER must be 'none', 'gemini' or 'openai'")
+        fallback_provider = os.environ.get(
+            "AI_FALLBACK_PROVIDER", "none"
+        ).strip().lower()
+        if fallback_provider not in providers:
+            raise ValueError(
+                "AI_FALLBACK_PROVIDER must be 'none', 'gemini' or 'openai'"
+            )
+        if ai_provider == "none" and fallback_provider != "none":
+            raise ValueError("AI_FALLBACK_PROVIDER requires an enabled AI_PROVIDER")
+        if fallback_provider == ai_provider and fallback_provider != "none":
+            raise ValueError("AI_FALLBACK_PROVIDER must differ from AI_PROVIDER")
         gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if ai_provider == "gemini" and not gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is required when AI_PROVIDER=gemini")
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        configured = {ai_provider, fallback_provider}
+        if "gemini" in configured and not gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is required for the Gemini provider")
+        if "openai" in configured and not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required for the OpenAI provider")
+        reasoning_effort = os.environ.get(
+            "OPENAI_REASONING_EFFORT", "low"
+        ).strip().lower()
+        if reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("OPENAI_REASONING_EFFORT is not supported")
 
         return cls(
             telegram_bot_token=token,
@@ -87,9 +113,16 @@ class Settings:
             telegram_webhook_url=webhook_url,
             telegram_webhook_secret=webhook_secret,
             ai_provider=ai_provider,
+            ai_fallback_provider=fallback_provider,
             gemini_api_key=gemini_api_key,
             gemini_model=os.environ.get("GEMINI_MODEL", "gemini-3.5-flash").strip(),
+            openai_api_key=openai_api_key,
+            openai_model=os.environ.get("OPENAI_MODEL", "gpt-5.6-sol").strip(),
+            openai_reasoning_effort=reasoning_effort,
             ai_timeout=max(10, min(120, int(os.environ.get("AI_TIMEOUT", "45")))),
+            ai_failover_cooldown=max(
+                0, min(3600, int(os.environ.get("AI_FAILOVER_COOLDOWN", "300")))
+            ),
             reminder_scan_seconds=max(
                 15, min(3600, int(os.environ.get("REMINDER_SCAN_SECONDS", "60")))
             ),

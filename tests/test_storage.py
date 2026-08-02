@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tutorlaing.storage import Storage
+from tutorlaing.privacy import CONSENT_VERSION
 
 
 class StorageTests(unittest.TestCase):
@@ -171,7 +172,7 @@ class StorageTests(unittest.TestCase):
     def test_phrase_input_temporarily_suppresses_scheduled_delivery(self) -> None:
         chat_id = 89
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
         now = datetime.now(timezone.utc)
         self.storage.set_reminder_mode(chat_id, "normal", now - timedelta(minutes=1))
         self.storage.set_user_state(

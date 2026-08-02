@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from tutorlaing.ai import DrillPack, GeminiClient
+from tutorlaing.ai import AIError, DrillPack, FailoverAIClient, GeminiClient, OpenAIClient
 from tutorlaing.content import load_scenarios
 
 
@@ -179,6 +179,71 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(5, len(pack.items))
         self.assertTrue(all(item.type == "flashcard" for item in pack.items))
         self.assertTrue(all(len(item.options) == 4 for item in pack.items))
+
+
+class OpenAIClientTests(unittest.TestCase):
+    def test_responses_api_structured_output_is_parsed(self) -> None:
+        envelope = {
+            "model": "gpt-5.6-sol",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": json.dumps(
+                                {"translation": "Dzień dobry", "note": "neutral"}
+                            ),
+                        }
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 12, "output_tokens": 9},
+        }
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(request)
+            return FakeHTTPResponse(envelope)
+
+        client = OpenAIClient("test-key", opener=opener)
+
+        result = client.translate("Здравствуйте", "pl")
+
+        self.assertEqual("Dzień dobry", result["translation"])
+        payload = json.loads(requests[0].data.decode("utf-8"))
+        self.assertEqual("gpt-5.6-sol", payload["model"])
+        self.assertEqual({"effort": "low"}, payload["reasoning"])
+        self.assertFalse(payload["store"])
+        self.assertEqual("json_schema", payload["text"]["format"]["type"])
+
+    def test_failover_opens_primary_circuit_and_reports_used_route(self) -> None:
+        class Stub:
+            def __init__(self, provider, result=None, error=False):
+                self.provider = provider
+                self.model = provider + "-model"
+                self.result = result
+                self.error = error
+                self.calls = 0
+
+            def translate(self, *_args, **_kwargs):
+                self.calls += 1
+                if self.error:
+                    raise AIError("temporary")
+                return self.result
+
+        primary = Stub("gemini", error=True)
+        fallback = Stub("openai", {"translation": "ok", "note": ""})
+        client = FailoverAIClient(primary, fallback, cooldown_seconds=60)
+
+        self.assertEqual("ok", client.translate("x", "en")["translation"])
+        self.assertEqual("ok", client.translate("x", "en")["translation"])
+
+        self.assertEqual(1, primary.calls)
+        self.assertEqual(2, fallback.calls)
+        self.assertEqual("openai", client.provider)
+        self.assertEqual("openai-model", client.model)
 
 
 if __name__ == "__main__":

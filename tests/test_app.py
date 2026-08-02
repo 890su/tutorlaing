@@ -14,6 +14,7 @@ from tutorlaing.ai import (
 )
 from tutorlaing.app import TutorlaingBot
 from tutorlaing.config import Settings
+from tutorlaing.privacy import CONSENT_VERSION
 from tutorlaing.storage import Storage
 
 
@@ -241,20 +242,21 @@ class AppFlowTests(unittest.TestCase):
 
     def test_existing_consent_requires_ai_disclosure_upgrade(self) -> None:
         self.storage.ensure_user(8, "Existing")
-        self.storage.accept_consent(8, 1)
+        self.storage.accept_consent(8, 2)
         self.bot.start(8, "Existing")
+        self.assertIn("OpenAI", self.telegram.messages[-1]["text"])
         self.assertIn("Google Gemini", self.telegram.messages[-1]["text"])
 
     def test_language_setting_is_persisted(self) -> None:
         self.storage.ensure_user(9, "Learner")
-        self.storage.accept_consent(9, 2)
+        self.storage.accept_consent(9, CONSENT_VERSION)
         self.bot.handle_callback(9, "Learner", "cb", "settings:set:instruction:uk")
         self.assertEqual("uk", self.storage.get_user(9)["instruction_language"])
 
     def test_polish_explanations_and_english_target_are_available(self) -> None:
         chat_id = 10
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
         self.bot.handle_callback(
             chat_id, "Learner", "cb1", "settings:set:instruction:pl"
         )
@@ -313,7 +315,7 @@ class AppFlowTests(unittest.TestCase):
     def test_reminder_mode_is_configurable(self) -> None:
         chat_id = 13
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
         self.bot.handle_callback(chat_id, "Learner", "cb", "reminder:set:aggressive")
         user = self.storage.get_user(chat_id)
         self.assertEqual("aggressive", user["reminder_mode"])
@@ -402,7 +404,7 @@ class AppFlowTests(unittest.TestCase):
     def test_progress_and_interface_follow_instruction_language(self) -> None:
         chat_id = 18
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
         self.storage.set_language(chat_id, "instruction_language", "pl")
         self.storage.set_learner_level(chat_id, "B1")
 
@@ -454,6 +456,18 @@ class AppFlowTests(unittest.TestCase):
         )
         self.assertIn("ПОКАЖУ ОТВЕТ", self.telegram.messages[-1]["text"])
         self.assertIn("У меня болит горло", self.telegram.messages[-1]["text"])
+
+    def test_toolkit_flashcards_work_without_an_ai_provider(self) -> None:
+        chat_id = 31
+        self.bot.start(chat_id, "Learner")
+        self.bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+
+        self.bot.handle_callback(chat_id, "Learner", "cards", "toolkit:start:cards")
+
+        session = self.storage.active_drill(chat_id)
+        self.assertIsNotNone(session)
+        self.assertEqual("toolkit_cards", session["mode"])
+        self.assertEqual(5, session["total_items"])
 
     def test_phrase_tool_translates_both_directions_with_variants(self) -> None:
         class RecordingAI(FakeAI):
@@ -618,7 +632,7 @@ class AppFlowTests(unittest.TestCase):
     def test_home_has_one_recommended_action_without_duplicate_reviews(self) -> None:
         chat_id = 23
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
 
         self.bot.home(chat_id)
 
@@ -633,7 +647,7 @@ class AppFlowTests(unittest.TestCase):
     def test_home_resumes_active_task_as_the_primary_action(self) -> None:
         chat_id = 24
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
         self.bot.begin_scenario(chat_id, "pharmacy")
 
         self.bot.home(chat_id)
@@ -644,7 +658,7 @@ class AppFlowTests(unittest.TestCase):
     def test_settings_use_sections_and_explicit_parent_navigation(self) -> None:
         chat_id = 25
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
 
         self.bot.show_settings(chat_id)
         callbacks = [row[0]["callback_data"] for row in self.telegram.messages[-1]["keyboard"]]
@@ -665,7 +679,7 @@ class AppFlowTests(unittest.TestCase):
     def test_finish_confirmation_preserves_active_task_until_confirmed(self) -> None:
         chat_id = 26
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
         self.bot.begin_scenario(chat_id, "pharmacy")
 
         self.bot.handle_callback(chat_id, "Learner", "stop", "cancel:confirm")
@@ -684,7 +698,7 @@ class AppFlowTests(unittest.TestCase):
     def test_empty_review_screen_always_offers_home(self) -> None:
         chat_id = 27
         self.storage.ensure_user(chat_id, "Learner")
-        self.storage.accept_consent(chat_id, 2)
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
 
         self.bot.show_reviews(chat_id)
 

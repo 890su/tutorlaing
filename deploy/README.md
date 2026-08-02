@@ -15,8 +15,10 @@ stores runtime data in a named Docker volume.
 ## Required secrets
 
 Create ~/services/tutorlaing/.env on the VM using .env.example as the schema.
-Required values are TELEGRAM_BOT_TOKEN, AI_PROVIDER, GEMINI_API_KEY and
-GEMINI_MODEL and, for a closed alpha, TELEGRAM_ALLOWED_CHAT_IDS.
+Required values are `TELEGRAM_BOT_TOKEN`, `AI_PROVIDER`, the selected provider
+key/model and, for a closed alpha, `TELEGRAM_ALLOWED_CHAT_IDS`. Production uses
+`AI_PROVIDER=openai`, `AI_FALLBACK_PROVIDER=gemini`, `OPENAI_MODEL=gpt-5.6-sol`
+and `OPENAI_REASONING_EFFORT=low`.
 Production compose sets TELEGRAM_WEBHOOK_URL. The random
 TELEGRAM_WEBHOOK_SECRET is stored in the server-only .env with mode 600.
 Local development may leave all webhook settings empty for polling.
@@ -30,10 +32,10 @@ protected .env:
     unset secret
 
 Do not paste the generated value into GitHub, documentation or command output.
-The Gemini key is copied directly from an existing protected server-side secret
-store into this `.env`; never print it. The verified model for the current key
-is `gemini-3.5-flash`. Pro models currently return a zero-quota response until
-billing is enabled.
+The OpenAI and Gemini keys exist only in this protected `.env`; never print
+them. Verified routes are `gpt-5.6-sol` through the OpenAI Responses API and
+`gemini-3.5-flash` as failover. Gemini may return `HTTP 429`; OpenAI is primary
+so this does not make the learner tool unavailable.
 
 Port 5678 is mapped to the app because the existing Cloudflare route for
 brain.sekond.pl already targets localhost:5678. Port 8080 remains available
@@ -90,7 +92,7 @@ Tutorlaing volume is included.
 - Webhook: https://brain.sekond.pl/telegram/webhook
 - Runtime containers: tutorlaing and n8n-mcp-projects-1
 - Persistent app volume: tutorlaing_tutorlaing-data
-- AI: Gemini enabled, model gemini-3.5-flash, consent v2 required
+- AI: OpenAI GPT-5.6 Sol primary, Gemini 3.5 Flash failover, consent v3 required
 - Adaptive drills: enabled; production smoke passed for 5 items / 5 types
 - Interactive toolkit: flashcards, bidirectional phrase variants and topic drills
 - Reminder scheduler: enabled; user mode defaults to off, Europe/Warsaw quiet hours

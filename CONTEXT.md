@@ -18,12 +18,14 @@ Telegram-first адаптивный тренер практического яз
   fallback.
 - 8 курируемых бытовых ситуаций в польской и английской версиях.
 - Rule-based диагностика коммуникативных смысловых групп.
-- Gemini 3.5 Flash анализирует каждый содержательный ответ; доступны
-  naturalness/variants, перевод по запросу и grammar drill-down.
-- Rule-based диагностика остаётся fallback при отказе или невалидном ответе AI.
+- OpenAI GPT-5.6 Sol анализирует каждый содержательный ответ; Gemini 3.5 Flash
+  подключён как автоматический failover. Доступны naturalness/variants, перевод
+  по запросу и grammar drill-down.
+- Rule-based диагностика остаётся независимым fallback при отказе или
+  невалидном ответе обоих AI routes.
 - Языковая модель профиля разделяет instruction, translation и target language;
   explanation/translation поддерживают `ru/uk/en/pl`, target — `pl/en`.
-- Gemini формирует 5-заданийные контекстные drill packs минимум 3 типов; выбор
+- AI формирует 5-заданийные контекстные drill packs минимум 3 типов; выбор
   проверяется локально, свободная формулировка — AI с допустимыми вариантами.
 - Напоминания opt-in: off/gentle/normal/intensive/aggressive, quiet hours
   `Europe/Warsaw`, пауза на день и защита от повторной доставки. Scheduler
@@ -43,11 +45,12 @@ Telegram-first адаптивный тренер практического яз
   translation language только для target-language материала минимум на два
   уровня сложнее. Экран прогресса показывает закреплённое, фокус и три
   ближайшие ситуации; это не официальный CEFR.
-- `/tools` открывает интерактивную мастерскую: AI-карточки по курируемым chunks
+- `/tools` открывает интерактивную мастерскую: карточки по курируемым chunks
   с четырьмя вариантами и `Не помню`, перевод собственной фразы
   translation↔target с natural/formal/informal вариантами и тематический
   drill pack без обязательной предыдущей сессии. Все packs используют общую
-  drill state machine и reminder delivery.
+  drill state machine и reminder delivery. Карточки и topic packs имеют
+  локальный curated fallback и доступны без внешнего AI.
 - Phrase translation является stateless overlay и не заменяет `stage`.
   Карточки, тематический pack и `Мои ошибки` сохраняют основную активность в
   `suspended_activity_json`, работают как временный drill и атомарно
@@ -60,15 +63,16 @@ Telegram-first адаптивный тренер практического яз
 - Production bot: @brnai_bot.
 - Telegram webhook: https://brain.sekond.pl/telegram/webhook.
 - Public health: https://brain.sekond.pl/health.
-- Production AI key хранится только в защищённом server-side `.env`; Pro-квота
-  старого ключа равна нулю, полный smoke-test проходит на gemini-3.5-flash.
+- Production AI keys хранятся только в защищённом server-side `.env`. Основной
+  route — `gpt-5.6-sol` с `reasoning.effort=low`, второй —
+  `gemini-3.5-flash`; consent v3 сообщает об обоих processors.
 - Application разбит на контрактные модули: catalog, workspace, menu,
   language support, progress, response evaluation, AI feedback, reminder и
   Telegram update dispatch. Composition/state orchestration остаётся в app;
   SQLite скрыт за узкими Protocol-портами. Архитектура описана в
   docs/ARCHITECTURE.md и защищена regression test.
-- Production drill smoke: 5 заданий 5 типов, 2 active-recall; AI-проверка
-  свободного ответа успешна. Локально проходят 66 тестов.
+- OpenAI smoke: русско-польский перевод с alternatives, 5 карточек по strict
+  schema и анализ польского ответа успешны. Локально проходят 73 теста.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

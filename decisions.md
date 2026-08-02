@@ -135,8 +135,8 @@ evaluation, feedback, reminders и Telegram update dispatch находятся �
 данных, оправдывающих network boundaries. Немедленное дробление SQLite adapter
 на repositories также отклонено, поскольку оно размоет текущие транзакции без
 второго storage backend. Следующие обоснованные границы — вертикальные
-Scenario/Review/Drill flows, typed DTO и отдельные AI models/adapter перед
-подключением второго provider.
+Scenario/Review/Drill flows, typed DTO и разделение общего prompt contract от
+OpenAI/Gemini transport adapters после подключения второго provider.
 
 ## 2026-08-02 — Practice toolkit reuses the drill engine
 
@@ -178,3 +178,21 @@ Home является dashboard возвращающегося ученика, �
 один текстовый ввод нельзя однозначно направить в два задания. Вместо этого
 используется последовательный overlay без потери прогресса. Вложенный stack
 также отклонён; повторный выбор инструмента продолжает уже открытый tool drill.
+
+## 2026-08-02 — OpenAI-first route с Gemini и локальным failover
+
+Основной AI route переведён на OpenAI Responses API, модель `gpt-5.6-sol` с
+`reasoning.effort=low`; Gemini 3.5 Flash остаётся вторым route. Переключение
+инкапсулировано в `FailoverAIClient`, поэтому application services продолжают
+зависеть только от прежнего `AIClient` contract. После ошибки primary circuit
+временно размыкается, чтобы серия пользовательских действий не повторяла один
+и тот же заведомо неуспешный запрос.
+
+Карточки и тематические packs не должны исчезать вместе с внешним AI: при
+отказе providers они строятся детерминированно из курируемого course content с
+теми же drill invariants. Произвольный перевод остаётся AI-функцией, поскольку
+локальная подстановка без модели давала бы ложное ощущение качества.
+
+Переход на второго processor является изменением privacy disclosure, поэтому
+актуальный consent повышен до v3; старый consent не разрешает scheduled
+delivery до повторного согласия.
