@@ -92,9 +92,9 @@ Tutorlaing volume is included.
 - Webhook: https://brain.sekond.pl/telegram/webhook
 - Runtime containers: tutorlaing and n8n-mcp-projects-1
 - Persistent app volume: tutorlaing_tutorlaing-data
-- AI code: OpenAI GPT-5.6 Sol primary + Gemini 3.5 Flash failover; runtime
-  temporarily remains Gemini-only until the OpenAI key is provisioned through
-  an approved server-side secret channel; consent v3 required
+- AI runtime: OpenAI GPT-5.6 Sol primary + Gemini 3.5 Flash failover; both
+  credentials are stored only in the mode-600 server `.env`; real OpenAI
+  translation smoke passed; consent v3 required
 - Adaptive drills: enabled; production smoke passed for 5 items / 5 types
 - Interactive toolkit: flashcards, bidirectional phrase variants and topic drills
 - Reminder scheduler: enabled; user mode defaults to off, Europe/Warsaw quiet hours

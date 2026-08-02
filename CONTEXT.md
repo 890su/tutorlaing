@@ -18,8 +18,8 @@ Telegram-first адаптивный тренер практического яз
   fallback.
 - 8 курируемых бытовых ситуаций в польской и английской версиях.
 - Rule-based диагностика коммуникативных смысловых групп.
-- OpenAI GPT-5.6 Sol adapter и Gemini 3.5 Flash failover реализованы. Runtime
-  временно использует Gemini до server-side provisioning OpenAI secret.
+- OpenAI GPT-5.6 Sol adapter и Gemini 3.5 Flash failover реализованы. Production
+  использует OpenAI основным provider и Gemini резервным.
   Доступны naturalness/variants, перевод по запросу и grammar drill-down.
 - Rule-based диагностика остаётся независимым fallback при отказе или
   невалидном ответе обоих AI routes.
@@ -63,17 +63,17 @@ Telegram-first адаптивный тренер практического яз
 - Production bot: @brnai_bot.
 - Telegram webhook: https://brain.sekond.pl/telegram/webhook.
 - Public health: https://brain.sekond.pl/health.
-- Production Gemini key хранится только в защищённом server-side `.env`.
-  OpenAI route `gpt-5.6-sol` с `reasoning.effort=low` проверен и ожидает
-  provisioning через защищённый secret-файл; consent v3 сообщает об обоих
-  processors до его включения.
+- Production OpenAI и Gemini keys хранятся только в защищённом server-side
+  `.env` с mode 600. OpenAI route `gpt-5.6-sol` с `reasoning.effort=low`
+  включён, реальный translation smoke пройден; consent v3 сообщает об обоих
+  processors.
 - Application разбит на контрактные модули: catalog, workspace, menu,
   language support, progress, response evaluation, AI feedback, reminder и
   Telegram update dispatch. Composition/state orchestration остаётся в app;
   SQLite скрыт за узкими Protocol-портами. Архитектура описана в
   docs/ARCHITECTURE.md и защищена regression test.
 - OpenAI smoke: русско-польский перевод с alternatives, 5 карточек по strict
-  schema и анализ польского ответа успешны. Локально проходят 73 теста.
+  schema и анализ польского ответа успешны. Локально проходят 74 теста.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

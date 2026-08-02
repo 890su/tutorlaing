@@ -8,9 +8,9 @@
 
 - код находится в Git-репозитории 890su/tutorlaing;
 - реализованы 8 сценариев и полный текстовый учебный цикл;
-- код поддерживает OpenAI GPT-5.6 Sol как основной AI и Gemini 3.5 Flash как
-  второй provider; runtime временно остаётся Gemini до server-side provisioning
-  OpenAI secret, а rule-based правила работают как независимый fallback;
+- production использует OpenAI GPT-5.6 Sol как основной AI и Gemini 3.5 Flash
+  как failover; оба server-side secret установлены, реальный OpenAI translation
+  smoke пройден, а rule-based правила работают как независимый fallback;
 - доступны natural response, варианты по регистрам, перевод по запросу,
   grammar drill-down и три независимые языковые настройки;
 - язык объяснений/перевода выбирается из `ru/uk/en/pl`, изучаемый — из
@@ -26,7 +26,7 @@
   публикации значений;
 - данные хранятся в SQLite, доступны consent, allowlist и удаление;
 - контейнер публикуется в GHCR через GitHub Actions;
-- локально проходят 73 автоматических теста;
+- локально проходят 74 автоматических теста;
 - production работает на @brnai_bot через защищённый webhook;
 - прямой SSH с рабочей станции недоступен, но серверный MCP SSH-контур работает;
 - runtime развёрнут из GitHub/GHCR в /home/admin890brain/services/tutorlaing;
