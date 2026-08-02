@@ -39,6 +39,7 @@ flowchart LR
     TG["Telegram webhook / polling"] --> UD["TelegramUpdateDispatcher"]
     UD --> BOT["TutorlaingBot: composition и flow orchestration"]
     BOT --> MENU["LearnerMenu"]
+    MENU --> NAV["Navigation helpers"]
     BOT --> EVAL["ResponseEvaluator"]
     BOT --> FB["FeedbackPresenter"]
     BOT --> LANG["LanguageSupport"]
@@ -70,6 +71,7 @@ flowchart LR
 | `feedback.py` | Вкладки результата, natural variants и grammar drill-down | `FeedbackStore`, workspace, language support, `AIClient` | Одна редактируемая feedback-card |
 | `progress_service.py` | Вывод mastery/focus/plan только из evidence | `ProgressStore` | Неизменяемый `ProgressSnapshot` |
 | `menu.py` | Home/settings/progress/reminder/privacy presentation | `MenuStore` и специализированные сервисы | Telegram cards без изменения учебной state machine |
+| `navigation.py` | Единые локализованные переходы Home/Back | instruction language + callback destination | Типовая строка кнопок без скрытой семантики `Назад` |
 | `workspace.py` | Политика одной текущей карточки | `WorkspaceStore`, `TelegramGateway` | edit текущей либо один безопасный send |
 | `update_dispatcher.py` | Dedupe и нормализация Telegram update | `UpdateStore`, `TelegramGateway`, `UpdateTarget` | Один вызов text/callback handler; failed update доступен для retry |
 | `reminders.py` | Расчёт слотов и атомарная доставка | `ReminderStore`, `ReminderDelivery` | Не более одного assignment на зарезервированный slot |
@@ -129,6 +131,8 @@ Protocols являются структурными: `Storage` и `TelegramAPI` 
    storage queries; UI не ветвится по языку в orchestration.
 7. Любая новая граница получает unit test; критический пользовательский путь —
    integration test через `TutorlaingBot`.
+8. Экран имеет один главный action; возврат к родителю называет назначение, а
+   необратимое завершение активного flow требует подтверждения.
 
 ## Следующий технический backlog
 

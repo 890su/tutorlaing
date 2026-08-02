@@ -27,6 +27,7 @@ from .feedback import FeedbackPresenter
 from .evaluation_service import ResponseEvaluator
 from .language_support import LanguageSupport
 from .menu import CONSENT_VERSION, LearnerMenu
+from .navigation import home_row
 from .progress_service import ProgressService
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
@@ -127,6 +128,9 @@ class TutorlaingBot:
     def show_settings(self, chat_id: int) -> None:
         self.menu.show_settings(chat_id)
 
+    def show_learning_settings(self, chat_id: int) -> None:
+        self.menu.show_learning_settings(chat_id)
+
     def show_language_choices(self, chat_id: int, kind: str) -> None:
         self.menu.show_language_choices(chat_id, kind)
 
@@ -215,7 +219,7 @@ class TutorlaingBot:
                         "callback_data": f"task:translate:{scenario.id}:{step_index}",
                     }
                 ],
-                [{"text": tr(language, "action.stop"), "callback_data": "cancel"}],
+                [{"text": tr(language, "action.stop"), "callback_data": "cancel:confirm"}],
             ],
             force_new=scheduled,
             surface="scenario_task",
@@ -493,6 +497,7 @@ class TutorlaingBot:
                 if future and not include_future
                 else [[{"text": "Выбрать ситуацию", "callback_data": "scenarios:list"}]]
             )
+            keyboard.append(home_row(self._language(chat_id)))
             self._workspace(chat_id, text, keyboard, surface="reviews")
             return
         review = reviews[0]
@@ -507,7 +512,7 @@ class TutorlaingBot:
                         "callback_data": f"review:{review['id']}",
                     }
                 ],
-                [{"text": "← Назад", "callback_data": "home"}],
+                home_row(self._language(chat_id)),
             ],
             surface="reviews",
         )
@@ -549,7 +554,12 @@ class TutorlaingBot:
                         "callback_data": f"task:translate:{scenario.id}:{step_index}",
                     }
                 ],
-                [{"text": "Отменить", "callback_data": "cancel"}],
+                [
+                    {
+                        "text": tr(language, "action.stop"),
+                        "callback_data": "cancel:confirm",
+                    }
+                ],
             ],
             force_new=scheduled,
             surface="review_task",
@@ -600,8 +610,10 @@ class TutorlaingBot:
                 f"Повторим через {next_interval} дн."
             )
         self._workspace(
-            chat_id, message, [[{"text": "В меню", "callback_data": "home"}]]
-            , surface="review_complete"
+            chat_id,
+            message,
+            [home_row(self._language(chat_id))],
+            surface="review_complete",
         )
 
     def _stored_analysis(self, chat_id: int, analysis_id: int) -> tuple[Any, ResponseAnalysis]:
@@ -690,7 +702,10 @@ class TutorlaingBot:
                     "Сначала нужна фраза",
                     "Пройдите одну ситуацию. После ответа я соберу закрепление именно по вашему материалу.",
                 ),
-                [[{"text": "▶ Выбрать ситуацию", "callback_data": "scenarios:list"}], [{"text": "← Назад", "callback_data": "home"}]],
+                [
+                    [{"text": "▶ Выбрать ситуацию", "callback_data": "scenarios:list"}],
+                    home_row(self._language(chat_id)),
+                ],
             )
             return
         if self.ai is None:
@@ -724,7 +739,10 @@ class TutorlaingBot:
             self.telegram.send_message(
                 chat_id,
                 "Не удалось собрать задания. Основные сценарии и повторы продолжают работать.",
-                [[{"text": "Попробовать ещё раз", "callback_data": "drill:start"}], [{"text": "← В меню", "callback_data": "home"}]],
+                [
+                    [{"text": "Попробовать ещё раз", "callback_data": "drill:start"}],
+                    home_row(self._language(chat_id)),
+                ],
             )
             return
         drill_id = self.storage.start_drill(
@@ -800,7 +818,14 @@ class TutorlaingBot:
                     {"text": self._t(chat_id, "action.reminders"), "callback_data": "reminders"},
                 ]
             )
-        keyboard.append([{"text": self._t(chat_id, "action.stop"), "callback_data": "drill:stop"}])
+        keyboard.append(
+            [
+                {
+                    "text": self._t(chat_id, "action.stop"),
+                    "callback_data": "drill:stop:confirm",
+                }
+            ]
+        )
         self._workspace(
             chat_id,
             f"{progress(self._drill_title(chat_id, str(session['mode'])), index + 1, int(session['total_items']))}\n\n"
@@ -928,7 +953,7 @@ class TutorlaingBot:
                     }
                 ],
                 [{"text": self._t(chat_id, "action.reviews"), "callback_data": "reviews:list"}],
-                [{"text": "← В меню", "callback_data": "home"}],
+                home_row(self._language(chat_id)),
             ],
             surface="drill_complete",
         )
@@ -1011,7 +1036,33 @@ class TutorlaingBot:
         self.telegram.send_message(
             chat_id,
             card("Закрепление остановлено", "Прогресс этой короткой сессии закрыт."),
-            [[{"text": "← В меню", "callback_data": "home"}]],
+            [home_row(self._language(chat_id))],
+        )
+
+    def confirm_finish(self, chat_id: int, *, drill: bool = False) -> None:
+        """Ask before discarding the current learner flow."""
+        language = self._language(chat_id)
+        self._workspace(
+            chat_id,
+            card(
+                tr(language, "navigation.finish_title"),
+                tr(language, "navigation.finish_summary"),
+            ),
+            [
+                [
+                    {
+                        "text": tr(language, "action.keep_learning"),
+                        "callback_data": "drill:resume" if drill else "task:resume",
+                    }
+                ],
+                [
+                    {
+                        "text": tr(language, "action.confirm_finish"),
+                        "callback_data": "drill:stop" if drill else "cancel",
+                    }
+                ],
+            ],
+            surface="finish_confirmation",
         )
 
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
@@ -1052,8 +1103,8 @@ class TutorlaingBot:
             ],
         )
 
-    def show_privacy(self, chat_id: int) -> None:
-        self.menu.show_privacy(chat_id)
+    def show_privacy(self, chat_id: int, *, back_to_settings: bool = False) -> None:
+        self.menu.show_privacy(chat_id, back_to_settings=back_to_settings)
 
     def cancel_activity(self, chat_id: int, notify: bool = True) -> None:
         current = self.storage.get_user(chat_id)
@@ -1074,7 +1125,7 @@ class TutorlaingBot:
             self.telegram.send_message(
                 chat_id,
                 "Текущая тренировка остановлена.",
-                [[{"text": "В меню", "callback_data": "home"}]],
+                [home_row(self._language(chat_id))],
             )
 
     def handle_text(self, chat_id: int, first_name: str, text: str) -> None:
@@ -1170,6 +1221,8 @@ class TutorlaingBot:
             self.home(chat_id)
         elif data == "privacy":
             self.show_privacy(chat_id)
+        elif data == "privacy:settings":
+            self.show_privacy(chat_id, back_to_settings=True)
         elif data == "delete:confirm":
             self.storage.delete_user(chat_id)
             self.telegram.send_message(
@@ -1206,7 +1259,7 @@ class TutorlaingBot:
             self._workspace(
                 chat_id,
                 card("Пауза включена", "До завтра новых напоминаний не будет."),
-                [[{"text": "← В меню", "callback_data": "home"}]],
+                [home_row(self._language(chat_id))],
                 surface="reminder_pause",
             )
         elif data == "drill:start":
@@ -1226,16 +1279,20 @@ class TutorlaingBot:
                 self.send_drill_item(chat_id, str(current["current_drill"]))
             else:
                 self.home(chat_id)
+        elif data == "drill:stop:confirm":
+            self.confirm_finish(chat_id, drill=True)
         elif data == "assignment:next":
             if not self.send_pending_assignment(chat_id):
                 self.home(chat_id)
         elif data == "drill:stop":
             self.stop_drill(chat_id)
+        elif data == "settings:languages":
+            self.show_learning_settings(chat_id)
         elif data.startswith("settings:set:"):
             _, _, kind, language = data.split(":", 3)
             if kind == "level":
                 self.storage.set_learner_level(chat_id, language)
-                self.show_settings(chat_id)
+                self.show_learning_settings(chat_id)
                 return
             field = {
                 "instruction": "instruction_language",
@@ -1252,7 +1309,7 @@ class TutorlaingBot:
                 if field == "target_language" and language != current_language:
                     self.cancel_activity(chat_id, notify=False)
                 self.storage.set_language(chat_id, field, language)
-                self.show_settings(chat_id)
+                self.show_learning_settings(chat_id)
         elif data == "settings:level":
             self.show_level_choices(chat_id)
         elif data.startswith("settings:"):
@@ -1361,10 +1418,12 @@ class TutorlaingBot:
                 self.telegram.send_message(
                     chat_id,
                     "Спасибо. Реальный результат важнее количества пройденных уроков.",
-                    [[{"text": "В меню", "callback_data": "home"}]],
+                    [home_row(self._language(chat_id))],
                 )
         elif data == "cancel":
             self.cancel_activity(chat_id)
+        elif data == "cancel:confirm":
+            self.confirm_finish(chat_id)
 
     def handle_update(self, update: dict[str, Any]) -> None:
         self.update_dispatcher.dispatch(update)

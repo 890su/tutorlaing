@@ -8,6 +8,7 @@ from .ai import AIClient, AIError, ResponseAnalysis
 from .contracts import FeedbackStore, Keyboard
 from .i18n import tr
 from .language_support import LanguageSupport
+from .navigation import home_row
 from .workspace import TelegramWorkspace
 
 
@@ -64,6 +65,7 @@ class FeedbackPresenter:
                 0,
                 [{"text": tr(language, "action.next"), "callback_data": "assignment:next"}],
             )
+        keyboard.append(home_row(language))
         return keyboard
 
     def show_result(

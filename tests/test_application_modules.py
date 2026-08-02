@@ -133,6 +133,7 @@ class ApplicationModuleTests(unittest.TestCase):
             "feedback.py",
             "language_support.py",
             "menu.py",
+            "navigation.py",
             "progress_service.py",
             "reminders.py",
             "toolkit.py",

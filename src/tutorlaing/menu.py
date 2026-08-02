@@ -8,6 +8,7 @@ from .catalog import ScenarioCatalog
 from .contracts import Keyboard, MenuStore
 from .i18n import tr
 from .language_support import LanguageSupport
+from .navigation import back_row, home_row
 from .progress_service import ProgressService
 from .reminders import next_reminder_at
 from .ui import card, progress
@@ -45,43 +46,92 @@ class LearnerMenu:
         user = self.store.get_user(chat_id)
         language = str(user["instruction_language"])
         due_count = len(self.store.pending_reviews(chat_id))
-        reminder_label = tr(language, f"reminder.{user['reminder_mode']}")
-        primary = (
-            [
+        review_label = tr(language, "action.reviews")
+        if due_count:
+            review_label = f"{review_label} · {due_count}"
+        scenarios = self.catalog.for_user(user)
+        snapshot = self.progress_service.build(chat_id, scenarios)
+        resume = self._resume_action(user)
+        if resume:
+            primary = [
                 {
-                    "text": f"{tr(language, 'action.reviews')} · {due_count}",
+                    "text": tr(language, "action.continue"),
+                    "callback_data": resume,
+                }
+            ]
+            status = tr(language, "home.status.active", due=due_count)
+        elif due_count:
+            primary = [
+                {
+                    "text": review_label,
                     "callback_data": "reviews:list",
                 }
             ]
-            if due_count
-            else [
+            status = tr(language, "home.status.reviews", due=due_count)
+        elif snapshot.first_planned_scenario_id and snapshot.planned:
+            topic = snapshot.planned[0]
+            primary = [
+                {
+                    "text": tr(language, "action.start_plan", topic=topic)[:60],
+                    "callback_data": f"scenario:{snapshot.first_planned_scenario_id}",
+                }
+            ]
+            status = tr(language, "home.status.plan", topic=topic)
+        else:
+            primary = [
                 {
                     "text": tr(language, "action.start_situation"),
                     "callback_data": "scenarios:list",
                 }
             ]
-        )
+            status = tr(language, "home.status.empty")
+
+        keyboard: Keyboard = [
+            primary,
+            [
+                {
+                    "text": tr(language, "action.scenarios"),
+                    "callback_data": "scenarios:list",
+                },
+                {"text": tr(language, "action.toolkit"), "callback_data": "toolkit"},
+            ],
+        ]
+        if not (due_count and not resume):
+            keyboard.append(
+                [
+                    {
+                        "text": review_label,
+                        "callback_data": "reviews:list",
+                    },
+                    {
+                        "text": tr(language, "action.progress"),
+                        "callback_data": "progress",
+                    },
+                ]
+            )
+            keyboard.append(
+                [{"text": tr(language, "action.settings"), "callback_data": "settings"}]
+            )
+        else:
+            keyboard.append(
+                [
+                    {
+                        "text": tr(language, "action.progress"),
+                        "callback_data": "progress",
+                    },
+                    {
+                        "text": tr(language, "action.settings"),
+                        "callback_data": "settings",
+                    },
+                ]
+            )
         self.workspace.show(
             chat_id,
             card(
                 tr(language, f"home.title.{user['target_language']}"),
-                tr(
-                    language,
-                    "home.summary",
-                    due=due_count,
-                    reminders=reminder_label,
-                ),
+                status,
             ),
-            [
-                primary,
-                [
-                    {"text": tr(language, "action.toolkit"), "callback_data": "toolkit"},
-                    {"text": tr(language, "action.reviews"), "callback_data": "reviews:list"},
-                ],
-                [{"text": tr(language, "action.progress"), "callback_data": "progress"}],
-                [{"text": tr(language, "action.reminders"), "callback_data": "reminders"}],
-                [{"text": tr(language, "action.settings"), "callback_data": "settings"}],
-            ],
+            keyboard,
             surface="home",
         )
 
@@ -116,10 +166,46 @@ class LearnerMenu:
             key: LANGUAGE_LABELS.get(str(user[key]), str(user[key]))
             for key in ("instruction_language", "translation_language", "target_language")
         }
+        reminder_label = tr(language, f"reminder.{user['reminder_mode']}")
         self.workspace.show(
             chat_id,
             card(
                 tr(language, "settings.title"),
+                tr(
+                    language,
+                    "settings.main_summary",
+                    instruction=values["instruction_language"],
+                    translation=values["translation_language"],
+                    target=values["target_language"],
+                    level=user["learner_level"],
+                    reminders=reminder_label,
+                ),
+            ),
+            [
+                [{"text": tr(language, "settings.languages"), "callback_data": "settings:languages"}],
+                [{"text": tr(language, "action.reminders"), "callback_data": "reminders"}],
+                [
+                    {
+                        "text": tr(language, "settings.privacy"),
+                        "callback_data": "privacy:settings",
+                    }
+                ],
+                home_row(language),
+            ],
+            surface="settings",
+        )
+
+    def show_learning_settings(self, chat_id: int) -> None:
+        user = self.store.get_user(chat_id)
+        language = str(user["instruction_language"])
+        values = {
+            key: LANGUAGE_LABELS.get(str(user[key]), str(user[key]))
+            for key in ("instruction_language", "translation_language", "target_language")
+        }
+        self.workspace.show(
+            chat_id,
+            card(
+                tr(language, "settings.languages_title"),
                 tr(
                     language,
                     "settings.summary",
@@ -130,16 +216,13 @@ class LearnerMenu:
                 ),
             ),
             [
+                [{"text": tr(language, "settings.target"), "callback_data": "settings:target"}],
                 [{"text": tr(language, "settings.instruction"), "callback_data": "settings:instruction"}],
                 [{"text": tr(language, "settings.translation"), "callback_data": "settings:translation"}],
-                [{"text": tr(language, "settings.target"), "callback_data": "settings:target"}],
                 [{"text": tr(language, "settings.level"), "callback_data": "settings:level"}],
-                [{"text": tr(language, "action.reminders"), "callback_data": "reminders"}],
-                [{"text": tr(language, "action.progress"), "callback_data": "progress"}],
-                [{"text": tr(language, "settings.privacy"), "callback_data": "privacy"}],
-                [{"text": tr(language, "action.back"), "callback_data": "home"}],
+                back_row(language, "settings", "settings"),
             ],
-            surface="settings",
+            surface="learning_settings",
         )
 
     def show_language_choices(self, chat_id: int, kind: str) -> None:
@@ -158,9 +241,7 @@ class LearnerMenu:
             [{"text": label, "callback_data": f"settings:set:{kind}:{code}"}]
             for code, label in choices
         ]
-        keyboard.append(
-            [{"text": self.text(chat_id, "action.back"), "callback_data": "settings"}]
-        )
+        keyboard.append(back_row(self._language(chat_id), "settings:languages", "languages"))
         self.workspace.show(
             chat_id, heading, keyboard, surface="language_settings"
         )
@@ -182,7 +263,7 @@ class LearnerMenu:
                 }
                 for level in ("B1", "B2", "C1")
             ],
-            [{"text": self.text(chat_id, "action.back"), "callback_data": "settings"}],
+            back_row(self._language(chat_id), "settings:languages", "languages"),
         ]
         self.workspace.show(
             chat_id,
@@ -223,7 +304,7 @@ class LearnerMenu:
         keyboard.extend(
             [
                 [{"text": self.text(chat_id, "settings.level"), "callback_data": "settings:level"}],
-                [{"text": self.text(chat_id, "action.back"), "callback_data": "home"}],
+                home_row(self._language(chat_id)),
             ]
         )
         self.workspace.show(
@@ -267,9 +348,7 @@ class LearnerMenu:
             keyboard.append(
                 [{"text": tr(language, "action.pause"), "callback_data": "reminder:pause"}]
             )
-        keyboard.append(
-            [{"text": tr(language, "action.back"), "callback_data": "home"}]
-        )
+        keyboard.append(back_row(language, "settings", "settings"))
         self.workspace.show(
             chat_id,
             card(
@@ -310,9 +389,7 @@ class LearnerMenu:
             ]
             for scenario in scenarios.values()
         ]
-        keyboard.append(
-            [{"text": tr(language, "action.back"), "callback_data": "home"}]
-        )
+        keyboard.append(home_row(language))
         self.workspace.show(
             chat_id,
             tr(language, "task.choose_scenario"),
@@ -320,7 +397,7 @@ class LearnerMenu:
             surface="scenario_list",
         )
 
-    def show_privacy(self, chat_id: int) -> None:
+    def show_privacy(self, chat_id: int, *, back_to_settings: bool = False) -> None:
         text = (
             "Alpha хранит Telegram ID, имя, текст ответов, оценки и расписание "
             "повторений. Для проверки фразы её текст, текущая реплика и учебная "
@@ -332,10 +409,30 @@ class LearnerMenu:
         self.workspace.show(
             chat_id,
             self.language_support.instruction_text(chat_id, text, "privacy"),
-            [[{"text": self.text(chat_id, "action.back"), "callback_data": "home"}]],
+            [
+                back_row(self._language(chat_id), "settings", "settings")
+                if back_to_settings
+                else home_row(self._language(chat_id))
+            ],
             surface="privacy",
         )
 
     def text(self, chat_id: int, key: str, **values: object) -> str:
         language = str(self.store.get_user(chat_id)["instruction_language"])
         return tr(language, key, **values)
+
+    def _language(self, chat_id: int) -> str:
+        return str(self.store.get_user(chat_id)["instruction_language"])
+
+    @staticmethod
+    def _resume_action(user: Any) -> str | None:
+        stage = str(user["stage"])
+        if stage in {"scenario", "practice", "review"}:
+            return "task:resume"
+        if stage == "waiting" and user["pending_assignment"]:
+            return "assignment:next"
+        if stage == "drill" and user["current_drill"]:
+            return "drill:resume"
+        if stage == "toolkit_input" and user["toolkit_input_mode"]:
+            return f"toolkit:translate:{user['toolkit_input_mode']}"
+        return None

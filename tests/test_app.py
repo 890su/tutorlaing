@@ -515,6 +515,86 @@ class AppFlowTests(unittest.TestCase):
         self.assertGreaterEqual(len(item_types), 3)
         self.assertIn("СЦЕНАРИЙ", self.telegram.messages[-1]["text"])
 
+    def test_home_has_one_recommended_action_without_duplicate_reviews(self) -> None:
+        chat_id = 23
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+
+        self.bot.home(chat_id)
+
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertTrue(callbacks[0].startswith("scenario:"))
+        self.assertEqual(1, callbacks.count("reviews:list"))
+
+    def test_home_resumes_active_task_as_the_primary_action(self) -> None:
+        chat_id = 24
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+
+        self.bot.home(chat_id)
+
+        keyboard = self.telegram.messages[-1]["keyboard"]
+        self.assertEqual("task:resume", keyboard[0][0]["callback_data"])
+
+    def test_settings_use_sections_and_explicit_parent_navigation(self) -> None:
+        chat_id = 25
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+
+        self.bot.show_settings(chat_id)
+        callbacks = [row[0]["callback_data"] for row in self.telegram.messages[-1]["keyboard"]]
+        self.assertEqual(
+            ["settings:languages", "reminders", "privacy:settings", "home"],
+            callbacks,
+        )
+
+        self.bot.handle_callback(chat_id, "Learner", "languages", "settings:languages")
+        callbacks = [row[0]["callback_data"] for row in self.telegram.messages[-1]["keyboard"]]
+        self.assertEqual("settings", callbacks[-1])
+
+        self.bot.handle_callback(chat_id, "Learner", "privacy", "privacy:settings")
+        self.assertEqual(
+            "settings", self.telegram.messages[-1]["keyboard"][-1][0]["callback_data"]
+        )
+
+    def test_finish_confirmation_preserves_active_task_until_confirmed(self) -> None:
+        chat_id = 26
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+
+        self.bot.handle_callback(chat_id, "Learner", "stop", "cancel:confirm")
+
+        self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertEqual(["task:resume", "cancel"], callbacks)
+
+        self.bot.handle_callback(chat_id, "Learner", "confirm", "cancel")
+        self.assertEqual("idle", self.storage.get_user(chat_id)["stage"])
+
+    def test_empty_review_screen_always_offers_home(self) -> None:
+        chat_id = 27
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, 2)
+
+        self.bot.show_reviews(chat_id)
+
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("home", callbacks)
+
 
 if __name__ == "__main__":
     unittest.main()

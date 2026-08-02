@@ -14,6 +14,7 @@ from .contracts import (
     TransportError,
 )
 from .i18n import tr
+from .navigation import back_row, home_row
 from .ui import card
 from .workspace import TelegramWorkspace
 
@@ -53,6 +54,9 @@ class PracticeToolkit:
         if user["stage"] == "toolkit_input":
             self.store.set_user_state(chat_id, stage="idle", toolkit_input_mode=None)
         language = str(user["instruction_language"])
+        target = LANGUAGE_LABELS.get(
+            str(user["target_language"]), str(user["target_language"])
+        )
         self.workspace.show(
             chat_id,
             card(
@@ -74,11 +78,17 @@ class PracticeToolkit:
                 ],
                 [
                     {
-                        "text": tr(language, "toolkit.translate_to"),
+                        "text": tr(
+                            language, "toolkit.translate_to_named", target=target
+                        ),
                         "callback_data": "toolkit:translate:to_target",
-                    },
+                    }
+                ],
+                [
                     {
-                        "text": tr(language, "toolkit.translate_from"),
+                        "text": tr(
+                            language, "toolkit.translate_from_named", target=target
+                        ),
                         "callback_data": "toolkit:translate:from_target",
                     },
                 ],
@@ -88,12 +98,7 @@ class PracticeToolkit:
                         "callback_data": "toolkit:topics",
                     }
                 ],
-                [
-                    {
-                        "text": tr(language, "action.back"),
-                        "callback_data": "home",
-                    }
-                ],
+                home_row(language),
             ],
             surface="toolkit",
         )
@@ -111,14 +116,7 @@ class PracticeToolkit:
             ]
             for scenario in scenarios.values()
         ]
-        keyboard.append(
-            [
-                {
-                    "text": tr(language, "action.back"),
-                    "callback_data": "toolkit",
-                }
-            ]
-        )
+        keyboard.append(back_row(language, "toolkit", "toolkit"))
         self.workspace.show(
             chat_id,
             card(
@@ -151,12 +149,7 @@ class PracticeToolkit:
                             "callback_data": "drill:resume",
                         }
                     ],
-                    [
-                        {
-                            "text": tr(language, "action.back"),
-                            "callback_data": "toolkit",
-                        }
-                    ],
+                    back_row(language, "toolkit", "toolkit"),
                 ],
                 surface="toolkit_active",
             )
@@ -211,12 +204,7 @@ class PracticeToolkit:
                             ),
                         }
                     ],
-                    [
-                        {
-                            "text": tr(language, "action.back"),
-                            "callback_data": "toolkit",
-                        }
-                    ],
+                    back_row(language, "toolkit", "toolkit"),
                 ],
                 surface="toolkit_error",
             )
@@ -265,12 +253,7 @@ class PracticeToolkit:
                             "callback_data": "settings:translation",
                         }
                     ],
-                    [
-                        {
-                            "text": tr(language, "action.back"),
-                            "callback_data": "toolkit",
-                        }
-                    ],
+                    back_row(language, "toolkit", "toolkit"),
                 ],
                 surface="toolkit_translation_conflict",
             )
@@ -290,12 +273,7 @@ class PracticeToolkit:
                 ),
             ),
             [
-                [
-                    {
-                        "text": tr(language, "action.back"),
-                        "callback_data": "toolkit",
-                    }
-                ]
+                back_row(language, "toolkit", "toolkit")
             ],
             surface="toolkit_phrase_input",
         )
@@ -312,7 +290,7 @@ class PracticeToolkit:
             self.workspace.show(
                 chat_id,
                 tr(language, "toolkit.phrase_invalid"),
-                [[{"text": tr(language, "action.back"), "callback_data": "toolkit"}]],
+                [back_row(language, "toolkit", "toolkit")],
                 force_new=True,
                 surface="toolkit_phrase_input",
             )
@@ -352,12 +330,7 @@ class PracticeToolkit:
                             "callback_data": f"toolkit:translate:{mode}",
                         }
                     ],
-                    [
-                        {
-                            "text": tr(language, "action.back"),
-                            "callback_data": "toolkit",
-                        }
-                    ],
+                    back_row(language, "toolkit", "toolkit"),
                 ],
                 force_new=True,
                 surface="toolkit_error",
@@ -414,12 +387,7 @@ class PracticeToolkit:
                         "callback_data": f"toolkit:translate:{swapped}",
                     },
                 ],
-                [
-                    {
-                        "text": tr(language, "action.back"),
-                        "callback_data": "toolkit",
-                    }
-                ],
+                back_row(language, "toolkit", "toolkit"),
             ],
             force_new=True,
             surface="toolkit_translation_result",
@@ -494,6 +462,8 @@ class PracticeToolkit:
         )
 
     def _show_busy(self, chat_id: int, language: str) -> None:
+        user = self.store.get_user(chat_id)
+        resume_callback = "drill:resume" if user["current_drill"] else "task:resume"
         self.workspace.show(
             chat_id,
             card(
@@ -504,15 +474,10 @@ class PracticeToolkit:
                 [
                     {
                         "text": tr(language, "action.resume_task"),
-                        "callback_data": "task:resume",
+                        "callback_data": resume_callback,
                     }
                 ],
-                [
-                    {
-                        "text": tr(language, "action.back"),
-                        "callback_data": "home",
-                    }
-                ],
+                home_row(language),
             ],
             surface="toolkit_busy",
         )
@@ -524,6 +489,6 @@ class PracticeToolkit:
                 tr(language, "toolkit.error_title"),
                 tr(language, "toolkit.ai_unavailable"),
             ),
-            [[{"text": tr(language, "action.back"), "callback_data": "toolkit"}]],
+            [back_row(language, "toolkit", "toolkit")],
             surface="toolkit_error",
         )
