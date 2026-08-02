@@ -120,3 +120,20 @@ reminder резервируется compare-and-set обновлением до 
 target-language слова или короткой фразы, которую AI относит минимум на два
 уровня выше рабочего уровня; максимум две сноски на карточку, перевод — на
 отдельный translation language. Полный перевод остаётся действием по кнопке.
+
+## 2026-08-02 — Contract-based modular monolith
+
+Tutorlaing остаётся одним deployable Python-сервисом с одной SQLite-базой, но
+прикладные функции разделяются по use-case границам и зависят от structural
+Protocol-портов. `app.py` является composition root и координатором учебной
+state machine; menu/workspace, catalog, language support, progress, response
+evaluation, feedback, reminders и Telegram update dispatch находятся в
+отдельных модулях. Application-модулям запрещено импортировать concrete
+`Storage`, `TelegramAPI` или composition root, что фиксируется тестом.
+
+Микросервисы отклонены: у alpha нет независимых команд, масштабирования или
+данных, оправдывающих network boundaries. Немедленное дробление SQLite adapter
+на repositories также отклонено, поскольку оно размоет текущие транзакции без
+второго storage backend. Следующие обоснованные границы — вертикальные
+Scenario/Review/Drill flows, typed DTO и отдельные AI models/adapter перед
+подключением второго provider.

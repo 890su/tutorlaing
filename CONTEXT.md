@@ -48,8 +48,13 @@ Telegram-first адаптивный тренер практического яз
 - Public health: https://brain.sekond.pl/health.
 - Production AI key хранится только в защищённом server-side `.env`; Pro-квота
   старого ключа равна нулю, полный smoke-test проходит на gemini-3.5-flash.
+- Application разбит на контрактные модули: catalog, workspace, menu,
+  language support, progress, response evaluation, AI feedback, reminder и
+  Telegram update dispatch. Composition/state orchestration остаётся в app;
+  SQLite скрыт за узкими Protocol-портами. Архитектура описана в
+  docs/ARCHITECTURE.md и защищена regression test.
 - Production drill smoke: 5 заданий 5 типов, 2 active-recall; AI-проверка
-  свободного ответа успешна. Локально проходят 45 тестов.
+  свободного ответа успешна. Локально проходят 51 тест.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 
@@ -60,6 +65,7 @@ Telegram-first адаптивный тренер практического яз
 - PLAN.md — фактическая реализация и backlog.
 - decisions.md — устойчивые технические и продуктовые решения.
 - deploy/README.md — операции и rollback.
+- docs/ARCHITECTURE.md — границы модулей, контракты и технический backlog.
 
 ## Constraints
 

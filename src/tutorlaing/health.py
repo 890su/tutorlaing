@@ -46,7 +46,17 @@ def start_health_server(
             if not webhook_secret or not hmac.compare_digest(
                 provided_secret, webhook_secret
             ):
+                # Drain a bounded body before closing an unauthorized HTTP/1.0
+                # connection.  Otherwise Windows may send RST and hide the 403
+                # response from the client.
+                try:
+                    rejected_length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    rejected_length = 0
+                if 0 < rejected_length <= 1_000_000:
+                    self.rfile.read(rejected_length)
                 self.send_response(403)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
             try:

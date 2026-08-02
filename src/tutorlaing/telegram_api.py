@@ -6,11 +6,13 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .contracts import TransportError
+
 
 LOGGER = logging.getLogger(__name__)
 
 
-class TelegramError(RuntimeError):
+class TelegramError(TransportError):
     pass
 
 

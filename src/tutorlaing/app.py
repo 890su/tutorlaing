@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from .ai import (
     AIClient,
@@ -16,34 +14,32 @@ from .ai import (
     ResponseAnalysis,
 )
 from .config import Settings
-from .content import Scenario, load_scenarios
+from .catalog import ScenarioCatalog
+from .content import Scenario
 from .engine import (
-    evaluate_response,
     normalize,
     review_due_at,
     review_interval_days,
     select_bottleneck,
 )
 from .i18n import tr
+from .feedback import FeedbackPresenter
+from .evaluation_service import ResponseEvaluator
+from .language_support import LanguageSupport
+from .menu import CONSENT_VERSION, LearnerMenu
+from .progress_service import ProgressService
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
 from .telegram_api import TelegramAPI, TelegramError
 from .ui import card, progress, route
+from .workspace import TelegramWorkspace
+from .update_dispatcher import TelegramUpdateDispatcher
 
 
 LOGGER = logging.getLogger(__name__)
-CONSENT_VERSION = 2
-LANGUAGE_LABELS = {"ru": "Русский", "uk": "Українська", "en": "English", "pl": "Polski"}
 TARGET_COURSE_LABELS = {"pl": "Polski w praktyce", "en": "English in practice"}
 TARGET_ADVERBS_RU = {"pl": "по-польски", "en": "по-английски"}
 TARGET_NOUNS_RU = {"pl": "польский", "en": "английский"}
-REMINDER_LABELS = {
-    "off": "выключены",
-    "gentle": "мягкие",
-    "normal": "обычные",
-    "intensive": "интенсивные",
-    "aggressive": "агрессивные",
-}
 
 
 class TutorlaingBot:
@@ -64,10 +60,24 @@ class TutorlaingBot:
                 settings.gemini_model,
                 settings.ai_timeout,
             )
-        self.scenarios_by_language = {
-            "pl": load_scenarios("pl"),
-            "en": load_scenarios("en"),
-        }
+        self.catalog = ScenarioCatalog()
+        self.workspace = TelegramWorkspace(storage, self.telegram)
+        self.language_support = LanguageSupport(storage, self.ai)
+        self.progress_service = ProgressService(storage)
+        self.feedback = FeedbackPresenter(
+            storage, self.workspace, self.language_support, self.ai
+        )
+        self.response_evaluator = ResponseEvaluator(storage, self.ai)
+        self.menu = LearnerMenu(
+            storage,
+            self.workspace,
+            self.catalog,
+            self.language_support,
+            self.progress_service,
+        )
+        self.update_dispatcher = TelegramUpdateDispatcher(
+            storage, self.telegram, self
+        )
         self.offset = 0
         self.running = True
 
@@ -76,9 +86,7 @@ class TutorlaingBot:
         return allowed is None or chat_id in allowed
 
     def _scenarios_for_user(self, user: Any) -> dict[str, Scenario]:
-        return self.scenarios_by_language.get(
-            str(user["target_language"]), self.scenarios_by_language["pl"]
-        )
+        return self.catalog.for_user(user)
 
     def _scenarios_for_chat(self, chat_id: int) -> dict[str, Scenario]:
         return self._scenarios_for_user(self.storage.get_user(chat_id))
@@ -98,280 +106,37 @@ class TutorlaingBot:
         force_new: bool = False,
         surface: str = "learning",
     ) -> int | None:
-        user = self.storage.get_user(chat_id)
-        message_id = user["workspace_message_id"]
-        if message_id and not force_new:
-            try:
-                self.telegram.edit_message(
-                    chat_id, int(message_id), text, keyboard
-                )
-                self.storage.event(
-                    chat_id,
-                    "ui_message_edited",
-                    {"surface": surface},
-                )
-                return int(message_id)
-            except TelegramError as exc:
-                if "message is not modified" in str(exc).lower():
-                    return int(message_id)
-                LOGGER.info("Workspace edit failed; sending a new card", exc_info=True)
-        result = self.telegram.send_message(chat_id, text, keyboard)
-        new_message_id = (
-            int(result["message_id"])
-            if isinstance(result, dict) and result.get("message_id")
-            else None
+        return self.workspace.show(
+            chat_id, text, keyboard, force_new=force_new, surface=surface
         )
-        if new_message_id is not None:
-            self.storage.set_user_state(
-                chat_id, workspace_message_id=new_message_id
-            )
-        self.storage.event(
-            chat_id,
-            "ui_message_sent",
-            {"surface": surface, "scheduled": force_new},
-        )
-        return new_message_id
 
     def home(self, chat_id: int) -> None:
-        user = self.storage.get_user(chat_id)
-        language = str(user["instruction_language"])
-        due_count = len(self.storage.pending_reviews(chat_id))
-        reminder_label = tr(language, f"reminder.{user['reminder_mode']}")
-        if due_count:
-            primary = [{"text": f"{tr(language, 'action.reviews')} · {due_count}", "callback_data": "reviews:list"}]
-        else:
-            primary = [{"text": tr(language, "action.start_situation"), "callback_data": "scenarios:list"}]
-        self._workspace(
-            chat_id,
-            card(
-                tr(language, f"home.title.{user['target_language']}"),
-                tr(
-                    language,
-                    "home.summary",
-                    due=due_count,
-                    reminders=reminder_label,
-                ),
-            ),
-            [
-                primary,
-                [
-                    {"text": tr(language, "action.practice"), "callback_data": "drill:start"},
-                    {"text": tr(language, "action.reviews"), "callback_data": "reviews:list"},
-                ],
-                [{"text": tr(language, "action.progress"), "callback_data": "progress"}],
-                [{"text": tr(language, "action.reminders"), "callback_data": "reminders"}],
-                [{"text": tr(language, "action.settings"), "callback_data": "settings"}],
-            ],
-            surface="home",
-        )
+        self.menu.home(chat_id)
 
     def start(self, chat_id: int, first_name: str = "") -> None:
-        user = self.storage.ensure_user(chat_id, first_name)
-        if not self._has_current_consent(user):
-            self._workspace(
-                chat_id,
-                "Cześć! Я помогу подготовиться к реальным разговорам на новом языке.\n\n"
-                "Alpha сохраняет ваши текстовые ответы, результаты и Telegram ID. "
-                "Для персональной проверки учебная реплика и минимальный контекст "
-                "отправляются Google Gemini. Имя и Telegram ID в AI не передаются. "
-                "Голос не записывается. Все данные можно удалить командой /delete_me.\n\n"
-                "Продолжить?",
-                [
-                    [{"text": "✅ Согласен и начать", "callback_data": "consent:accept"}],
-                    [{"text": "ℹ️ Подробнее", "callback_data": "privacy"}],
-                ],
-            )
-            return
-        self.home(chat_id)
+        self.menu.start(chat_id, first_name)
 
     @staticmethod
     def _has_current_consent(user: Any) -> bool:
-        return bool(user["consent_at"]) and int(user["consent_version"]) >= CONSENT_VERSION
+        return LearnerMenu.has_current_consent(user)
 
     def show_settings(self, chat_id: int) -> None:
-        user = self.storage.get_user(chat_id)
-        language = str(user["instruction_language"])
-        instruction = LANGUAGE_LABELS.get(user["instruction_language"], user["instruction_language"])
-        translation = LANGUAGE_LABELS.get(user["translation_language"], user["translation_language"])
-        target = LANGUAGE_LABELS.get(user["target_language"], user["target_language"])
-        self._workspace(
-            chat_id,
-            card(
-                tr(language, "settings.title"),
-                tr(
-                    language,
-                    "settings.summary",
-                    instruction=instruction,
-                    translation=translation,
-                    target=target,
-                    level=user["learner_level"],
-                ),
-            ),
-            [
-                [{"text": tr(language, "settings.instruction"), "callback_data": "settings:instruction"}],
-                [{"text": tr(language, "settings.translation"), "callback_data": "settings:translation"}],
-                [{"text": tr(language, "settings.target"), "callback_data": "settings:target"}],
-                [{"text": tr(language, "settings.level"), "callback_data": "settings:level"}],
-                [{"text": tr(language, "action.reminders"), "callback_data": "reminders"}],
-                [{"text": tr(language, "action.progress"), "callback_data": "progress"}],
-                [{"text": tr(language, "settings.privacy"), "callback_data": "privacy"}],
-                [{"text": tr(language, "action.back"), "callback_data": "home"}],
-            ],
-            surface="settings",
-        )
+        self.menu.show_settings(chat_id)
 
     def show_language_choices(self, chat_id: int, kind: str) -> None:
-        if kind == "target":
-            choices = [("pl", "🇵🇱 Polski"), ("en", "🇬🇧 English")]
-            heading = self._t(chat_id, "settings.choose_target")
-        else:
-            choices = [
-                ("ru", "🇷🇺 Русский"),
-                ("uk", "🇺🇦 Українська"),
-                ("en", "🇬🇧 English"),
-                ("pl", "🇵🇱 Polski"),
-            ]
-            heading = self._t(chat_id, "settings.choose")
-        keyboard = [
-            [{"text": label, "callback_data": f"settings:set:{kind}:{code}"}]
-            for code, label in choices
-        ]
-        keyboard.append([{"text": self._t(chat_id, "action.back"), "callback_data": "settings"}])
-        self._workspace(chat_id, heading, keyboard, surface="language_settings")
+        self.menu.show_language_choices(chat_id, kind)
 
     def show_level_choices(self, chat_id: int) -> None:
-        user = self.storage.get_user(chat_id)
-        current = str(user["learner_level"])
-        keyboard = [
-            [
-                {
-                    "text": ("✓ " if level == current else "") + level,
-                    "callback_data": f"settings:set:level:{level}",
-                }
-                for level in ("A0", "A1", "A2")
-            ],
-            [
-                {
-                    "text": ("✓ " if level == current else "") + level,
-                    "callback_data": f"settings:set:level:{level}",
-                }
-                for level in ("B1", "B2", "C1")
-            ],
-            [{"text": self._t(chat_id, "action.back"), "callback_data": "settings"}],
-        ]
-        self._workspace(
-            chat_id,
-            card(
-                self._t(chat_id, "settings.level"),
-                self._t(chat_id, "progress.disclaimer"),
-            ),
-            keyboard,
-            surface="level",
-        )
+        self.menu.show_level_choices(chat_id)
 
     def show_progress(self, chat_id: int) -> None:
-        evidence = self.storage.progress_evidence(chat_id)
-        scenarios = self._scenarios_for_chat(chat_id)
-        session_by_id = {row["scenario_id"]: row for row in evidence["sessions"]}
-        review_by_id = {row["scenario_id"]: row for row in evidence["reviews"]}
-        mastered: list[str] = []
-        focus: list[str] = []
-        untouched: list[str] = []
-        for scenario_id, scenario in scenarios.items():
-            session = session_by_id.get(scenario_id)
-            review = review_by_id.get(scenario_id)
-            title = scenario.title_pl
-            if review and int(review["completed"] or 0) > 0 and float(review["best_score"] or 0) >= 0.6:
-                mastered.append(title)
-            elif session and (
-                float(session["best_score"] or 0) < 0.8
-                or (review and int(review["pending"] or 0) > 0)
-            ):
-                focus.append(title)
-            elif session:
-                focus.append(title)
-            else:
-                untouched.append(title)
-        plan = (focus + untouched)[:3]
-        empty = self._t(chat_id, "progress.empty")
-
-        def lines(items: list[str]) -> str:
-            return "\n".join(f"• {item}" for item in items) if items else empty
-
-        body = (
-            f"{self._t(chat_id, 'progress.level', level=evidence['level'])}\n"
-            f"{progress('', len(mastered), len(scenarios)).splitlines()[-1]}\n\n"
-            f"{self._t(chat_id, 'progress.mastered')}\n{lines(mastered)}\n\n"
-            f"{self._t(chat_id, 'progress.focus')}\n{lines(focus[:4])}\n\n"
-            f"{self._t(chat_id, 'progress.plan')}\n{lines(plan)}\n\n"
-            f"{self._t(chat_id, 'progress.disclaimer')}"
-        )
-        keyboard: list[list[dict[str, str]]] = []
-        if plan:
-            planned_id = next(
-                scenario_id
-                for scenario_id, scenario in scenarios.items()
-                if scenario.title_pl == plan[0]
-            )
-            keyboard.append(
-                [
-                    {
-                        "text": f"▶ {plan[0]}"[:60],
-                        "callback_data": f"scenario:{planned_id}",
-                    }
-                ]
-            )
-        keyboard.extend(
-            [
-                [{"text": self._t(chat_id, "settings.level"), "callback_data": "settings:level"}],
-                [{"text": self._t(chat_id, "action.back"), "callback_data": "home"}],
-            ]
-        )
-        self._workspace(
-            chat_id,
-            card(self._t(chat_id, "progress.title"), body),
-            keyboard,
-            surface="progress",
-        )
+        self.menu.show_progress(chat_id)
 
     def show_reminders(self, chat_id: int) -> None:
-        user = self.storage.get_user(chat_id)
-        mode = str(user["reminder_mode"])
-        language = self._language(chat_id)
-        paused = user["reminder_paused_until"]
-        pause_text = f"\n{tr(language, 'reminders.paused', until=paused)}" if paused else ""
-        next_text = ""
-        if user["reminder_next_at"] and mode != "off":
-            scheduled = datetime.fromisoformat(str(user["reminder_next_at"]))
-            local = scheduled.astimezone(ZoneInfo(str(user["timezone"])))
-            next_text = "\n" + tr(language, "reminders.next", date=local.strftime('%d.%m'), time=local.strftime('%H:%M'))
-        keyboard = []
-        for value in REMINDER_LABELS:
-            label = tr(language, f"reminder.{value}")
-            marker = "✓ " if value == mode else ""
-            keyboard.append(
-                [{"text": marker + label.capitalize(), "callback_data": f"reminder:set:{value}"}]
-            )
-        if mode != "off":
-            keyboard.append([{"text": tr(language, "action.pause"), "callback_data": "reminder:pause"}])
-        keyboard.append([{"text": tr(language, "action.back"), "callback_data": "home"}])
-        self._workspace(
-            chat_id,
-            card(
-                tr(language, "reminders.title"),
-                f"{tr(language, 'reminders.current', mode=tr(language, f'reminder.{mode}'))}\n{tr(language, f'reminder.desc.{mode}')}"
-                f"{next_text}{pause_text}\n\n"
-                f"{tr(language, 'reminders.quiet')}",
-            ),
-            keyboard,
-            surface="reminders",
-        )
+        self.menu.show_reminders(chat_id)
 
     def set_reminder_mode(self, chat_id: int, mode: str) -> None:
-        user = self.storage.get_user(chat_id)
-        next_at = next_reminder_at(mode, timezone_name=str(user["timezone"]))
-        self.storage.set_reminder_mode(chat_id, mode, next_at)
-        self.show_reminders(chat_id)
+        self.menu.set_reminder_mode(chat_id, mode)
 
     def _schedule_next_assignment(self, chat_id: int) -> None:
         user = self.storage.get_user(chat_id)
@@ -382,95 +147,21 @@ class TutorlaingBot:
         self.storage.schedule_next_reminder(chat_id, next_at)
 
     def _drill_continuation_text(self, chat_id: int) -> str:
-        user = self.storage.get_user(chat_id)
-        if str(user["reminder_mode"]) == "off":
-            return self._t(chat_id, "task.next_manual")
-        return self._t(chat_id, "task.next_or_wait")
+        return self.menu.continuation_text(chat_id)
 
     def show_scenarios(self, chat_id: int) -> None:
-        scenarios = self._scenarios_for_chat(chat_id)
-        language = self._language(chat_id)
-        keyboard = [
-            [
-                {
-                    "text": (
-                        f"{scenario.title_ru} · {scenario.title_pl}"
-                        if language == "ru"
-                        else scenario.title_pl
-                    ),
-                    "callback_data": f"scenario:{scenario.id}",
-                }
-            ]
-            for scenario in scenarios.values()
-        ]
-        keyboard.append([{"text": self._t(chat_id, "action.back"), "callback_data": "home"}])
-        self._workspace(
-            chat_id,
-            self._t(chat_id, "task.choose_scenario"),
-            keyboard,
-            surface="scenario_list",
-        )
+        self.menu.show_scenarios(chat_id)
 
     def _translate_text(
         self, chat_id: int, text: str, language: str, context: str
     ) -> str | None:
-        if language == "ru" and context.startswith("instruction"):
-            return text
-        if self.ai is None:
-            return None
-        self.storage.event(chat_id, "translation_requested", {"language": language, "context": context})
-        try:
-            result = self.ai.translate(text, language, context)
-        except AIError:
-            LOGGER.exception("AI translation failed")
-            self.storage.event(chat_id, "ai_analysis_failed", {"operation": "translation"})
-            return None
-        translation = str(result.get("translation", "")).strip()
-        note = str(result.get("note", "")).strip()
-        stored = {"translation": translation, "note": note}
-        self.storage.add_ai_analysis(
-            chat_id=chat_id,
-            operation="translation",
-            source_text=text,
-            result=stored,
-            provider=self.ai.provider,
-            model=self.ai.model,
-            prompt_version="translation-v1",
-            latency_ms=0,
-        )
-        if note:
-            return f"{translation}\n\n💬 {note}"
-        return translation
+        return self.language_support.translate_text(chat_id, text, language, context)
 
     def _instruction_text(self, chat_id: int, text: str, context: str) -> str:
-        user = self.storage.get_user(chat_id)
-        language = str(user["instruction_language"])
-        translated = self._translate_text(chat_id, text, language, f"instruction:{context}")
-        return translated or text
+        return self.language_support.instruction_text(chat_id, text, context)
 
     def _glossary_footnotes(self, chat_id: int, target_text: str) -> str:
-        user = self.storage.get_user(chat_id)
-        if self.ai is None or str(user["learner_level"]) == "C1" or len(target_text) < 10:
-            return ""
-        try:
-            notes = self.ai.glossary_notes(
-                target_text,
-                str(user["learner_level"]),
-                str(user["target_language"]),
-                str(user["translation_language"]),
-            )
-        except (AIError, AttributeError):
-            LOGGER.exception("AI glossary generation failed")
-            self.storage.event(chat_id, "ai_fallback_used", {"operation": "glossary"})
-            return ""
-        if not notes:
-            return ""
-        lines = [f"{self._t(chat_id, 'glossary.label')}:"]
-        lines.extend(
-            f"• {note['term']} — {note['translation']} ({note['cefr']})"
-            for note in notes
-        )
-        return "\n\n" + "\n".join(lines)
+        return self.language_support.glossary_footnotes(chat_id, target_text)
 
     def begin_scenario(self, chat_id: int, scenario_id: str) -> None:
         user = self.storage.get_user(chat_id)
@@ -530,68 +221,10 @@ class TutorlaingBot:
         step_index: int,
         response: str,
     ) -> tuple[Any, ResponseAnalysis | None, int | None]:
-        step = scenario.steps[step_index]
-        rule_evaluation = evaluate_response(step, response)
-        if self.ai is None:
-            return rule_evaluation, None, None
-        self.storage.event(
-            chat_id,
-            "ai_analysis_requested",
-            {"operation": "response_analysis", "scenario_id": scenario.id},
+        result = self.response_evaluator.evaluate(
+            chat_id, user, scenario, step_index, response
         )
-        try:
-            analysis = self.ai.analyze_response(
-                step,
-                response,
-                str(user["instruction_language"]),
-                str(user["target_language"]),
-                rule_evaluation.score,
-            )
-        except AIError:
-            LOGGER.exception("AI response analysis failed")
-            self.storage.event(
-                chat_id,
-                "ai_fallback_used",
-                {"operation": "response_analysis", "scenario_id": scenario.id},
-            )
-            return rule_evaluation, None, None
-
-        score = analysis.score
-        if analysis.task_achieved and score < 0.6:
-            score = 0.6
-        elif not analysis.task_achieved and score >= 0.6:
-            score = 0.59
-        evaluation = type(rule_evaluation)(
-            score,
-            rule_evaluation.matched_groups,
-            rule_evaluation.missing_groups,
-        )
-        analysis_id = self.storage.add_ai_analysis(
-            chat_id=chat_id,
-            session_id=str(user["current_session"]) if user["current_session"] else None,
-            scenario_id=scenario.id,
-            step_index=step_index,
-            operation="response_analysis",
-            target_language=str(user["target_language"]),
-            source_text=response,
-            result=analysis.to_dict(),
-            provider=analysis.provider,
-            model=analysis.model,
-            prompt_version=analysis.prompt_version,
-            latency_ms=analysis.latency_ms,
-            usage=analysis.usage,
-        )
-        self.storage.event(
-            chat_id,
-            "ai_analysis_completed",
-            {
-                "operation": "response_analysis",
-                "scenario_id": scenario.id,
-                "model": analysis.model,
-                "latency_ms": analysis.latency_ms,
-            },
-        )
-        return evaluation, analysis, analysis_id
+        return result.evaluation, result.analysis, result.analysis_id
 
     def _send_ai_feedback(
         self,
@@ -601,58 +234,17 @@ class TutorlaingBot:
         continuation: bool = False,
         force_new: bool = False,
     ) -> None:
-        language = self._language(chat_id)
-        lines = [
-            tr(language, "feedback.achieved")
-            if analysis.task_achieved
-            else tr(language, "feedback.partial"),
-        ]
-        if analysis.positive_feedback:
-            lines.append(f"\n{tr(language, 'feedback.good')}: {analysis.positive_feedback}")
-        if analysis.critical_corrections:
-            lines.append(f"\n{tr(language, 'feedback.fix')}:")
-            lines.extend(f"• {item}" for item in analysis.critical_corrections)
-        elif analysis.optional_improvements:
-            lines.append(f"\n{tr(language, 'feedback.improve')}:")
-            lines.extend(f"• {item}" for item in analysis.optional_improvements)
-        if analysis.natural_response:
-            lines.append(f"\n{tr(language, 'feedback.natural')}:\n{analysis.natural_response}")
-        if analysis.pragmatic_note:
-            lines.append(f"\n{tr(language, 'feedback.pragmatic')}: {analysis.pragmatic_note}")
-        keyboard: list[list[dict[str, str]]] = [
-            [
-                {"text": f"• {tr(language, 'tab.result')}", "callback_data": f"ai:result:{analysis_id}"},
-                {"text": tr(language, "tab.variants"), "callback_data": f"ai:variants:{analysis_id}"},
-                {"text": tr(language, "tab.grammar"), "callback_data": f"ai:grammar:{analysis_id}"},
-            ],
-            [
-                {"text": tr(language, "tab.translation"), "callback_data": f"ai:translate:{analysis_id}"},
-            ],
-        ]
-        if continuation:
-            lines.append(f"\n{self._drill_continuation_text(chat_id)}")
-            keyboard.insert(
-                0,
-                [{"text": tr(language, "action.next"), "callback_data": "assignment:next"}],
-            )
-        keyboard.append(
-            [
-                {"text": "👍", "callback_data": f"ai:rate:{analysis_id}:up"},
-                {"text": "👎", "callback_data": f"ai:rate:{analysis_id}:down"},
-            ]
-        )
-        self._workspace(
+        self.feedback.show_result(
             chat_id,
-            "".join(lines),
-            keyboard,
+            analysis,
+            analysis_id,
+            continuation=continuation,
             force_new=force_new,
-            surface="scenario_feedback",
         )
 
     def handle_scenario_response(self, chat_id: int, text: str, user: Any) -> None:
         scenario = self._scenarios_for_user(user)[user["current_scenario"]]
         step_index = int(user["current_step"])
-        step = scenario.steps[step_index]
         evaluation, analysis, analysis_id = self._evaluate_with_ai(
             chat_id, user, scenario, step_index, text
         )
@@ -1005,222 +597,27 @@ class TutorlaingBot:
         )
 
     def _stored_analysis(self, chat_id: int, analysis_id: int) -> tuple[Any, ResponseAnalysis]:
-        row = self.storage.get_ai_analysis(analysis_id, chat_id)
-        return row, ResponseAnalysis.from_dict(json.loads(row["result_json"]))
+        return self.feedback.stored_analysis(chat_id, analysis_id)
 
     def _analysis_tabs(
         self, chat_id: int, analysis_id: int, active: str
     ) -> list[list[dict[str, str]]]:
-        language = self._language(chat_id)
-        tabs = [
-            ("result", "tab.result"),
-            ("variants", "tab.variants"),
-            ("grammar", "tab.grammar"),
-            ("translate", "tab.translation"),
-        ]
-        keyboard = [
-            [
-                {
-                    "text": ("• " if key == active else "") + tr(language, label),
-                    "callback_data": f"ai:{key}:{analysis_id}",
-                }
-                for key, label in tabs[:3]
-            ],
-            [
-                {
-                    "text": ("• " if key == active else "") + tr(language, label),
-                    "callback_data": f"ai:{key}:{analysis_id}",
-                }
-                for key, label in tabs[3:]
-            ],
-        ]
-        if self.storage.get_user(chat_id)["pending_assignment"]:
-            keyboard.insert(
-                0,
-                [{"text": tr(language, "action.next"), "callback_data": "assignment:next"}],
-            )
-        return keyboard
+        return self.feedback.tabs(chat_id, analysis_id, active)
 
     def show_variants(self, chat_id: int, analysis_id: int) -> None:
-        _, analysis = self._stored_analysis(chat_id, analysis_id)
-        if not analysis.alternatives:
-            self.telegram.send_message(chat_id, "Для этого ответа дополнительных вариантов нет.")
-            return
-        labels = {
-            key: self._t(chat_id, f"variant.{key}")
-            for key in ("neutral", "formal", "informal")
-        }
-        blocks = []
-        for item in analysis.alternatives:
-            heading = labels.get(item.register, item.register)
-            nuance = f"\n{item.nuance}" if item.nuance else ""
-            blocks.append(f"{heading}:\n{item.text}{nuance}")
-        self._workspace(
-            chat_id,
-            "\n\n".join(blocks),
-            self._analysis_tabs(chat_id, analysis_id, "variants"),
-            surface="feedback_variants",
-        )
-        self.storage.event(chat_id, "natural_variants_requested", {"analysis_id": analysis_id})
+        self.feedback.show_variants(chat_id, analysis_id)
 
     def show_grammar_choices(self, chat_id: int, analysis_id: int) -> None:
-        _, analysis = self._stored_analysis(chat_id, analysis_id)
-        keyboard = [
-            [{"text": self._t(chat_id, "grammar.whole"), "callback_data": f"ai:g:{analysis_id}:all"}]
-        ]
-        for index, chunk in enumerate(analysis.grammar_chunks):
-            label = f"{chunk.text} — {chunk.label}"[:55]
-            keyboard.append(
-                [{"text": label, "callback_data": f"ai:g:{analysis_id}:{index}"}]
-            )
-        keyboard.append(
-            [{"text": self._t(chat_id, "grammar.custom"), "callback_data": f"ai:g:{analysis_id}:custom"}]
-        )
-        keyboard.extend(self._analysis_tabs(chat_id, analysis_id, "grammar"))
-        self._workspace(
-            chat_id,
-            self._t(chat_id, "grammar.choose"),
-            keyboard,
-            surface="feedback_grammar",
-        )
+        self.feedback.show_grammar_choices(chat_id, analysis_id)
 
     def explain_grammar(self, chat_id: int, analysis_id: int, selection: str) -> None:
-        if self.ai is None:
-            self.telegram.send_message(chat_id, "AI-разбор сейчас недоступен.")
-            return
-        row, analysis = self._stored_analysis(chat_id, analysis_id)
-        sentence = analysis.natural_response or str(row["source_text"])
-        if selection == "custom":
-            self.telegram.send_message(
-                chat_id,
-                "Ответьте командой /grammar и укажите фрагмент, например:\n"
-                "/grammar od dwóch dni",
-            )
-            return
-        if selection == "all":
-            fragment = sentence
-        else:
-            try:
-                fragment = analysis.grammar_chunks[int(selection)].text
-            except (ValueError, IndexError):
-                self.telegram.send_message(chat_id, "Этот фрагмент больше недоступен.")
-                return
-        user = self.storage.get_user(chat_id)
-        try:
-            result = self.ai.explain_grammar(
-                sentence,
-                fragment,
-                str(user["instruction_language"]),
-                str(user["target_language"]),
-            )
-        except AIError:
-            LOGGER.exception("AI grammar explanation failed")
-            self.telegram.send_message(chat_id, "Не удалось получить разбор. Попробуйте позже.")
-            self.storage.event(chat_id, "ai_analysis_failed", {"operation": "grammar"})
-            return
-        self.storage.add_ai_analysis(
-            chat_id=chat_id,
-            operation="grammar",
-            source_text=fragment,
-            result=result,
-            provider=self.ai.provider,
-            model=self.ai.model,
-            prompt_version="grammar-v1",
-            latency_ms=0,
-            session_id=row["session_id"],
-            scenario_id=row["scenario_id"],
-            step_index=row["step_index"],
-        )
-        parts = [f"📚 {fragment}", f"\nЗначение: {result['meaning']}", f"\n{result['explanation']}"]
-        if result["contrast_example"]:
-            parts.append(f"\nСравните: {result['contrast_example']}")
-        if result["common_error"]:
-            parts.append(f"\nЧастая ошибка: {result['common_error']}")
-        self._workspace(
-            chat_id,
-            "".join(parts),
-            self._analysis_tabs(chat_id, analysis_id, "grammar"),
-            surface="feedback_grammar",
-        )
-        self.storage.event(
-            chat_id,
-            "grammar_explanation_requested",
-            {"analysis_id": analysis_id, "selection": selection},
-        )
+        self.feedback.explain_grammar(chat_id, analysis_id, selection)
 
     def explain_custom_grammar(self, chat_id: int, fragment: str) -> None:
-        user = self.storage.get_user(chat_id)
-        row = self.storage.latest_ai_analysis(
-            chat_id, str(user["target_language"])
-        )
-        if row is None:
-            self.telegram.send_message(chat_id, "Сначала напишите ответ в учебном сценарии.")
-            return
-        analysis = ResponseAnalysis.from_dict(json.loads(row["result_json"]))
-        sentence = analysis.natural_response or str(row["source_text"])
-        if self.ai is None:
-            self.telegram.send_message(chat_id, "AI-разбор сейчас недоступен.")
-            return
-        try:
-            result = self.ai.explain_grammar(
-                sentence,
-                fragment,
-                str(user["instruction_language"]),
-                str(user["target_language"]),
-            )
-        except AIError:
-            LOGGER.exception("Custom grammar explanation failed")
-            self.telegram.send_message(chat_id, "Не удалось получить разбор. Попробуйте позже.")
-            return
-        self.storage.add_ai_analysis(
-            chat_id=chat_id,
-            operation="grammar",
-            source_text=fragment,
-            result=result,
-            provider=self.ai.provider,
-            model=self.ai.model,
-            prompt_version="grammar-v1",
-            latency_ms=0,
-            session_id=row["session_id"],
-            scenario_id=row["scenario_id"],
-            step_index=row["step_index"],
-        )
-        self.storage.event(
-            chat_id,
-            "grammar_explanation_requested",
-            {"analysis_id": int(row["id"]), "selection": "custom"},
-        )
-        self.telegram.send_message(
-            chat_id,
-            f"📚 {fragment}\n\nЗначение: {result['meaning']}\n\n"
-            f"{result['explanation']}\n\nСравните: {result['contrast_example']}"
-            + (f"\n\nЧастая ошибка: {result['common_error']}" if result["common_error"] else ""),
-        )
+        self.feedback.explain_custom_grammar(chat_id, fragment)
 
     def translate_analysis(self, chat_id: int, analysis_id: int) -> None:
-        _, analysis = self._stored_analysis(chat_id, analysis_id)
-        source = "\n".join(
-            part
-            for part in [
-                analysis.positive_feedback,
-                *analysis.critical_corrections,
-                *analysis.optional_improvements,
-                analysis.natural_response,
-                analysis.pragmatic_note,
-                analysis.explanation,
-            ]
-            if part
-        )
-        user = self.storage.get_user(chat_id)
-        translated = self._translate_text(
-            chat_id, source, str(user["translation_language"]), "AI feedback"
-        )
-        self._workspace(
-            chat_id,
-            f"🌐 Перевод:\n{translated}" if translated else "Перевод сейчас недоступен.",
-            self._analysis_tabs(chat_id, analysis_id, "translate"),
-            surface="feedback_translation",
-        )
+        self.feedback.translate_analysis(chat_id, analysis_id)
 
     def translate_task(self, chat_id: int, scenario_id: str, step_index: int) -> None:
         scenario = self._scenarios_for_chat(chat_id).get(scenario_id)
@@ -1616,21 +1013,7 @@ class TutorlaingBot:
         )
 
     def show_privacy(self, chat_id: int) -> None:
-        text = (
-            "Alpha хранит Telegram ID, имя, текст ответов, оценки и расписание "
-            "повторений. Для проверки фразы её текст, текущая реплика и учебная "
-            "цель отправляются Google Gemini. Telegram ID, имя и история других "
-            "сценариев в AI не передаются. Голос и контакты не собираются. Полные "
-            "тексты не отправляются в продуктовую аналитику.\n\n"
-            "Удалить все данные можно командой /delete_me."
-        )
-        localized = self._instruction_text(chat_id, text, "privacy")
-        self._workspace(
-            chat_id,
-            localized,
-            [[{"text": self._t(chat_id, "action.back"), "callback_data": "home"}]],
-            surface="privacy",
-        )
+        self.menu.show_privacy(chat_id)
 
     def cancel_activity(self, chat_id: int, notify: bool = True) -> None:
         current = self.storage.get_user(chat_id)
@@ -1912,39 +1295,7 @@ class TutorlaingBot:
             self.cancel_activity(chat_id)
 
     def handle_update(self, update: dict[str, Any]) -> None:
-        update_id = update.get("update_id")
-        if update_id is not None and not self.storage.claim_update(int(update_id)):
-            return
-        try:
-            if "message" in update:
-                message = update["message"]
-                text = message.get("text")
-                if not text:
-                    self.telegram.send_message(
-                        int(message["chat"]["id"]),
-                        "В этой версии используйте текстовые ответы. Голос появится после проверки качества.",
-                    )
-                else:
-                    chat_id = int(message["chat"]["id"])
-                    first_name = str(message.get("from", {}).get("first_name", ""))
-                    self.handle_text(chat_id, first_name, text)
-            elif "callback_query" in update:
-                callback = update["callback_query"]
-                message = callback.get("message")
-                if message:
-                    self.handle_callback(
-                        int(message["chat"]["id"]),
-                        str(callback.get("from", {}).get("first_name", "")),
-                        str(callback["id"]),
-                        str(callback.get("data", "")),
-                    )
-        except Exception:
-            if update_id is not None:
-                self.storage.release_update(int(update_id))
-            raise
-        else:
-            if update_id is not None:
-                self.storage.complete_update(int(update_id))
+        self.update_dispatcher.dispatch(update)
 
     def run_polling(self) -> None:
         LOGGER.info("Tutorlaing Telegram polling started")

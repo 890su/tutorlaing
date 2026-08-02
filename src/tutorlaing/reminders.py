@@ -3,12 +3,9 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-if TYPE_CHECKING:
-    from .app import TutorlaingBot
-    from .storage import Storage
+from .contracts import ReminderDelivery, ReminderStore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -69,7 +66,12 @@ def pause_until_tomorrow(
 
 
 class ReminderScheduler:
-    def __init__(self, bot: "TutorlaingBot", storage: "Storage", interval: int = 60):
+    def __init__(
+        self,
+        bot: ReminderDelivery,
+        storage: ReminderStore,
+        interval: int = 60,
+    ):
         self.bot = bot
         self.storage = storage
         self.interval = interval

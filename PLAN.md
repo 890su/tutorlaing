@@ -790,3 +790,30 @@ stale scheduler reservation отклоняется.
 нужно проверить понятность карточки, полезность сносок, качество польского и
 соответствие предложенного плана реальным целям мигранта. Затем — закрытая
 когорта 10–20 пользователей и ручной педагогический audit до open beta.
+
+## 16. Архитектурный аудит и модульный монолит — реализовано 2026-08-02
+
+Аудит обнаружил `TutorlaingBot` на 2010 строк с transport routing, UI,
+локализацией, AI и расчётом прогресса в одном классе, широкий SQLite adapter и
+обратную зависимость reminders от composition root. Выбран модульный монолит:
+для текущей alpha отдельные сервисы дадут операционный риск без самостоятельных
+границ данных и deployment.
+
+Выполнено:
+
+1. [x] Созданы узкие structural Protocol-порты в `contracts.py`.
+2. [x] Выделен `ScenarioCatalog` для польского и английского курсов.
+3. [x] Выделены `TelegramWorkspace` и `LearnerMenu` для presentation/UI policy.
+4. [x] Выделены `LanguageSupport`, `FeedbackPresenter` и `ResponseEvaluator`.
+5. [x] Выделен чистый `ProgressService` с неизменяемым snapshot.
+6. [x] Telegram update dedupe/routing вынесен в `TelegramUpdateDispatcher`.
+7. [x] Reminder scheduler зависит от ports, а не `app`/`storage`.
+8. [x] Добавлены contract/architecture tests; полный набор — 51 тест.
+9. [x] Зафиксированы границы, причины решений и дальнейший backlog в
+   `docs/ARCHITECTURE.md`.
+
+Рефакторинг сохраняет public behavior и схему БД. `app.py` уменьшен с 2010 до
+1361 строки. Следующий этап — выделение вертикальных `ScenarioFlow`, `ReviewFlow`
+и `DrillFlow` после transition-table tests; широкий `Storage` не дробится на
+фиктивные repositories до появления реальной транзакционной или backend
+границы.
