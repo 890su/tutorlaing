@@ -9,6 +9,7 @@ from tutorlaing.ai import (
     DrillItem,
     DrillPack,
     GrammarChunk,
+    PhraseTranslation,
     ResponseAnalysis,
 )
 from tutorlaing.app import TutorlaingBot
@@ -111,6 +112,49 @@ class FakeAI:
                 DrillItem("meaning_choice", "meaning", "Выберите смысл", "Od dwóch dni", ("в течение двух дней", "через два дня"), "в течение двух дней", ("в течение двух дней",), "Od отмечает начало длительности.", "Это началось раньше.", 1),
                 DrillItem("free_recall", "chunk", "Ответьте фармацевту", "Od kiedy?", (), "Od dwóch dni", ("Od dwóch dni", "Od dwóch dni boli mnie gardło"), "Короткий ответ достаточен.", "Начните с Od…", 2),
             ),
+        )
+
+    def generate_toolkit_pack(self, mode, *_args, **_kwargs) -> DrillPack:
+        if mode == "topic":
+            return self.generate_drill_pack()
+        return DrillPack(
+            title="Полезные фразы",
+            focus="Бытовые ситуации",
+            items=tuple(
+                DrillItem(
+                    "flashcard",
+                    "meaning",
+                    "Что означает эта фраза?",
+                    phrase,
+                    (meaning, "Попросить документ", "Отказаться", "Уточнить цену"),
+                    meaning,
+                    (meaning,),
+                    explanation,
+                    "Вспомните ситуацию.",
+                    1,
+                )
+                for phrase, meaning, explanation in (
+                    ("Boli mnie gardło.", "У меня болит горло", "Фраза описывает симптом."),
+                    ("Od dwóch dni.", "Уже два дня", "Так называют длительность."),
+                    ("Czy może pani powtórzyć?", "Можете повторить?", "Просьба повторить."),
+                    ("Piątek mi pasuje.", "Пятница мне подходит", "Подтверждение времени."),
+                    ("Kran przecieka.", "Кран протекает", "Описание неисправности."),
+                )
+            ),
+        )
+
+    def translate_with_variants(self, text, *_args, **_kwargs) -> PhraseTranslation:
+        return PhraseTranslation(
+            source_text=text,
+            primary="Czy może pan mówić wolniej?",
+            alternatives=(
+                Alternative(
+                    "Czy mógłby pan mówić trochę wolniej?",
+                    "formal",
+                    "Более вежливо.",
+                ),
+            ),
+            usage_note="Форма pan уместна с незнакомым мужчиной.",
         )
 
     def evaluate_drill_answer(self, item, response, *_args, **_kwargs) -> DrillEvaluation:
@@ -384,6 +428,92 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertIn("СНОСКА", self.telegram.messages[-1]["text"])
         self.assertIn("pomóc — помочь (C1)", self.telegram.messages[-1]["text"])
+
+    def test_toolkit_flashcards_have_options_and_forgot_action(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 20
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+
+        bot.handle_callback(chat_id, "Learner", "tools", "toolkit:start:cards")
+
+        session = self.storage.active_drill(chat_id)
+        self.assertEqual("toolkit_cards", session["mode"])
+        self.assertIn("КАРТОЧКИ", self.telegram.messages[-1]["text"])
+        buttons = [
+            button["text"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("Не помню", buttons)
+        self.assertIn("A · У меня болит горло", buttons)
+
+        first = self.storage.drill_item(str(session["id"]), 0)
+        bot.handle_callback(
+            chat_id, "Learner", "forgot", f"drill:skip:{first['id']}"
+        )
+        self.assertIn("ПОКАЖУ ОТВЕТ", self.telegram.messages[-1]["text"])
+        self.assertIn("У меня болит горло", self.telegram.messages[-1]["text"])
+
+    def test_phrase_tool_translates_both_directions_with_variants(self) -> None:
+        class RecordingAI(FakeAI):
+            def __init__(self) -> None:
+                self.directions = []
+
+            def translate_with_variants(
+                self, text, source_language, target_language, instruction_language
+            ) -> PhraseTranslation:
+                self.directions.append((source_language, target_language))
+                return super().translate_with_variants(text)
+
+        ai = RecordingAI()
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=ai)
+        chat_id = 21
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+
+        bot.handle_callback(
+            chat_id, "Learner", "translate", "toolkit:translate:to_target"
+        )
+        self.assertEqual("toolkit_input", self.storage.get_user(chat_id)["stage"])
+        before = len(self.telegram.messages)
+        bot.handle_text(chat_id, "Learner", "Можете говорить медленнее?")
+
+        self.assertEqual(before + 1, len(self.telegram.messages))
+        self.assertEqual("idle", self.storage.get_user(chat_id)["stage"])
+        self.assertIn("Czy może pan mówić wolniej?", self.telegram.messages[-1]["text"])
+        self.assertIn("Более вежливо", self.telegram.messages[-1]["text"])
+        analysis = self.storage.get_ai_analysis(1, chat_id)
+        self.assertEqual("phrase_translation", analysis["operation"])
+        buttons = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("toolkit:translate:from_target", buttons)
+
+        bot.handle_callback(
+            chat_id, "Learner", "reverse", "toolkit:translate:from_target"
+        )
+        bot.handle_text(chat_id, "Learner", "Czy może pan mówić wolniej?")
+        self.assertEqual([("ru", "pl"), ("pl", "ru")], ai.directions)
+
+    def test_topic_tool_creates_varied_drill_without_prior_analysis(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 22
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+
+        bot.handle_callback(chat_id, "Learner", "topic", "toolkit:topic:pharmacy")
+
+        session = self.storage.active_drill(chat_id)
+        self.assertEqual("toolkit_topic", session["mode"])
+        item_types = {
+            self.storage.drill_item(str(session["id"]), index)["item_type"]
+            for index in range(int(session["total_items"]))
+        }
+        self.assertGreaterEqual(len(item_types), 3)
+        self.assertIn("СЦЕНАРИЙ", self.telegram.messages[-1]["text"])
 
 
 if __name__ == "__main__":

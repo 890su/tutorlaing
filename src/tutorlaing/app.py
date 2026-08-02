@@ -31,6 +31,7 @@ from .progress_service import ProgressService
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
 from .telegram_api import TelegramAPI, TelegramError
+from .toolkit import PracticeToolkit
 from .ui import card, progress, route
 from .workspace import TelegramWorkspace
 from .update_dispatcher import TelegramUpdateDispatcher
@@ -77,6 +78,9 @@ class TutorlaingBot:
         )
         self.update_dispatcher = TelegramUpdateDispatcher(
             storage, self.telegram, self
+        )
+        self.toolkit = PracticeToolkit(
+            storage, self.workspace, self.catalog, self.ai, self, self.telegram
         )
         self.offset = 0
         self.running = True
@@ -145,6 +149,10 @@ class TutorlaingBot:
             mode, timezone_name=str(user["timezone"])
         )
         self.storage.schedule_next_reminder(chat_id, next_at)
+
+    def schedule_next_assignment(self, chat_id: int) -> None:
+        """Public delivery port used by application services."""
+        self._schedule_next_assignment(chat_id)
 
     def _drill_continuation_text(self, chat_id: int) -> str:
         return self.menu.continuation_text(chat_id)
@@ -750,7 +758,11 @@ class TutorlaingBot:
         if item.context:
             body.append(item.context)
         body.append(item.prompt)
-        footnotes = self._glossary_footnotes(chat_id, item.context)
+        footnotes = (
+            ""
+            if item.type == "flashcard"
+            else self._glossary_footnotes(chat_id, item.context)
+        )
         keyboard: list[list[dict[str, str]]] = []
         if item.options:
             labels = ("A", "B", "C", "D")
@@ -765,12 +777,22 @@ class TutorlaingBot:
                 )
         else:
             body.append(self._t(chat_id, "drill.write"))
-        keyboard.append(
-            [
-                {"text": self._t(chat_id, "action.hint"), "callback_data": f"drill:hint:{row['id']}"},
-                {"text": self._t(chat_id, "action.skip"), "callback_data": f"drill:skip:{row['id']}"},
-            ]
-        )
+        if item.type == "flashcard":
+            keyboard.append(
+                [
+                    {
+                        "text": self._t(chat_id, "toolkit.forgot"),
+                        "callback_data": f"drill:skip:{row['id']}",
+                    }
+                ]
+            )
+        else:
+            keyboard.append(
+                [
+                    {"text": self._t(chat_id, "action.hint"), "callback_data": f"drill:hint:{row['id']}"},
+                    {"text": self._t(chat_id, "action.skip"), "callback_data": f"drill:skip:{row['id']}"},
+                ]
+            )
         if scheduled:
             keyboard.append(
                 [
@@ -781,13 +803,20 @@ class TutorlaingBot:
         keyboard.append([{"text": self._t(chat_id, "action.stop"), "callback_data": "drill:stop"}])
         self._workspace(
             chat_id,
-            f"{progress(self._t(chat_id, 'drill.title'), index + 1, int(session['total_items']))}\n\n"
+            f"{progress(self._drill_title(chat_id, str(session['mode'])), index + 1, int(session['total_items']))}\n\n"
             + "\n\n".join(body)
             + footnotes,
             keyboard,
             force_new=scheduled,
             surface="drill_task",
         )
+
+    def _drill_title(self, chat_id: int, mode: str) -> str:
+        key = {
+            "toolkit_cards": "toolkit.cards_title",
+            "toolkit_topic": "toolkit.topic_drill_title",
+        }.get(mode, "drill.title")
+        return self._t(chat_id, key)
 
     def _evaluate_drill_response(
         self, chat_id: int, item: DrillItem, response: str
@@ -892,8 +921,13 @@ class TutorlaingBot:
             + "\n\n"
             + route("REVIEW", self._language(chat_id)),
             [
-                [{"text": "▶ Новая ситуация", "callback_data": "scenarios:list"}],
-                [{"text": "↻ Повторы", "callback_data": "reviews:list"}],
+                [
+                    {
+                        "text": self._t(chat_id, "action.toolkit"),
+                        "callback_data": "toolkit",
+                    }
+                ],
+                [{"text": self._t(chat_id, "action.reviews"), "callback_data": "reviews:list"}],
                 [{"text": "← В меню", "callback_data": "home"}],
             ],
             surface="drill_complete",
@@ -956,9 +990,15 @@ class TutorlaingBot:
         self._workspace(
             chat_id,
             card(
-                "Пропущено",
-                f"Верный вариант: {item.correct_answer}\n\nПочему: {item.explanation}\n\n"
-                f"{self._drill_continuation_text(chat_id)}",
+                self._t(chat_id, "toolkit.revealed_title"),
+                self._t(
+                    chat_id,
+                    "toolkit.revealed_summary",
+                    answer=item.correct_answer,
+                    explanation=item.explanation,
+                )
+                + "\n\n"
+                + self._drill_continuation_text(chat_id),
             ),
             [[{"text": self._t(chat_id, "action.next"), "callback_data": f"drill:next:{drill_id}"}]],
             surface="drill_feedback",
@@ -1028,6 +1068,7 @@ class TutorlaingBot:
             current_session=None,
             current_review=None,
             pending_assignment=None,
+            toolkit_input_mode=None,
         )
         if notify:
             self.telegram.send_message(
@@ -1067,6 +1108,9 @@ class TutorlaingBot:
         if command == "/progress":
             self.show_progress(chat_id)
             return
+        if command in {"/tools", "/toolkit"}:
+            self.toolkit.show_menu(chat_id)
+            return
         if command == "/reminders":
             self.show_reminders(chat_id)
             return
@@ -1098,6 +1142,8 @@ class TutorlaingBot:
             self.handle_review_response(chat_id, text, user)
         elif stage == "drill":
             self.handle_drill_text(chat_id, text, user)
+        elif stage == "toolkit_input":
+            self.toolkit.handle_phrase(chat_id, text)
         elif stage == "waiting":
             self.telegram.send_message(
                 chat_id,
@@ -1133,6 +1179,18 @@ class TutorlaingBot:
             self.start(chat_id, first_name)
         elif data == "home":
             self.home(chat_id)
+        elif data == "toolkit":
+            self.toolkit.show_menu(chat_id)
+        elif data == "toolkit:topics":
+            self.toolkit.show_topics(chat_id)
+        elif data.startswith("toolkit:topic:"):
+            self.toolkit.start_pack(
+                chat_id, "topic", data.split(":", 2)[2]
+            )
+        elif data.startswith("toolkit:start:"):
+            self.toolkit.start_pack(chat_id, data.split(":", 2)[2])
+        elif data.startswith("toolkit:translate:"):
+            self.toolkit.ask_for_phrase(chat_id, data.split(":", 2)[2])
         elif data == "settings":
             self.show_settings(chat_id)
         elif data == "progress":
@@ -1211,8 +1269,22 @@ class TutorlaingBot:
             if current["stage"] == "scenario" and current["current_scenario"]:
                 scenario = self._scenarios_for_user(current)[current["current_scenario"]]
                 self.send_scenario_step(chat_id, scenario, int(current["current_step"]))
+            elif (
+                current["stage"] == "practice"
+                and current["current_scenario"]
+                and current["current_session"]
+            ):
+                scenario = self._scenarios_for_user(current)[
+                    current["current_scenario"]
+                ]
+                self.begin_practice(
+                    chat_id, scenario, str(current["current_session"])
+                )
             elif current["stage"] == "review" and current["current_review"]:
                 self.begin_review(chat_id, int(current["current_review"]))
+            elif current["stage"] == "waiting":
+                if not self.send_pending_assignment(chat_id):
+                    self.home(chat_id)
             else:
                 self.home(chat_id)
         elif data.startswith("ai:variants:"):
@@ -1336,6 +1408,7 @@ class TutorlaingBot:
                         {"command": "review_now", "description": "Повторить сейчас"},
                         {"command": "settings", "description": "Языки и настройки"},
                         {"command": "progress", "description": "Прогресс и ближайший план"},
+                        {"command": "tools", "description": "Карточки, перевод и темы"},
                         {"command": "drill", "description": "Закрепить материал"},
                         {"command": "reminders", "description": "Настроить напоминания"},
                         {"command": "grammar", "description": "Объяснить фрагмент"},

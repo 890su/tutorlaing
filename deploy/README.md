@@ -92,6 +92,7 @@ Tutorlaing volume is included.
 - Persistent app volume: tutorlaing_tutorlaing-data
 - AI: Gemini enabled, model gemini-3.5-flash, consent v2 required
 - Adaptive drills: enabled; production smoke passed for 5 items / 5 types
+- Interactive toolkit: flashcards, bidirectional phrase variants and topic drills
 - Reminder scheduler: enabled; user mode defaults to off, Europe/Warsaw quiet hours
 - Old n8n, Google MCP and Twenty CRM containers/volumes: removed
 - Management bridge is intentionally retained until direct SSH is stable

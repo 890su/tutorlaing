@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -126,7 +127,12 @@ class StorageTests(unittest.TestCase):
             "hint": "Od…",
             "difficulty": 1,
         }
-        drill_id = self.storage.start_drill(88, None, "Test", "Chunk", [item, item])
+        drill_id = self.storage.start_drill(
+            88, None, "Test", "Chunk", [item, item], mode="toolkit_topic"
+        )
+        self.assertEqual(
+            "toolkit_topic", self.storage.drill_session(drill_id)["mode"]
+        )
         first = self.storage.drill_item(drill_id, 0)
         self.storage.answer_drill_item(int(first["id"]), "Od dwóch dni", 1.0)
         self.assertTrue(self.storage.advance_drill(drill_id, 88))
@@ -135,6 +141,30 @@ class StorageTests(unittest.TestCase):
         self.assertFalse(self.storage.advance_drill(drill_id, 88))
         self.assertEqual("completed", self.storage.drill_session(drill_id)["status"])
         self.assertEqual("idle", self.storage.get_user(88)["stage"])
+
+    def test_toolkit_columns_are_added_to_an_existing_database(self) -> None:
+        path = self.storage.path
+        self.storage.close()
+        connection = sqlite3.connect(path)
+        connection.execute("ALTER TABLE users DROP COLUMN toolkit_input_mode")
+        connection.execute("ALTER TABLE drill_sessions DROP COLUMN mode")
+        connection.commit()
+        connection.close()
+
+        self.storage = Storage(path)
+
+        user_columns = {
+            row[1]
+            for row in self.storage._connection.execute("PRAGMA table_info(users)")
+        }
+        drill_columns = {
+            row[1]
+            for row in self.storage._connection.execute(
+                "PRAGMA table_info(drill_sessions)"
+            )
+        }
+        self.assertIn("toolkit_input_mode", user_columns)
+        self.assertIn("mode", drill_columns)
 
 
 if __name__ == "__main__":

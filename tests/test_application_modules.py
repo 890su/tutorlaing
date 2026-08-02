@@ -135,6 +135,7 @@ class ApplicationModuleTests(unittest.TestCase):
             "menu.py",
             "progress_service.py",
             "reminders.py",
+            "toolkit.py",
             "update_dispatcher.py",
             "workspace.py",
         )

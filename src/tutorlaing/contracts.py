@@ -126,3 +126,49 @@ class UpdateTarget(Protocol):
     def handle_callback(
         self, chat_id: int, first_name: str, callback_id: str, data: str
     ) -> None: ...
+
+
+class ToolkitStore(Protocol):
+    def get_user(self, chat_id: int) -> Any: ...
+
+    def set_user_state(self, chat_id: int, **values: Any) -> None: ...
+
+    def active_drill(self, chat_id: int) -> Any | None: ...
+
+    def start_drill(
+        self,
+        chat_id: int,
+        source_analysis_id: int | None,
+        title: str,
+        focus: str,
+        items: list[dict[str, Any]],
+        mode: str = "adaptive",
+    ) -> str: ...
+
+    def add_ai_analysis(
+        self,
+        chat_id: int,
+        operation: str,
+        source_text: str,
+        result: dict[str, Any],
+        provider: str,
+        model: str,
+        prompt_version: str,
+        latency_ms: int,
+        **values: Any,
+    ) -> int: ...
+
+    def event(
+        self,
+        chat_id: int | None,
+        event_name: str,
+        properties: dict[str, Any] | None = None,
+    ) -> None: ...
+
+
+class ToolkitDelivery(Protocol):
+    def send_drill_item(
+        self, chat_id: int, drill_id: str, scheduled: bool = False
+    ) -> None: ...
+
+    def schedule_next_assignment(self, chat_id: int) -> None: ...

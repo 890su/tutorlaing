@@ -73,6 +73,7 @@ flowchart LR
 | `workspace.py` | Политика одной текущей карточки | `WorkspaceStore`, `TelegramGateway` | edit текущей либо один безопасный send |
 | `update_dispatcher.py` | Dedupe и нормализация Telegram update | `UpdateStore`, `TelegramGateway`, `UpdateTarget` | Один вызов text/callback handler; failed update доступен для retry |
 | `reminders.py` | Расчёт слотов и атомарная доставка | `ReminderStore`, `ReminderDelivery` | Не более одного assignment на зарезервированный slot |
+| `toolkit.py` | Карточки, перевод фраз и тематические тренировки | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Drill session либо одна карточка вариантов перевода |
 | `app.py` | Composition root и orchestration учебной state machine | concrete adapters + application services | Переходы scenario/practice/review/drill |
 | `storage.py` | SQLite schema, migrations и транзакционные операции | вызовы портов | Персистентное состояние и audit events |
 
@@ -86,6 +87,7 @@ flowchart LR
 - `MenuStore` — профиль, reviews, reminder mode и progress evidence;
 - `ReminderStore` / `ReminderDelivery` — планирование отдельно от materialization;
 - `UpdateStore` / `UpdateTarget` — exactly-once local dispatch отдельно от bot;
+- `ToolkitStore` / `ToolkitDelivery` — генерация инструмента отдельно от общей drill delivery;
 - `TransportError` — единый recoverable transport failure.
 
 Protocols являются структурными: `Storage` и `TelegramAPI` не наследуют их и

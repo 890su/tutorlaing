@@ -75,7 +75,7 @@ class LearnerMenu:
             [
                 primary,
                 [
-                    {"text": tr(language, "action.practice"), "callback_data": "drill:start"},
+                    {"text": tr(language, "action.toolkit"), "callback_data": "toolkit"},
                     {"text": tr(language, "action.reviews"), "callback_data": "reviews:list"},
                 ],
                 [{"text": tr(language, "action.progress"), "callback_data": "progress"}],

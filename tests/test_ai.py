@@ -101,6 +101,85 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual([], client.glossary_notes("Dowolny tekst", "C1", "pl", "ru"))
         self.assertEqual(1, len(calls))
 
+    def test_phrase_translation_returns_natural_variants(self) -> None:
+        payload = {
+            "primary": "Czy może pan mówić wolniej?",
+            "alternatives": [
+                {
+                    "text": "Czy mógłby pan mówić trochę wolniej?",
+                    "register": "formal",
+                    "nuance": "Более вежливая просьба.",
+                }
+            ],
+            "usage_note": "Форма pan подходит для незнакомого мужчины.",
+        }
+        envelope = {
+            "candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]
+        }
+        client = GeminiClient(
+            "test-key", opener=lambda *_args, **_kwargs: FakeHTTPResponse(envelope)
+        )
+
+        result = client.translate_with_variants(
+            "Можете говорить медленнее?", "ru", "pl", "ru"
+        )
+
+        self.assertEqual("Czy może pan mówić wolniej?", result.primary)
+        self.assertEqual("formal", result.alternatives[0].register)
+        self.assertIn("незнакомого мужчины", result.usage_note)
+
+    def test_flashcard_pack_enforces_five_four_option_cards(self) -> None:
+        phrases = (
+            ("Dzień dobry", "Добрый день"),
+            ("Od dwóch dni", "Уже два дня"),
+            ("Proszę powtórzyć", "Повторите, пожалуйста"),
+            ("Piątek mi pasuje", "Пятница мне подходит"),
+            ("Kran przecieka", "Кран протекает"),
+        )
+        items = [
+            {
+                "type": "flashcard",
+                "skill": "meaning",
+                "prompt": "Что означает фраза?",
+                "context": phrase,
+                "options": [meaning, "Вариант 2", "Вариант 3", "Вариант 4"],
+                "correct_answer": meaning,
+                "accepted_answers": [meaning],
+                "explanation": "Практическое значение.",
+                "hint": "Вспомните ситуацию.",
+                "difficulty": 1,
+            }
+            for phrase, meaning in phrases
+        ]
+        envelope = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": json.dumps(
+                                    {
+                                        "title": "Фразы",
+                                        "focus": "Бытовые ситуации",
+                                        "items": items,
+                                    }
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        client = GeminiClient(
+            "test-key", opener=lambda *_args, **_kwargs: FakeHTTPResponse(envelope)
+        )
+
+        pack = client.generate_toolkit_pack("cards", {}, "ru", "pl", "ru")
+
+        self.assertEqual(5, len(pack.items))
+        self.assertTrue(all(item.type == "flashcard" for item in pack.items))
+        self.assertTrue(all(len(item.options) == 4 for item in pack.items))
+
 
 if __name__ == "__main__":
     unittest.main()

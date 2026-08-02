@@ -40,6 +40,7 @@ class Storage:
             current_session TEXT,
             current_review INTEGER,
             current_drill TEXT,
+            toolkit_input_mode TEXT,
             pending_assignment TEXT,
             workspace_message_id INTEGER,
             consent_version INTEGER NOT NULL DEFAULT 0,
@@ -139,6 +140,7 @@ class Storage:
             id TEXT PRIMARY KEY,
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
             target_language TEXT NOT NULL DEFAULT 'pl',
+            mode TEXT NOT NULL DEFAULT 'adaptive',
             source_analysis_id INTEGER,
             title TEXT NOT NULL,
             focus TEXT NOT NULL,
@@ -193,6 +195,7 @@ class Storage:
                 "users", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
             )
             self._ensure_column("users", "current_drill", "TEXT")
+            self._ensure_column("users", "toolkit_input_mode", "TEXT")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column(
@@ -213,6 +216,9 @@ class Storage:
             )
             self._ensure_column(
                 "drill_sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
+            )
+            self._ensure_column(
+                "drill_sessions", "mode", "TEXT NOT NULL DEFAULT 'adaptive'"
             )
             self._ensure_column(
                 "sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
@@ -298,6 +304,7 @@ class Storage:
             "current_session",
             "current_review",
             "current_drill",
+            "toolkit_input_mode",
             "pending_assignment",
             "workspace_message_id",
         }
@@ -486,6 +493,7 @@ class Storage:
         title: str,
         focus: str,
         items: list[dict[str, Any]],
+        mode: str = "adaptive",
     ) -> str:
         drill_id = str(uuid.uuid4())
         now = utc_now()
@@ -498,9 +506,9 @@ class Storage:
             self._connection.execute(
                 """
                 INSERT INTO drill_sessions(
-                    id, chat_id, source_analysis_id, title, focus, target_language, status,
+                    id, chat_id, source_analysis_id, title, focus, target_language, mode, status,
                     total_items, started_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     drill_id,
@@ -509,6 +517,7 @@ class Storage:
                     title,
                     focus,
                     target_language,
+                    mode,
                     len(items),
                     now,
                 ),
@@ -538,7 +547,11 @@ class Storage:
                     ),
                 )
         self.set_user_state(chat_id, stage="drill", current_drill=drill_id)
-        self.event(chat_id, "drill_started", {"drill_id": drill_id, "items": len(items)})
+        self.event(
+            chat_id,
+            "drill_started",
+            {"drill_id": drill_id, "items": len(items), "mode": mode},
+        )
         return drill_id
 
     def drill_session(self, drill_id: str, chat_id: int | None = None) -> sqlite3.Row:
