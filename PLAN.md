@@ -8,8 +8,9 @@
 
 - код находится в Git-репозитории 890su/tutorlaing;
 - реализованы 8 сценариев и полный текстовый учебный цикл;
-- production использует OpenAI GPT-5.6 Sol как основной AI, Gemini 3.5 Flash
-  как второй provider и объяснимые rule-based правила как независимый fallback;
+- код поддерживает OpenAI GPT-5.6 Sol как основной AI и Gemini 3.5 Flash как
+  второй provider; runtime временно остаётся Gemini до server-side provisioning
+  OpenAI secret, а rule-based правила работают как независимый fallback;
 - доступны natural response, варианты по регистрам, перевод по запросу,
   grammar drill-down и три независимые языковые настройки;
 - язык объяснений/перевода выбирается из `ru/uk/en/pl`, изучаемый — из
