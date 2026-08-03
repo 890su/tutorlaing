@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from tutorlaing.ai import (
+    AIError,
     Alternative,
     DrillEvaluation,
     DrillItem,
@@ -341,6 +342,45 @@ class AppFlowTests(unittest.TestCase):
         second = self.storage.drill_item(session["id"], 1)
         bot.answer_drill(chat_id, int(second["id"]), "Nie mam gorączki")
         self.assertIn("ПОЛУЧИЛОСЬ", self.telegram.messages[-1]["text"])
+
+    def test_adaptive_drill_uses_history_fallback_when_all_ai_routes_fail(self) -> None:
+        class BrokenAI(FakeAI):
+            def generate_drill_pack(self, *_args, **_kwargs) -> DrillPack:
+                raise AIError("all providers unavailable")
+
+        chat_id = 44
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=BrokenAI())
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        analysis = FakeAI().analyze_response()
+        self.storage.add_ai_analysis(
+            chat_id=chat_id,
+            scenario_id="pharmacy",
+            step_index=0,
+            operation="response_analysis",
+            target_language="pl",
+            source_text="Ja potrzebuje pomoc",
+            result=analysis.to_dict(),
+            provider=analysis.provider,
+            model=analysis.model,
+            prompt_version=analysis.prompt_version,
+            latency_ms=analysis.latency_ms,
+            usage=analysis.usage,
+        )
+
+        bot.start_drill(chat_id)
+
+        session = self.storage.active_drill(chat_id)
+        self.assertIsNotNone(session)
+        self.assertEqual(8, session["total_items"])
+        first = self.storage.drill_item(str(session["id"]), 0)
+        with self.storage._lock:
+            source = self.storage._connection.execute(
+                "SELECT source FROM exercise_bank WHERE id = ?",
+                (first["exercise_id"],),
+            ).fetchone()["source"]
+        self.assertEqual("recovery", source)
+        self.assertNotIn("Не удалось собрать задания", self.telegram.messages[-1]["text"])
 
     def test_reminder_mode_is_configurable(self) -> None:
         chat_id = 13

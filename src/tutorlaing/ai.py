@@ -541,7 +541,7 @@ class GeminiClient:
                 "responseMimeType": "application/json",
                 "responseJsonSchema": schema,
                 "temperature": 0.2,
-                "maxOutputTokens": 4096,
+                "maxOutputTokens": 8192,
             },
         }
         request = urllib.request.Request(
@@ -575,7 +575,10 @@ class GeminiClient:
                 if exc.code not in {429, 500, 502, 503, 504} or attempt == 1:
                     break
                 time.sleep(0.5)
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, AIError) as exc:
+            except TimeoutError as exc:
+                last_error = exc
+                break
+            except (urllib.error.URLError, json.JSONDecodeError, AIError) as exc:
                 last_error = exc
                 if attempt == 1:
                     break
@@ -986,7 +989,10 @@ class OpenAIClient(GeminiClient):
                 if exc.code not in {408, 409, 429, 500, 502, 503, 504} or attempt == 1:
                     break
                 time.sleep(0.5 * (attempt + 1))
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, AIError) as exc:
+            except TimeoutError as exc:
+                last_error = exc
+                break
+            except (urllib.error.URLError, json.JSONDecodeError, AIError) as exc:
                 last_error = exc
                 if attempt == 1:
                     break

@@ -248,3 +248,13 @@ workspace невозможно, старая карточка удаляется
 а не для каждого открытия инструмента. Fingerprint значимого learner material
 меняется при новых ошибках; после двух показов одного полного pack допускается
 refresh, чтобы кэш не превращался в вечный фиксированный набор.
+
+## 2026-08-03 — Adaptive drill must survive total AI failure
+
+Отказ OpenAI и Gemini не должен прерывать переход к персональному закреплению.
+После исчерпания AI routes application service строит приватный recovery pack
+из уже сохранённых natural responses, corrections и curated scenario chunks.
+Он обязан соблюдать размер и variety invariants и сохраняется в общем exercise
+bank с `source=recovery`. Точный accepted answer проверяется до AI; модель нужна
+только для семантически допустимых альтернатив, которые нельзя надёжно сравнить
+детерминированно.

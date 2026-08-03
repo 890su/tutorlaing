@@ -59,6 +59,7 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual("od dwóch dni", analysis.grammar_chunks[0].text)
         self.assertEqual("gemini-3.5-flash", analysis.model)
         request_payload = json.loads(requests[0].data.decode("utf-8"))
+        self.assertEqual(8192, request_payload["generationConfig"]["maxOutputTokens"])
         prompt = json.loads(
             request_payload["contents"][0]["parts"][0]["text"]
         )
@@ -201,6 +202,20 @@ class GeminiClientTests(unittest.TestCase):
 
 
 class OpenAIClientTests(unittest.TestCase):
+    def test_provider_timeout_is_not_retried_before_failover(self) -> None:
+        for client_type in (OpenAIClient, GeminiClient):
+            calls = 0
+
+            def timeout_opener(*_args, **_kwargs):
+                nonlocal calls
+                calls += 1
+                raise TimeoutError("slow provider")
+
+            client = client_type("test-key", opener=timeout_opener)
+            with self.assertRaises(AIError):
+                client.translate("test", "pl")
+            self.assertEqual(1, calls)
+
     def test_responses_api_structured_output_is_parsed(self) -> None:
         envelope = {
             "model": "gpt-5.6-sol",

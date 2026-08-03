@@ -26,6 +26,7 @@ from .engine import (
     select_bottleneck,
 )
 from .difficulty import level_policy
+from .drill_fallback import build_adaptive_fallback
 from .exercise_bank import ExerciseBank, material_signature
 from .i18n import tr
 from .feedback import FeedbackPresenter
@@ -826,24 +827,45 @@ class TutorlaingBot:
             "exercise_bank_lookup",
             {"mode": "adaptive", "hit": bank_pack is not None},
         )
-        if bank_pack is None and self.ai is None:
-            self.telegram.send_message(chat_id, "Закрепление временно недоступно: AI выключен.")
-            return
         if announce:
             try:
                 self.telegram.send_chat_action(chat_id, "typing")
             except TelegramError:
                 LOGGER.debug("Could not send typing action", exc_info=True)
         if bank_pack is None:
-            try:
-                pack = self.ai.generate_drill_pack(
-                    material,
-                    str(user["instruction_language"]),
-                    str(user["target_language"]),
-                )
-            except AIError:
-                LOGGER.exception("AI drill generation failed")
-                self.storage.event(chat_id, "ai_fallback_used", {"operation": "drill_generation"})
+            pack = None
+            source = "ai"
+            provider = ""
+            model = ""
+            prompt_version = PROMPT_VERSION
+            if self.ai is not None:
+                try:
+                    pack = self.ai.generate_drill_pack(
+                        material,
+                        str(user["instruction_language"]),
+                        str(user["target_language"]),
+                    )
+                    provider = str(self.ai.provider)
+                    model = str(self.ai.model)
+                except AIError:
+                    LOGGER.exception("AI drill generation failed; using history fallback")
+                    self.storage.event(
+                        chat_id,
+                        "ai_fallback_used",
+                        {"operation": "drill_generation", "fallback": "history"},
+                    )
+            if pack is None:
+                source = "recovery"
+                provider = "local"
+                model = "history-fallback"
+                prompt_version = "history-fallback-v1"
+                try:
+                    pack = build_adaptive_fallback(
+                        material, str(user["instruction_language"])
+                    )
+                except AIError:
+                    LOGGER.exception("Adaptive history fallback generation failed")
+            if pack is None:
                 self.telegram.send_message(
                     chat_id,
                     "Не удалось собрать задания. Основные сценарии и повторы продолжают работать.",
@@ -862,10 +884,10 @@ class TutorlaingBot:
                 learner_level=str(user["learner_level"]),
                 mode="adaptive",
                 scenario_id=material_revision,
-                source="ai",
-                provider=str(self.ai.provider),
-                model=str(self.ai.model),
-                prompt_version=PROMPT_VERSION,
+                source=source,
+                provider=provider,
+                model=model,
+                prompt_version=prompt_version,
                 private=True,
                 tags=["personal:errors"],
             )
@@ -987,6 +1009,14 @@ class TutorlaingBot:
                 feedback="Форма выбрана верно." if correct else "Эта форма не подходит к контексту.",
                 corrected_answer=item.correct_answer,
             )
+        accepted = {normalize(value) for value in item.accepted_answers}
+        if normalize(response) in accepted:
+            return DrillEvaluation(
+                correct=True,
+                score=1.0,
+                feedback="Ответ совпал с допустимым вариантом.",
+                corrected_answer=item.correct_answer,
+            )
         user = self.storage.get_user(chat_id)
         if self.ai is not None:
             try:
@@ -999,7 +1029,6 @@ class TutorlaingBot:
             except AIError:
                 LOGGER.exception("AI drill answer evaluation failed")
                 self.storage.event(chat_id, "ai_fallback_used", {"operation": "drill_evaluation"})
-        accepted = {normalize(value) for value in item.accepted_answers}
         correct = normalize(response) in accepted
         return DrillEvaluation(
             correct=correct,
