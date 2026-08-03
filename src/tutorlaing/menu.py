@@ -375,7 +375,8 @@ class LearnerMenu:
                 tr(language, "reminders.title"),
                 f"{tr(language, 'reminders.current', mode=tr(language, f'reminder.{mode}'))}\n"
                 f"{tr(language, f'reminder.desc.{mode}')}{next_text}{pause_text}\n\n"
-                f"{tr(language, 'reminders.quiet')}",
+                f"{tr(language, 'reminders.quiet')}\n\n"
+                f"{tr(language, 'reminders.reengagement_note')}",
             ),
             keyboard,
             surface="reminders",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from .contracts import ReminderDelivery, ReminderStore
@@ -15,6 +16,15 @@ REMINDER_SLOTS = {
     "normal": ((9, 0), (19, 0)),
     "intensive": ((8, 0), (12, 0), (17, 0), (21, 0)),
     "aggressive": ((8, 0), (10, 30), (13, 0), (15, 30), (18, 0), (21, 0)),
+}
+
+# A re-engagement card replaces one normal reminder slot. It never creates an
+# additional delivery and repeats no more often than the same interval.
+REENGAGEMENT_AFTER_DAYS = {
+    "gentle": 5,
+    "normal": 3,
+    "intensive": 2,
+    "aggressive": 1,
 }
 
 
@@ -65,6 +75,29 @@ def pause_until_tomorrow(
     ).astimezone(timezone.utc)
 
 
+def reengagement_inactive_days(user: Any, now: datetime) -> int | None:
+    """Return days when a prompt is due, 0 while inactive cooldown applies, else None."""
+    mode = str(user["reminder_mode"])
+    threshold = REENGAGEMENT_AFTER_DAYS.get(mode)
+    if threshold is None:
+        return None
+    last_raw = user["last_interaction_at"] or user["consent_at"] or user["created_at"]
+    last_interaction = datetime.fromisoformat(str(last_raw))
+    if last_interaction.tzinfo is None:
+        last_interaction = last_interaction.replace(tzinfo=timezone.utc)
+    inactive_days = max(0, (now - last_interaction).days)
+    if inactive_days < threshold:
+        return None
+    last_reengagement_raw = user["last_reengagement_at"]
+    if last_reengagement_raw:
+        last_reengagement = datetime.fromisoformat(str(last_reengagement_raw))
+        if last_reengagement.tzinfo is None:
+            last_reengagement = last_reengagement.replace(tzinfo=timezone.utc)
+        if now - last_reengagement < timedelta(days=threshold):
+            return 0
+    return inactive_days
+
+
 class ReminderScheduler:
     def __init__(
         self,
@@ -108,8 +141,19 @@ class ReminderScheduler:
                 chat_id, str(user["reminder_next_at"]), current, next_at
             ):
                 continue
+            inactive_days = reengagement_inactive_days(user, current)
+            if inactive_days == 0:
+                # The learner is still inactive, but a re-engagement card was
+                # delivered recently. Advance the slot without adding another
+                # task or motivational message to the chat.
+                continue
             try:
-                self.bot.send_scheduled_reminder(chat_id, mode)
+                if inactive_days is None:
+                    self.bot.send_scheduled_reminder(chat_id, mode)
+                else:
+                    self.bot.send_reengagement_reminder(
+                        chat_id, mode, inactive_days
+                    )
             except Exception:
                 retry_at = current + timedelta(minutes=5)
                 LOGGER.exception("Scheduled reminder failed for a user")
@@ -125,7 +169,10 @@ class ReminderScheduler:
                 extra={"chat_id": chat_id, "mode": mode},
             )
             try:
-                self.storage.record_reminder_delivery(chat_id, "sent", mode)
+                outcome = "reengagement_sent" if inactive_days is not None else "sent"
+                self.storage.record_reminder_delivery(chat_id, outcome, mode)
+                if inactive_days is not None:
+                    self.storage.record_reengagement_delivery(chat_id, current)
             except Exception:
                 # Delivery already happened; never retry merely because audit
                 # persistence failed, otherwise the learner receives a duplicate.

@@ -68,6 +68,8 @@ class Storage:
             reminder_next_at TEXT,
             reminder_paused_until TEXT,
             last_reminder_at TEXT,
+            last_interaction_at TEXT,
+            last_reengagement_at TEXT,
             timezone TEXT NOT NULL DEFAULT 'Europe/Warsaw',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
@@ -330,6 +332,8 @@ class Storage:
             self._ensure_column("users", "reminder_next_at", "TEXT")
             self._ensure_column("users", "reminder_paused_until", "TEXT")
             self._ensure_column("users", "last_reminder_at", "TEXT")
+            self._ensure_column("users", "last_interaction_at", "TEXT")
+            self._ensure_column("users", "last_reengagement_at", "TEXT")
             self._ensure_column(
                 "users", "timezone", "TEXT NOT NULL DEFAULT 'Europe/Warsaw'"
             )
@@ -1296,6 +1300,16 @@ class Storage:
             )
         self.event(chat_id, "reminder_mode_changed", {"mode": mode})
 
+    def record_user_interaction(
+        self, chat_id: int, occurred_at: datetime | None = None
+    ) -> None:
+        timestamp = (occurred_at or datetime.now(timezone.utc)).isoformat()
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET last_interaction_at = ? WHERE chat_id = ?",
+                (timestamp, chat_id),
+            )
+
     def pause_reminders(self, chat_id: int, until: datetime) -> None:
         with self._lock, self._connection:
             self._connection.execute(
@@ -1373,6 +1387,20 @@ class Storage:
             chat_id,
             "reminder_delivery",
             {"outcome": outcome, "mode": mode},
+        )
+
+    def record_reengagement_delivery(
+        self, chat_id: int, sent_at: datetime
+    ) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                "UPDATE users SET last_reengagement_at = ? WHERE chat_id = ?",
+                (sent_at.isoformat(), chat_id),
+            )
+        self.event(
+            chat_id,
+            "reengagement_reminder_delivered",
+            {"sent_at": sent_at.isoformat()},
         )
 
     def queue_assignment(self, chat_id: int, assignment: str) -> None:
