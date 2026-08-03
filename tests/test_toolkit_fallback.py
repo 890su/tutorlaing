@@ -64,6 +64,31 @@ class ToolkitFallbackTests(unittest.TestCase):
         self.assertGreaterEqual(len({item.type for item in pack.items}), 3)
         self.assertGreaterEqual(sum(not item.options for item in pack.items), 2)
 
+    def test_topic_pack_uses_level_policy_for_scaffolding_and_difficulty(self) -> None:
+        base = {
+            "title": "Pharmacy",
+            "objective_ru": "Ask for medicine",
+            "steps": [
+                {
+                    "target_chunk": f"Target {index}",
+                    "learner_goal_ru": f"Goal {index}",
+                }
+                for index in range(4)
+            ],
+        }
+
+        beginner = build_toolkit_fallback(
+            "topic", {**base, "learner_level": "A1"}, "en"
+        )
+        advanced = build_toolkit_fallback(
+            "topic", {**base, "learner_level": "B2"}, "en"
+        )
+
+        self.assertEqual(3, sum(bool(item.options) for item in beginner.items))
+        self.assertEqual(1, sum(bool(item.options) for item in advanced.items))
+        self.assertEqual({1}, {item.difficulty for item in beginner.items})
+        self.assertEqual({3}, {item.difficulty for item in advanced.items})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,6 +23,9 @@ class FakeTelegram:
         self.messages: list[dict[str, Any]] = []
         self.edits: list[dict[str, Any]] = []
         self.callbacks: list[str] = []
+        self.reply_keyboards: list[list[list[str]]] = []
+        self.deleted: list[tuple[int, int]] = []
+        self.temporary: list[dict[str, Any]] = []
 
     def send_message(
         self,
@@ -61,6 +64,19 @@ class FakeTelegram:
 
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         return None
+
+    def set_reply_keyboard(self, chat_id: int, keyboard: list[list[str]]) -> None:
+        self.reply_keyboards.append(keyboard)
+
+    def delete_message(self, chat_id: int, message_id: int) -> None:
+        self.deleted.append((chat_id, message_id))
+
+    def send_temporary_message(
+        self, chat_id: int, text: str, ttl_seconds: int = 5
+    ) -> dict[str, Any]:
+        notice = {"chat_id": chat_id, "text": text, "ttl_seconds": ttl_seconds}
+        self.temporary.append(notice)
+        return notice
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         self.callbacks.append(callback_id)
@@ -340,6 +356,99 @@ class AppFlowTests(unittest.TestCase):
         ]
         self.assertIn("reminder:test", callbacks)
 
+    def test_home_installs_persistent_bottom_navigation(self) -> None:
+        chat_id = 35
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.home(chat_id)
+
+        self.assertEqual(
+            [
+                ["▶ Учиться", "🧰 Инструменты"],
+                ["📍 Прогресс", "⚙ Настройки"],
+            ],
+            self.telegram.reply_keyboards[-1],
+        )
+
+    def test_bottom_navigation_opens_tools_and_cancels_phrase_input(self) -> None:
+        chat_id = 36
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.storage.set_user_state(chat_id, toolkit_input_mode="to_target")
+
+        self.bot.handle_text(chat_id, "Learner", "🧰 Инструменты")
+
+        self.assertIsNone(self.storage.get_user(chat_id)["toolkit_input_mode"])
+        self.assertIn("МАСТЕРСКАЯ", self.telegram.messages[-1]["text"])
+
+    def test_scenario_scaffolding_changes_with_learner_level(self) -> None:
+        beginner = 37
+        advanced = 38
+        for chat_id, level in ((beginner, "A1"), (advanced, "B2")):
+            self.storage.ensure_user(chat_id, "Learner")
+            self.storage.accept_consent(chat_id, CONSENT_VERSION)
+            self.storage.set_learner_level(chat_id, level)
+            self.bot.begin_scenario(chat_id, "pharmacy")
+
+        beginner_text = next(
+            message["text"]
+            for message in reversed(self.telegram.messages)
+            if message["chat_id"] == beginner
+        )
+        advanced_text = next(
+            message["text"]
+            for message in reversed(self.telegram.messages)
+            if message["chat_id"] == advanced
+        )
+        self.assertIn("Уровень: A1", beginner_text)
+        self.assertIn("Опора:", beginner_text)
+        self.assertIn("Уровень: B2", advanced_text)
+        self.assertIn("без готовой опоры", advanced_text)
+        self.assertNotEqual(beginner_text, advanced_text)
+
+    def test_long_drill_options_are_full_in_message_and_buttons_are_compact(self) -> None:
+        chat_id = 39
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        long_option = (
+            "Очень длинный вариант ответа, который должен полностью отображаться "
+            "в тексте задания и переноситься клиентом Telegram на несколько строк"
+        )
+        item = {
+            "type": "meaning_choice",
+            "skill": "meaning",
+            "prompt": "Выберите точное значение",
+            "context": "Przykładowe zdanie",
+            "options": [long_option, "Вариант B", "Вариант C", "Вариант D"],
+            "correct_answer": long_option,
+            "accepted_answers": [long_option],
+            "explanation": "Контекст",
+            "hint": "Смысл",
+            "difficulty": 2,
+        }
+        drill_id = self.storage.start_drill(
+            chat_id, None, "Long", "UI", [item]
+        )
+
+        self.bot.send_drill_item(chat_id, drill_id)
+
+        message = self.telegram.messages[-1]
+        self.assertIn(f"A. {long_option}", message["text"])
+        self.assertEqual(
+            ["A", "B", "C", "D"],
+            [button["text"] for button in message["keyboard"][0]],
+        )
+
+    def test_stale_drill_action_uses_temporary_notice(self) -> None:
+        chat_id = 40
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.answer_drill_choice(chat_id, 999, 0)
+
+        self.assertEqual("Это задание уже закрыто.", self.telegram.temporary[-1]["text"])
+
     def test_scheduled_reminder_advances_answered_drill_one_item(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
         chat_id = 14
@@ -480,9 +589,9 @@ class AppFlowTests(unittest.TestCase):
             for button in row
         ]
         self.assertIn("Не помню", buttons)
-        self.assertTrue(
-            any(button.endswith("· У меня болит горло") for button in buttons)
-        )
+        self.assertEqual(["A", "B", "C", "D"], buttons[:4])
+        self.assertIn("A. ", self.telegram.messages[-1]["text"])
+        self.assertIn("У меня болит горло", self.telegram.messages[-1]["text"])
 
         first = self.storage.drill_item(str(session["id"]), 0)
         bot.handle_callback(

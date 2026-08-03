@@ -454,7 +454,9 @@ class PracticeToolkit:
         scenarios = self.catalog.for_user(user)
         if mode == "topic":
             scenario = scenarios[scenario_id or ""]
-            return self._scenario_material(scenario)
+            material = self._scenario_material(scenario)
+            material["learner_level"] = str(user["learner_level"])
+            return material
         target_language = str(user["target_language"])
         history = self.store.problem_history(
             int(user["chat_id"]), target_language, limit=20

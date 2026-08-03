@@ -24,12 +24,13 @@ from .engine import (
     review_interval_days,
     select_bottleneck,
 )
+from .difficulty import level_policy
 from .i18n import tr
 from .feedback import FeedbackPresenter
 from .evaluation_service import ResponseEvaluator
 from .language_support import LanguageSupport
 from .menu import LearnerMenu
-from .navigation import home_row
+from .navigation import home_row, reply_action
 from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
 from .reminders import next_reminder_at, pause_until_tomorrow
@@ -138,6 +139,9 @@ class TutorlaingBot:
             chat_id, text, keyboard, force_new=force_new, surface=surface
         )
 
+    def _notice(self, chat_id: int, text: str) -> None:
+        self.telegram.send_temporary_message(chat_id, text)
+
     def home(self, chat_id: int) -> None:
         self.menu.home(chat_id)
 
@@ -225,7 +229,7 @@ class TutorlaingBot:
         user = self.storage.get_user(chat_id)
         scenario = self._scenarios_for_user(user).get(scenario_id)
         if not scenario:
-            self.telegram.send_message(chat_id, "Этот сценарий не найден.")
+            self._notice(chat_id, "Этот сценарий не найден.")
             return
         current_user = user
         if current_user["current_drill"]:
@@ -250,13 +254,21 @@ class TutorlaingBot:
         step = scenario.steps[step_index]
         instruction = self._instruction_text(chat_id, step.context_ru, "scenario-step")
         language = self._language(chat_id)
+        learner_level = str(self.storage.get_user(chat_id)["learner_level"])
+        level_guidance = tr(
+            language,
+            f"task.level.{learner_level}",
+            chunk=step.target_chunk,
+        )
         opening = f"{intro}\n\n" if intro else ""
         footnotes = self._glossary_footnotes(chat_id, step.interlocutor_pl)
         self._workspace(
             chat_id,
             f"{progress(scenario.title_pl, step_index + 1, len(scenario.steps))}\n\n"
             f"{opening}{tr(language, 'task.speaker')}\n{step.interlocutor_pl}\n\n"
-            f"{tr(language, 'task.your_task')}\n{instruction}{footnotes}",
+            f"{tr(language, 'task.your_task')}\n{instruction}\n\n"
+            f"{tr(language, 'task.level_label', level=learner_level)}\n"
+            f"{level_guidance}{footnotes}",
             [
                 [{"text": f"💡 {tr(language, 'action.hint')}", "callback_data": "hint"}],
                 [
@@ -566,7 +578,7 @@ class TutorlaingBot:
     def begin_review(self, chat_id: int, review_id: int, scheduled: bool = False) -> None:
         review = self.storage.get_review(review_id, chat_id)
         if review["status"] != "pending":
-            self.telegram.send_message(chat_id, "Эта проверка уже завершена.")
+            self._notice(chat_id, "Эта проверка уже завершена.")
             return
         user = self.storage.get_user(chat_id)
         if str(review["target_language"]) != str(user["target_language"]):
@@ -688,7 +700,7 @@ class TutorlaingBot:
     def translate_task(self, chat_id: int, scenario_id: str, step_index: int) -> None:
         scenario = self._scenarios_for_chat(chat_id).get(scenario_id)
         if scenario is None or not 0 <= step_index < len(scenario.steps):
-            self.telegram.send_message(chat_id, "Задание не найдено.")
+            self._notice(chat_id, "Задание не найдено.")
             return
         step = scenario.steps[step_index]
         source = f"{step.interlocutor_pl}\n{step.context_ru}"
@@ -789,6 +801,8 @@ class TutorlaingBot:
         material = {
             "recent_learner_material": recent_material,
             "recurring_problem_material": recurring_problem_material,
+            "learner_level": str(current["learner_level"]),
+            "level_policy": level_policy(str(current["learner_level"])).ai_instruction,
         }
         user = current
         if announce:
@@ -855,15 +869,22 @@ class TutorlaingBot:
         keyboard: list[list[dict[str, str]]] = []
         if item.options:
             labels = ("A", "B", "C", "D")
-            for option_index, option in enumerate(item.options):
-                keyboard.append(
-                    [
-                        {
-                            "text": f"{labels[option_index]} · {option}"[:60],
-                            "callback_data": f"drill:answer:{row['id']}:{option_index}",
-                        }
-                    ]
+            body.append(
+                f"{self._t(chat_id, 'drill.options')}:\n"
+                + "\n".join(
+                    f"{labels[option_index]}. {option}"
+                    for option_index, option in enumerate(item.options)
                 )
+            )
+            answer_row: list[dict[str, str]] = []
+            for option_index, option in enumerate(item.options):
+                answer_row.append(
+                    {
+                        "text": labels[option_index],
+                        "callback_data": f"drill:answer:{row['id']}:{option_index}",
+                    }
+                )
+            keyboard.append(answer_row)
         else:
             body.append(self._t(chat_id, "drill.write"))
         if item.type == "flashcard":
@@ -952,12 +973,12 @@ class TutorlaingBot:
         user = self.storage.get_user(chat_id)
         drill_id = user["current_drill"]
         if user["stage"] != "drill" or not drill_id:
-            self.telegram.send_message(chat_id, "Это задание уже закрыто.")
+            self._notice(chat_id, "Это задание уже закрыто.")
             return
         session = self.storage.drill_session(str(drill_id), chat_id)
         row = self.storage.drill_item(str(drill_id), int(session["current_index"]))
         if int(row["id"]) != item_id or row["status"] != "pending":
-            self.telegram.send_message(chat_id, "Ответ уже учтён. Продолжите текущее задание.")
+            self._notice(chat_id, "Ответ уже учтён. Продолжите текущее задание.")
             return
         item = self._drill_item_from_row(row)
         evaluation = self._evaluate_drill_response(chat_id, item, response)
@@ -995,7 +1016,7 @@ class TutorlaingBot:
             drill_id, int(session["current_index"])
         )
         if current_item["status"] != "answered":
-            self.telegram.send_message(
+            self._notice(
                 chat_id, "Сначала ответьте на текущее задание или пропустите его."
             )
             return
@@ -1065,13 +1086,13 @@ class TutorlaingBot:
         user = self.storage.get_user(chat_id)
         drill_id = user["current_drill"]
         if user["stage"] != "drill" or not drill_id:
-            self.telegram.send_message(chat_id, "Это задание уже закрыто.")
+            self._notice(chat_id, "Это задание уже закрыто.")
             return
         session = self.storage.drill_session(str(drill_id), chat_id)
         row = self.storage.drill_item(str(drill_id), int(session["current_index"]))
         item = self._drill_item_from_row(row)
         if int(row["id"]) != item_id or not 0 <= option_index < len(item.options):
-            self.telegram.send_message(chat_id, "Вариант больше недоступен.")
+            self._notice(chat_id, "Вариант больше недоступен.")
             return
         self.answer_drill(chat_id, item_id, item.options[option_index])
 
@@ -1297,6 +1318,25 @@ class TutorlaingBot:
         if not self._has_current_consent(user):
             self.start(chat_id, first_name)
             return
+        navigation_action = reply_action(text)
+        if navigation_action:
+            if user["toolkit_input_mode"]:
+                self.storage.set_user_state(chat_id, toolkit_input_mode=None)
+                user = self.storage.get_user(chat_id)
+            if navigation_action == "learn":
+                if self.menu.resume_action(user):
+                    self.resume_activity(chat_id)
+                elif self.storage.pending_reviews(chat_id):
+                    self.show_reviews(chat_id)
+                else:
+                    self.show_scenarios(chat_id)
+            elif navigation_action == "tools":
+                self.toolkit.show_menu(chat_id)
+            elif navigation_action == "progress":
+                self.show_progress(chat_id)
+            else:
+                self.show_settings(chat_id)
+            return
         if command == "/settings":
             self.show_settings(chat_id)
             return
@@ -1470,6 +1510,8 @@ class TutorlaingBot:
                 if field == "target_language" and language != current_language:
                     self.cancel_activity(chat_id, notify=False)
                 self.storage.set_language(chat_id, field, language)
+                if field == "instruction_language":
+                    self.menu.refresh_navigation(chat_id)
                 self.show_learning_settings(chat_id)
         elif data == "settings:level":
             self.show_level_choices(chat_id)

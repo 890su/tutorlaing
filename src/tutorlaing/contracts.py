@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 
 Keyboard = list[list[dict[str, str]]]
+ReplyKeyboard = list[list[str]]
 
 
 class TransportError(RuntimeError):
@@ -31,6 +32,16 @@ class TelegramGateway(Protocol):
     ) -> Any: ...
 
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None: ...
+
+    def set_reply_keyboard(
+        self, chat_id: int, keyboard: ReplyKeyboard
+    ) -> None: ...
+
+    def send_temporary_message(
+        self, chat_id: int, text: str, ttl_seconds: int = 5
+    ) -> Any: ...
+
+    def delete_message(self, chat_id: int, message_id: int) -> None: ...
 
     def answer_callback(self, callback_id: str, text: str = "") -> None: ...
 

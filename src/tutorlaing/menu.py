@@ -8,7 +8,7 @@ from .catalog import ScenarioCatalog
 from .contracts import Keyboard, MenuStore
 from .i18n import tr
 from .language_support import LanguageSupport
-from .navigation import back_row, home_row
+from .navigation import back_row, home_row, reply_navigation
 from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
 from .reminders import next_reminder_at
@@ -72,7 +72,7 @@ class LearnerMenu:
             topic = snapshot.planned[0]
             primary = [
                 {
-                    "text": tr(language, "action.start_plan", topic=topic)[:60],
+                    "text": tr(language, "action.start_plan_short"),
                     "callback_data": f"scenario:{snapshot.first_planned_scenario_id}",
                 }
             ]
@@ -125,6 +125,9 @@ class LearnerMenu:
                     },
                 ]
             )
+        self.workspace.set_reply_keyboard(
+            chat_id, reply_navigation(language)
+        )
         self.workspace.show(
             chat_id,
             card(
@@ -133,6 +136,12 @@ class LearnerMenu:
             ),
             keyboard,
             surface="home",
+        )
+
+    def refresh_navigation(self, chat_id: int) -> None:
+        user = self.store.get_user(chat_id)
+        self.workspace.set_reply_keyboard(
+            chat_id, reply_navigation(str(user["instruction_language"]))
         )
 
     def start(self, chat_id: int, first_name: str = "") -> None:
@@ -278,6 +287,7 @@ class LearnerMenu:
     def show_progress(self, chat_id: int) -> None:
         scenarios = self.catalog.for_user(self.store.get_user(chat_id))
         snapshot = self.progress_service.build(chat_id, scenarios)
+        language = self._language(chat_id)
         empty = self.text(chat_id, "progress.empty")
 
         def lines(items: tuple[str, ...]) -> str:
@@ -296,7 +306,7 @@ class LearnerMenu:
             keyboard.append(
                 [
                     {
-                        "text": f"▶ {snapshot.planned[0]}"[:60],
+                        "text": tr(language, "action.start_plan_short"),
                         "callback_data": f"scenario:{snapshot.first_planned_scenario_id}",
                     }
                 ]

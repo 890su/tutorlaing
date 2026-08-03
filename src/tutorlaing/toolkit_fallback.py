@@ -4,6 +4,7 @@ from random import SystemRandom
 from typing import Any
 
 from .ai import AIError, DrillItem, DrillPack, FLASHCARD_ITEMS
+from .difficulty import level_policy
 
 
 TEXT = {
@@ -80,6 +81,7 @@ def build_toolkit_fallback(
 
 def _build_cards(material: dict[str, Any], language: str) -> DrillPack:
     copy = _copy(language)
+    policy = level_policy(str(material.get("learner_level") or "A1"))
     phrases: list[tuple[str, str, bool]] = []
     seen: set[tuple[str, str]] = set()
     for raw in material.get("phrases", []):
@@ -119,7 +121,7 @@ def _build_cards(material: dict[str, Any], language: str) -> DrillPack:
                 accepted_answers=(meaning,),
                 explanation=copy["cards_explanation"],
                 hint=copy["cards_hint"],
-                difficulty=1,
+                difficulty=policy.item_difficulty,
             )
         )
     return DrillPack(
@@ -131,17 +133,34 @@ def _build_cards(material: dict[str, Any], language: str) -> DrillPack:
 
 def _build_topic(material: dict[str, Any], language: str) -> DrillPack:
     copy = _copy(language)
+    policy = level_policy(str(material.get("learner_level") or "A1"))
     steps = [raw for raw in material.get("steps", []) if raw.get("target_chunk")]
     if not steps:
         raise AIError("No curated scenario steps for fallback topic pack")
     chunks = _unique([str(raw["target_chunk"]) for raw in steps])
-    kinds = (
-        "translation_choice",
-        "meaning_choice",
-        "complete_sentence",
-        "transform",
-        "free_recall",
-    )
+    kinds = {
+        3: (
+            "translation_choice",
+            "meaning_choice",
+            "choose_form",
+            "complete_sentence",
+            "free_recall",
+        ),
+        2: (
+            "translation_choice",
+            "meaning_choice",
+            "complete_sentence",
+            "transform",
+            "free_recall",
+        ),
+        1: (
+            "meaning_choice",
+            "complete_sentence",
+            "transform",
+            "correct_error",
+            "free_recall",
+        ),
+    }[policy.choice_items]
     items: list[DrillItem] = []
     for index, kind in enumerate(kinds):
         step = steps[index % len(steps)]
@@ -149,7 +168,7 @@ def _build_topic(material: dict[str, Any], language: str) -> DrillPack:
         context = str(
             step.get("learner_goal_ru") or step.get("interlocutor") or ""
         ).strip()
-        if index < 2:
+        if index < policy.choice_items:
             options = [answer, *[chunk for chunk in chunks if chunk != answer][:3]]
             shift = index % len(options)
             options = options[shift:] + options[:shift]
@@ -170,7 +189,7 @@ def _build_topic(material: dict[str, Any], language: str) -> DrillPack:
                 accepted_answers=(answer,),
                 explanation=copy["explanation"],
                 hint=copy["hint"],
-                difficulty=1 if index < 2 else 2,
+                difficulty=policy.item_difficulty,
             )
         )
     return DrillPack(

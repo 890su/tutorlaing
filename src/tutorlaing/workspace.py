@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from .contracts import Keyboard, TelegramGateway, TransportError, WorkspaceStore
+from .contracts import ReplyKeyboard
 
 
 LOGGER = logging.getLogger(__name__)
@@ -19,6 +20,9 @@ class TelegramWorkspace:
     def __init__(self, store: WorkspaceStore, telegram: TelegramGateway):
         self.store = store
         self.telegram = telegram
+
+    def set_reply_keyboard(self, chat_id: int, keyboard: ReplyKeyboard) -> None:
+        self.telegram.set_reply_keyboard(chat_id, keyboard)
 
     def show(
         self,
@@ -40,6 +44,10 @@ class TelegramWorkspace:
                 if "message is not modified" in str(exc).lower():
                     return int(message_id)
                 LOGGER.info("Workspace edit failed; sending a new card", exc_info=True)
+                try:
+                    self.telegram.delete_message(chat_id, int(message_id))
+                except TransportError:
+                    LOGGER.debug("Could not delete obsolete workspace card", exc_info=True)
 
         result = self.telegram.send_message(chat_id, text, keyboard)
         new_message_id = (

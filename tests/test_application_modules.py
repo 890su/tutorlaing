@@ -9,6 +9,7 @@ from tutorlaing.contracts import TransportError
 from tutorlaing.storage import Storage
 from tutorlaing.update_dispatcher import TelegramUpdateDispatcher
 from tutorlaing.workspace import TelegramWorkspace
+from tutorlaing.telegram_api import TelegramAPI
 
 
 class FakeTelegram:
@@ -16,6 +17,8 @@ class FakeTelegram:
         self.sent: list[dict[str, Any]] = []
         self.edited: list[dict[str, Any]] = []
         self.edit_error: Exception | None = None
+        self.deleted: list[int] = []
+        self.reply_keyboards: list[list[list[str]]] = []
 
     def send_message(self, chat_id: int, text: str, keyboard=None) -> dict[str, Any]:
         message = {"message_id": len(self.sent) + 1, "text": text}
@@ -30,6 +33,15 @@ class FakeTelegram:
 
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         return None
+
+    def set_reply_keyboard(self, chat_id: int, keyboard: list[list[str]]) -> None:
+        self.reply_keyboards.append(keyboard)
+
+    def delete_message(self, chat_id: int, message_id: int) -> None:
+        self.deleted.append(message_id)
+
+    def send_temporary_message(self, chat_id: int, text: str, ttl_seconds: int = 5):
+        return {"message_id": len(self.sent) + 1, "text": text}
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         return None
@@ -80,6 +92,23 @@ class ApplicationModuleTests(unittest.TestCase):
 
         self.assertEqual(2, workspace.show(42, "replacement"))
         self.assertEqual("replacement", telegram.sent[-1]["text"])
+        self.assertEqual([1], telegram.deleted)
+
+    def test_reply_keyboard_service_message_is_deleted(self) -> None:
+        telegram = TelegramAPI("test-token")
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def call(method, params=None, timeout=40):
+            calls.append((method, params or {}))
+            return {"message_id": 77} if method == "sendMessage" else True
+
+        telegram.call = call
+
+        telegram.set_reply_keyboard(42, [["▶ Учиться", "🧰 Инструменты"]])
+
+        self.assertEqual(["sendMessage", "deleteMessage"], [item[0] for item in calls])
+        self.assertTrue(calls[0][1]["reply_markup"]["is_persistent"])
+        self.assertEqual(77, calls[1][1]["message_id"])
 
     def test_update_dispatcher_deduplicates_and_routes_messages(self) -> None:
         telegram = FakeTelegram()

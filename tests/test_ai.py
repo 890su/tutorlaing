@@ -41,15 +41,29 @@ class GeminiClientTests(unittest.TestCase):
             "candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}],
             "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 20},
         }
-        client = GeminiClient("test-key", opener=lambda *_args, **_kwargs: FakeHTTPResponse(envelope))
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(request)
+            return FakeHTTPResponse(envelope)
+
+        client = GeminiClient("test-key", opener=opener)
         step = load_scenarios()["pharmacy"].steps[1]
 
-        analysis = client.analyze_response(step, "Od dwóch dni.", "ru", "pl", 0.5)
+        analysis = client.analyze_response(
+            step, "Od dwóch dni.", "ru", "pl", 0.5, "B2"
+        )
 
         self.assertTrue(analysis.task_achieved)
         self.assertEqual(1.0, analysis.score)
         self.assertEqual("od dwóch dni", analysis.grammar_chunks[0].text)
         self.assertEqual("gemini-3.5-flash", analysis.model)
+        request_payload = json.loads(requests[0].data.decode("utf-8"))
+        prompt = json.loads(
+            request_payload["contents"][0]["parts"][0]["text"]
+        )
+        self.assertEqual("B2", prompt["learner_level"])
+        self.assertIn("natural register", prompt["level_policy"])
 
     def test_drill_pack_requires_variety_and_active_recall(self) -> None:
         base = {

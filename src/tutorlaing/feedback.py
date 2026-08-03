@@ -161,13 +161,14 @@ class FeedbackPresenter:
                 }
             ]
         ]
-        for index, chunk in enumerate(analysis.grammar_chunks):
+        if analysis.grammar_chunks:
             keyboard.append(
                 [
                     {
-                        "text": f"{chunk.text} — {chunk.label}"[:55],
+                        "text": str(index + 1),
                         "callback_data": f"ai:g:{analysis_id}:{index}",
                     }
+                    for index, _ in enumerate(analysis.grammar_chunks)
                 ]
             )
         keyboard.append(
@@ -181,7 +182,18 @@ class FeedbackPresenter:
         keyboard.extend(self.tabs(chat_id, analysis_id, "grammar"))
         self.workspace.show(
             chat_id,
-            tr(language, "grammar.choose"),
+            tr(language, "grammar.choose")
+            + (
+                "\n\n"
+                + tr(language, "grammar.fragments")
+                + ":\n"
+                + "\n".join(
+                    f"{index + 1}. {chunk.text} — {chunk.label}"
+                    for index, chunk in enumerate(analysis.grammar_chunks)
+                )
+                if analysis.grammar_chunks
+                else ""
+            ),
             keyboard,
             surface="feedback_grammar",
         )

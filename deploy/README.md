@@ -95,8 +95,9 @@ Tutorlaing volume is included.
 - AI runtime: OpenAI GPT-5.6 Sol primary + Gemini 3.5 Flash failover; both
   credentials are stored only in the mode-600 server `.env`; real OpenAI
   translation smoke passed; consent v3 required
-- Adaptive drills: enabled; production smoke passed for 5 items / 5 types
-- Interactive toolkit: flashcards, bidirectional phrase variants and topic drills
-- Reminder scheduler: enabled; user mode defaults to off, Europe/Warsaw quiet hours
+- Adaptive drills: 8 items / at least 4 types; A0–C1 level policy controls scaffolding and AI prompts
+- Interactive toolkit: 10 history-aware flashcards, bidirectional phrase variants and level-aware topic drills
+- Telegram UI: persistent four-action bottom navigation; full options in message, compact A/B/C/D callbacks
+- Reminder scheduler: active in all learning stages with five-minute retry; user mode defaults to off, Europe/Warsaw quiet hours
 - Old n8n, Google MCP and Twenty CRM containers/volumes: removed
 - Management bridge is intentionally retained until direct SSH is stable

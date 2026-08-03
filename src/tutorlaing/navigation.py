@@ -3,6 +3,14 @@ from __future__ import annotations
 from .i18n import tr
 
 
+REPLY_ACTION_KEYS = {
+    "learn": "navigation.learn",
+    "tools": "navigation.tools",
+    "progress": "navigation.progress",
+    "settings": "navigation.settings",
+}
+
+
 def action_button(
     language: str,
     label_key: str,
@@ -30,3 +38,24 @@ def back_row(
             callback_data,
         )
     ]
+
+
+def reply_navigation(language: str) -> list[list[str]]:
+    """Stable bottom navigation; task-specific actions remain inline."""
+
+    return [
+        [tr(language, REPLY_ACTION_KEYS["learn"]), tr(language, REPLY_ACTION_KEYS["tools"])],
+        [
+            tr(language, REPLY_ACTION_KEYS["progress"]),
+            tr(language, REPLY_ACTION_KEYS["settings"]),
+        ],
+    ]
+
+
+def reply_action(text: str) -> str | None:
+    normalized = text.strip()
+    for language in ("ru", "uk", "en", "pl"):
+        for action, key in REPLY_ACTION_KEYS.items():
+            if normalized == tr(language, key):
+                return action
+    return None

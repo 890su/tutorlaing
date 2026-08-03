@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import urllib.error
 import urllib.request
 from typing import Any
 
 from .contracts import TransportError
+from .contracts import ReplyKeyboard
 
 
 LOGGER = logging.getLogger(__name__)
@@ -89,6 +91,56 @@ class TelegramAPI:
 
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         self.call("sendChatAction", {"chat_id": chat_id, "action": action})
+
+    def delete_message(self, chat_id: int, message_id: int) -> None:
+        self.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+    def set_reply_keyboard(
+        self, chat_id: int, keyboard: ReplyKeyboard
+    ) -> None:
+        """Install persistent bottom navigation without leaving a service message."""
+
+        result = self.call(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": "⌨️",
+                "reply_markup": {
+                    "keyboard": [
+                        [{"text": label} for label in row] for row in keyboard
+                    ],
+                    "resize_keyboard": True,
+                    "is_persistent": True,
+                    "one_time_keyboard": False,
+                    "input_field_placeholder": "Выберите раздел или напишите ответ",
+                },
+            },
+        )
+        if isinstance(result, dict) and result.get("message_id"):
+            try:
+                self.delete_message(chat_id, int(result["message_id"]))
+            except TelegramError:
+                LOGGER.info("Could not delete reply-keyboard service message", exc_info=True)
+
+    def send_temporary_message(
+        self, chat_id: int, text: str, ttl_seconds: int = 5
+    ) -> Any:
+        """Show a short notice and remove it from the learning feed."""
+
+        result = self.send_message(chat_id, text)
+        if isinstance(result, dict) and result.get("message_id"):
+            message_id = int(result["message_id"])
+
+            def remove() -> None:
+                try:
+                    self.delete_message(chat_id, message_id)
+                except TelegramError:
+                    LOGGER.debug("Could not delete temporary notice", exc_info=True)
+
+            timer = threading.Timer(max(1, ttl_seconds), remove)
+            timer.daemon = True
+            timer.start()
+        return result
 
     def answer_callback(self, callback_id: str, text: str = "") -> None:
         params: dict[str, Any] = {"callback_query_id": callback_id}

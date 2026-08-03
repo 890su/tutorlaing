@@ -56,6 +56,7 @@ class ResponseEvaluator:
                 str(user["instruction_language"]),
                 str(user["target_language"]),
                 rule_evaluation.score,
+                str(user["learner_level"]),
             )
         except AIError:
             LOGGER.exception("AI response analysis failed")
