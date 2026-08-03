@@ -137,6 +137,11 @@ DRILL_TYPES = {
     "free_recall",
     "flashcard",
     "translation_choice",
+    "reconstruction",
+    "dialogue_repair",
+    "register_choice",
+    "mediation",
+    "constrained_paraphrase",
 }
 
 ADAPTIVE_DRILL_ITEMS = 8
@@ -747,6 +752,8 @@ class GeminiClient:
                         "Prioritize recurring_problem_material, then vary contexts and forms.",
                         "Cover gender, number, case, ending or word form only when relevant to the material.",
                         "At least one item must transfer the phrase to a new realistic context.",
+                        "Use at least two richer interactions when the material allows it: reconstruction, dialogue_repair, register_choice, mediation, or constrained_paraphrase.",
+                        "A mediation task asks the learner to relay a practical meaning for another person; a dialogue repair fixes an awkward or socially inappropriate turn, not merely a typo.",
                         "For items with options, correct_answer must exactly equal one option.",
                         "For free answers, list realistic accepted variants without accepting a meaning-changing answer.",
                         "Prompts and explanations use explanation_language; answers remain in target_language.",
@@ -796,6 +803,7 @@ class GeminiClient:
                 f"Create exactly {TOPIC_DRILL_ITEMS} exercises about only the supplied scenario.",
                 "Use at least three different exercise types and at least two active-recall items without options.",
                 "Include one translation_choice, one form-in-context task, and one realistic reply.",
+                "Include at least one dialogue_repair, register_choice, mediation, reconstruction, or constrained_paraphrase item.",
                 "For an item with options, correct_answer must exactly equal one option.",
                 "Prompts and explanations use explanation_language; learner answers remain in target_language.",
                 "Vary the context without changing the communicative goal.",

@@ -63,6 +63,7 @@ class Storage:
             translation_language TEXT NOT NULL DEFAULT 'ru',
             target_language TEXT NOT NULL DEFAULT 'pl',
             learner_level TEXT NOT NULL DEFAULT 'A1',
+            practice_difficulty_offset INTEGER NOT NULL DEFAULT 0,
             reminder_mode TEXT NOT NULL DEFAULT 'off',
             reminder_next_at TEXT,
             reminder_paused_until TEXT,
@@ -212,6 +213,12 @@ class Storage:
             explanation TEXT NOT NULL,
             hint TEXT NOT NULL,
             difficulty INTEGER NOT NULL,
+            response_mode TEXT NOT NULL DEFAULT 'text',
+            variant_group TEXT NOT NULL DEFAULT '',
+            evidence_weight REAL NOT NULL DEFAULT 1,
+            difficulty_vector_json TEXT NOT NULL DEFAULT '{}',
+            rubric_json TEXT NOT NULL DEFAULT '{}',
+            prerequisites_json TEXT NOT NULL DEFAULT '[]',
             source TEXT NOT NULL,
             provider TEXT NOT NULL DEFAULT '',
             model TEXT NOT NULL DEFAULT '',
@@ -250,6 +257,32 @@ class Storage:
             PRIMARY KEY(chat_id, exercise_id)
         );
 
+        CREATE TABLE IF NOT EXISTS learner_skill_states (
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            target_language TEXT NOT NULL,
+            skill TEXT NOT NULL,
+            attempts INTEGER NOT NULL,
+            weighted_attempts REAL NOT NULL,
+            average_score REAL NOT NULL,
+            severe_rate REAL NOT NULL,
+            hint_rate REAL NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(chat_id, target_language, skill)
+        );
+
+        CREATE TABLE IF NOT EXISTS difficulty_recommendations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            target_language TEXT NOT NULL,
+            direction INTEGER NOT NULL CHECK(direction IN (-1, 1)),
+            skill TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            resolved_at TEXT,
+            cooldown_until TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_reviews_due
             ON reviews(chat_id, status, due_at);
         CREATE INDEX IF NOT EXISTS idx_responses_session
@@ -265,6 +298,8 @@ class Storage:
             ON exercise_tags(tag, exercise_id);
         CREATE INDEX IF NOT EXISTS idx_learner_exercise_due
             ON learner_exercise_stats(chat_id, next_due_at);
+        CREATE INDEX IF NOT EXISTS idx_difficulty_recommendations_chat
+            ON difficulty_recommendations(chat_id, target_language, status, created_at DESC);
         """
         with self._lock, self._connection:
             self._connection.executescript(schema)
@@ -285,6 +320,9 @@ class Storage:
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column(
                 "users", "learner_level", "TEXT NOT NULL DEFAULT 'A1'"
+            )
+            self._ensure_column(
+                "users", "practice_difficulty_offset", "INTEGER NOT NULL DEFAULT 0"
             )
             self._ensure_column(
                 "users", "reminder_mode", "TEXT NOT NULL DEFAULT 'off'"
@@ -310,6 +348,24 @@ class Storage:
             self._ensure_column("exercise_bank", "model", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(
                 "exercise_bank", "prompt_version", "TEXT NOT NULL DEFAULT ''"
+            )
+            self._ensure_column(
+                "exercise_bank", "response_mode", "TEXT NOT NULL DEFAULT 'text'"
+            )
+            self._ensure_column(
+                "exercise_bank", "variant_group", "TEXT NOT NULL DEFAULT ''"
+            )
+            self._ensure_column(
+                "exercise_bank", "evidence_weight", "REAL NOT NULL DEFAULT 1"
+            )
+            self._ensure_column(
+                "exercise_bank", "difficulty_vector_json", "TEXT NOT NULL DEFAULT '{}'"
+            )
+            self._ensure_column(
+                "exercise_bank", "rubric_json", "TEXT NOT NULL DEFAULT '{}'"
+            )
+            self._ensure_column(
+                "exercise_bank", "prerequisites_json", "TEXT NOT NULL DEFAULT '[]'"
             )
             self._ensure_column(
                 "sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
@@ -385,8 +441,18 @@ class Storage:
             raise ValueError(f"Unsupported learner level: {level}")
         with self._lock, self._connection:
             self._connection.execute(
-                "UPDATE users SET learner_level = ?, updated_at = ? WHERE chat_id = ?",
+                """
+                UPDATE users SET learner_level = ?, practice_difficulty_offset = 0,
+                    updated_at = ? WHERE chat_id = ?
+                """,
                 (level, utc_now(), chat_id),
+            )
+            self._connection.execute(
+                """
+                UPDATE difficulty_recommendations SET status = 'dismissed',
+                    resolved_at = ? WHERE chat_id = ? AND status = 'pending'
+                """,
+                (utc_now(), chat_id),
             )
         self.event(chat_id, "learner_level_changed", {"level": level})
 
@@ -864,6 +930,55 @@ class Storage:
                         quality,
                         now,
                         now,
+                    ),
+                )
+                options = item.get("options", [])
+                response_mode = "choice" if options else "text"
+                evidence_weight = 0.4 if options else 1.0
+                variant_group = hashlib.sha256(
+                    f"{item['skill']}|{item['correct_answer']}".encode("utf-8")
+                ).hexdigest()[:16]
+                cognitive = (
+                    3
+                    if item["type"]
+                    in {
+                        "mediation",
+                        "dialogue_repair",
+                        "constrained_paraphrase",
+                        "reconstruction",
+                    }
+                    else 2
+                    if item["type"] in {"transform", "free_recall", "word_order"}
+                    else 1
+                )
+                self._connection.execute(
+                    """
+                    UPDATE exercise_bank SET response_mode = ?, variant_group = ?,
+                        evidence_weight = ?, difficulty_vector_json = ?, rubric_json = ?,
+                        prerequisites_json = ? WHERE content_hash = ?
+                    """,
+                    (
+                        response_mode,
+                        variant_group,
+                        evidence_weight,
+                        json.dumps(
+                            {
+                                "linguistic": int(item["difficulty"]),
+                                "cognitive": cognitive,
+                                "support": 1 if options else 0,
+                            },
+                            sort_keys=True,
+                        ),
+                        json.dumps(
+                            {
+                                "correct_answer": item["correct_answer"],
+                                "accepted_answers": item.get("accepted_answers", []),
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        "[]",
+                        content_hash,
                     ),
                 )
                 row = self._connection.execute(
@@ -1423,6 +1538,248 @@ class Storage:
             )
         return {"database": "ok", "users": user_count}
 
+    def difficulty_evidence(
+        self, chat_id: int, limit: int = 40
+    ) -> dict[str, Any]:
+        user = self.get_user(chat_id)
+        target_language = str(user["target_language"])
+        bounded = max(10, min(100, limit))
+        with self._lock:
+            drill_rows = self._connection.execute(
+                """
+                SELECT di.id, di.skill, di.score, di.options_json, di.answered_at
+                FROM drill_items di
+                JOIN drill_sessions ds ON ds.id = di.drill_session_id
+                WHERE ds.chat_id = ? AND ds.target_language = ?
+                  AND di.status = 'answered' AND di.score IS NOT NULL
+                ORDER BY di.answered_at DESC LIMIT ?
+                """,
+                (chat_id, target_language, bounded),
+            ).fetchall()
+            response_rows = self._connection.execute(
+                """
+                SELECT r.score, r.created_at
+                FROM responses r
+                JOIN sessions s ON s.id = r.session_id
+                WHERE s.chat_id = ? AND s.target_language = ?
+                ORDER BY r.created_at DESC LIMIT ?
+                """,
+                (chat_id, target_language, bounded),
+            ).fetchall()
+            review_rows = self._connection.execute(
+                """
+                SELECT score, completed_at
+                FROM reviews
+                WHERE chat_id = ? AND target_language = ?
+                  AND status = 'completed' AND score IS NOT NULL
+                ORDER BY completed_at DESC LIMIT ?
+                """,
+                (chat_id, target_language, bounded),
+            ).fetchall()
+            hint_rows = self._connection.execute(
+                """
+                SELECT properties FROM events
+                WHERE chat_id = ? AND event_name = 'drill_hint_used'
+                ORDER BY id DESC LIMIT ?
+                """,
+                (chat_id, bounded * 2),
+            ).fetchall()
+        hinted_ids = set()
+        for row in hint_rows:
+            try:
+                item_id = json.loads(row["properties"]).get("item_id")
+                if item_id is not None:
+                    hinted_ids.add(int(item_id))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        attempts: list[dict[str, Any]] = []
+        for row in drill_rows:
+            is_choice = bool(json.loads(row["options_json"]))
+            attempts.append(
+                {
+                    "skill": str(row["skill"] or "drill"),
+                    "score": float(row["score"]),
+                    "weight": 0.4 if is_choice else 1.0,
+                    "production": not is_choice,
+                    "hinted": int(row["id"]) in hinted_ids,
+                    "occurred_at": str(row["answered_at"]),
+                }
+            )
+        attempts.extend(
+            {
+                "skill": "scenario_production",
+                "score": float(row["score"]),
+                "weight": 1.2,
+                "production": True,
+                "hinted": False,
+                "occurred_at": str(row["created_at"]),
+            }
+            for row in response_rows
+        )
+        attempts.extend(
+            {
+                "skill": "delayed_recall",
+                "score": float(row["score"]),
+                "weight": 1.1,
+                "production": True,
+                "hinted": False,
+                "occurred_at": str(row["completed_at"]),
+            }
+            for row in review_rows
+        )
+        attempts.sort(key=lambda item: item["occurred_at"], reverse=True)
+        return {
+            "profile_level": str(user["learner_level"]),
+            "practice_offset": int(user["practice_difficulty_offset"] or 0),
+            "target_language": target_language,
+            "attempts": attempts[:bounded],
+        }
+
+    def pending_difficulty_proposal(self, chat_id: int) -> sqlite3.Row | None:
+        user = self.get_user(chat_id)
+        with self._lock:
+            return self._connection.execute(
+                """
+                SELECT * FROM difficulty_recommendations
+                WHERE chat_id = ? AND target_language = ? AND status = 'pending'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (chat_id, user["target_language"]),
+            ).fetchone()
+
+    def difficulty_cooldown_until(self, chat_id: int) -> str | None:
+        user = self.get_user(chat_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT cooldown_until FROM difficulty_recommendations
+                WHERE chat_id = ? AND target_language = ? AND status != 'pending'
+                  AND cooldown_until IS NOT NULL
+                ORDER BY id DESC LIMIT 1
+                """,
+                (chat_id, user["target_language"]),
+            ).fetchone()
+        return str(row["cooldown_until"]) if row else None
+
+    def save_skill_states(
+        self, chat_id: int, target_language: str, states: list[dict[str, Any]]
+    ) -> None:
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.executemany(
+                """
+                INSERT INTO learner_skill_states(
+                    chat_id, target_language, skill, attempts, weighted_attempts,
+                    average_score, severe_rate, hint_rate, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, target_language, skill) DO UPDATE SET
+                    attempts = excluded.attempts,
+                    weighted_attempts = excluded.weighted_attempts,
+                    average_score = excluded.average_score,
+                    severe_rate = excluded.severe_rate,
+                    hint_rate = excluded.hint_rate,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    (
+                        chat_id,
+                        target_language,
+                        state["skill"],
+                        state["attempts"],
+                        state["weighted_attempts"],
+                        state["average_score"],
+                        state["severe_rate"],
+                        state["hint_rate"],
+                        now,
+                    )
+                    for state in states
+                ),
+            )
+
+    def create_difficulty_proposal(
+        self,
+        chat_id: int,
+        target_language: str,
+        direction: int,
+        skill: str,
+        evidence: dict[str, Any],
+    ) -> sqlite3.Row:
+        if direction not in {-1, 1}:
+            raise ValueError("Difficulty direction must be -1 or 1")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO difficulty_recommendations(
+                    chat_id, target_language, direction, skill, evidence_json,
+                    status, created_at
+                ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    chat_id,
+                    target_language,
+                    direction,
+                    skill[:200],
+                    json.dumps(evidence, ensure_ascii=False),
+                    utc_now(),
+                ),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM difficulty_recommendations WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+        self.event(
+            chat_id,
+            "difficulty_proposed",
+            {"proposal_id": int(row["id"]), "direction": direction, "skill": skill},
+        )
+        return row
+
+    def resolve_difficulty_proposal(
+        self,
+        chat_id: int,
+        proposal_id: int,
+        accepted: bool,
+        cooldown_until: datetime,
+    ) -> sqlite3.Row:
+        now = utc_now()
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT * FROM difficulty_recommendations
+                WHERE id = ? AND chat_id = ? AND status = 'pending'
+                """,
+                (proposal_id, chat_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Difficulty proposal unavailable: {proposal_id}")
+            status = "accepted" if accepted else "dismissed"
+            self._connection.execute(
+                """
+                UPDATE difficulty_recommendations SET status = ?, resolved_at = ?,
+                    cooldown_until = ? WHERE id = ?
+                """,
+                (status, now, cooldown_until.isoformat(), proposal_id),
+            )
+            if accepted:
+                offset = max(-1, min(1, int(row["direction"])))
+                self._connection.execute(
+                    """
+                    UPDATE users SET practice_difficulty_offset = ?, updated_at = ?
+                    WHERE chat_id = ?
+                    """,
+                    (offset, now, chat_id),
+                )
+            resolved = self._connection.execute(
+                "SELECT * FROM difficulty_recommendations WHERE id = ?",
+                (proposal_id,),
+            ).fetchone()
+        self.event(
+            chat_id,
+            "difficulty_resolved",
+            {"proposal_id": proposal_id, "accepted": accepted},
+        )
+        return resolved
+
     def progress_evidence(self, chat_id: int) -> dict[str, Any]:
         user = self.get_user(chat_id)
         target_language = str(user["target_language"])
@@ -1464,6 +1821,7 @@ class Storage:
             ).fetchone()
         return {
             "level": str(user["learner_level"]),
+            "practice_offset": int(user["practice_difficulty_offset"] or 0),
             "target_language": target_language,
             "sessions": [dict(row) for row in sessions],
             "reviews": [dict(row) for row in reviews],

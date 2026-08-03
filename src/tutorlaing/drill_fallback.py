@@ -16,6 +16,8 @@ COPY = {
         "ending": "Восстановите последнее слово и запишите всю фразу.",
         "transform": "Скажите ту же мысль естественнее.",
         "complete": "Закончите ситуацию подходящей полной фразой.",
+        "reconstruct": "Восстановите фразу по смыслу, не копируя подсказку дословно.",
+        "mediate": "Передайте эту мысль собеседнику естественной фразой.",
         "explanation": "Сравните ответ с естественной фразой из вашей истории обучения.",
         "hint": "Вспомните исправленный или опорный вариант этой фразы.",
     },
@@ -28,6 +30,8 @@ COPY = {
         "ending": "Відновіть останнє слово й запишіть усю фразу.",
         "transform": "Висловіть ту саму думку природніше.",
         "complete": "Завершіть ситуацію відповідною повною фразою.",
+        "reconstruct": "Відновіть фразу за змістом, не копіюючи підказку дослівно.",
+        "mediate": "Передайте цю думку співрозмовнику природною фразою.",
         "explanation": "Порівняйте відповідь із природною фразою з вашої історії.",
         "hint": "Згадайте виправлений або опорний варіант цієї фрази.",
     },
@@ -40,6 +44,8 @@ COPY = {
         "ending": "Restore the final word and write the complete sentence.",
         "transform": "Express the same meaning more naturally.",
         "complete": "Complete the situation with a suitable full sentence.",
+        "reconstruct": "Reconstruct the phrase from its meaning without copying the hint word for word.",
+        "mediate": "Relay this meaning to the other person in one natural sentence.",
         "explanation": "Compare your answer with the natural phrase from your learning history.",
         "hint": "Recall the corrected or reference version of this phrase.",
     },
@@ -52,6 +58,8 @@ COPY = {
         "ending": "Odtwórz ostatnie słowo i zapisz całe zdanie.",
         "transform": "Wyraź tę samą myśl bardziej naturalnie.",
         "complete": "Uzupełnij sytuację odpowiednim pełnym zdaniem.",
+        "reconstruct": "Odtwórz zwrot na podstawie znaczenia, nie kopiując podpowiedzi słowo w słowo.",
+        "mediate": "Przekaż tę myśl rozmówcy jednym naturalnym zdaniem.",
         "explanation": "Porównaj odpowiedź z naturalnym zwrotem z historii nauki.",
         "hint": "Przypomnij sobie poprawioną lub wzorcową wersję zwrotu.",
     },
@@ -68,14 +76,14 @@ def build_adaptive_fallback(
     copy = COPY.get(instruction_language, COPY["en"])
     difficulty = level_policy(str(material.get("learner_level") or "A1")).item_difficulty
     kinds = (
-        "correct_error",
+        "dialogue_repair",
         "fill_ending",
         "word_order",
+        "reconstruction",
+        "free_recall",
+        "constrained_paraphrase",
+        "mediation",
         "complete_sentence",
-        "free_recall",
-        "transform",
-        "correct_error",
-        "free_recall",
     )
     items: list[DrillItem] = []
     for index, kind in enumerate(kinds):
@@ -84,9 +92,9 @@ def build_adaptive_fallback(
         source = seed["source"]
         context = seed["context"]
         actual_kind = kind
-        if kind == "correct_error" and source == answer:
-            actual_kind = "transform"
-        if actual_kind == "correct_error":
+        if kind == "dialogue_repair" and source == answer:
+            actual_kind = "constrained_paraphrase"
+        if actual_kind == "dialogue_repair":
             prompt, shown = copy["repair"], source
         elif actual_kind == "fill_ending":
             prompt, shown = copy["ending"], _hide_ending(answer)
@@ -94,7 +102,11 @@ def build_adaptive_fallback(
             prompt, shown = copy["order"], _rotate_words(answer)
         elif actual_kind == "complete_sentence":
             prompt, shown = copy["complete"], context or source
-        elif actual_kind == "transform":
+        elif actual_kind == "reconstruction":
+            prompt, shown = copy["reconstruct"], context or _hide_words(answer)
+        elif actual_kind == "mediation":
+            prompt, shown = copy["mediate"], context or source
+        elif actual_kind == "constrained_paraphrase":
             prompt, shown = copy["transform"], source or context
         else:
             prompt, shown = copy["recall"], context or source
@@ -166,3 +178,8 @@ def _hide_ending(sentence: str) -> str:
     keep = max(1, len(core) - 2)
     words[-1] = core[:keep] + "__" + punctuation
     return " ".join(words)
+
+
+def _hide_words(sentence: str) -> str:
+    words = sentence.split()
+    return " ".join("___" if index % 2 else word for index, word in enumerate(words))

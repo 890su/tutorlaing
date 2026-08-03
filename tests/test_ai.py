@@ -91,6 +91,36 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual(5, len(pack.items))
         self.assertGreaterEqual(len({item.type for item in pack.items}), 3)
 
+    def test_richer_interaction_types_are_part_of_the_validated_contract(self) -> None:
+        base = {
+            "skill": "pragmatics",
+            "context": "Rozmowa w urzędzie",
+            "options": [],
+            "correct_answer": "Czy mógłby mi pan pomóc?",
+            "accepted_answers": ["Czy mógłby mi pan pomóc?"],
+            "explanation": "Uprzejma prośba pasuje do sytuacji.",
+            "hint": "Użyj formy grzecznościowej.",
+            "difficulty": 2,
+        }
+        kinds = [
+            "dialogue_repair",
+            "reconstruction",
+            "mediation",
+            "constrained_paraphrase",
+            "free_recall",
+        ]
+        pack = DrillPack.from_dict(
+            {
+                "title": "Urząd",
+                "focus": "Praktyczna komunikacja",
+                "items": [
+                    {**base, "type": kind, "prompt": f"Task {index}"}
+                    for index, kind in enumerate(kinds)
+                ],
+            }
+        )
+        self.assertEqual(tuple(kinds), tuple(item.type for item in pack.items))
+
     def test_glossary_returns_only_exact_terms_and_skips_c1(self) -> None:
         payload = {
             "notes": [

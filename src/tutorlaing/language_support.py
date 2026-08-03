@@ -4,6 +4,7 @@ import logging
 
 from .ai import AIClient, AIError
 from .contracts import LanguageStore
+from .difficulty import practice_level
 from .i18n import tr
 
 
@@ -65,7 +66,7 @@ class LanguageSupport:
 
     def glossary_footnotes(self, chat_id: int, target_text: str) -> str:
         user = self.store.get_user(chat_id)
-        level = str(user["learner_level"])
+        level = practice_level(user)
         if self.ai is None or level == "C1" or len(target_text) < 10:
             return ""
         try:

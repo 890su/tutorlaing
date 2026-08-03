@@ -31,6 +31,13 @@ class AdaptiveFallbackTests(unittest.TestCase):
 
         self.assertEqual(8, len(pack.items))
         self.assertGreaterEqual(len({item.type for item in pack.items}), 4)
+        richer = {
+            "dialogue_repair",
+            "reconstruction",
+            "mediation",
+            "constrained_paraphrase",
+        }
+        self.assertGreaterEqual(len(richer & {item.type for item in pack.items}), 3)
         self.assertTrue(all(not item.options for item in pack.items))
         self.assertTrue(
             all(item.correct_answer in item.accepted_answers for item in pack.items)

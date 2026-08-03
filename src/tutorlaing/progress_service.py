@@ -5,11 +5,13 @@ from typing import Any
 
 from .content import Scenario
 from .contracts import ProgressStore
+from .difficulty import shifted_level
 
 
 @dataclass(frozen=True)
 class ProgressSnapshot:
     level: str
+    practice_level: str
     mastered: tuple[str, ...]
     focus: tuple[str, ...]
     planned: tuple[str, ...]
@@ -47,6 +49,9 @@ class ProgressService:
         plan = (focus + untouched)[:3]
         return ProgressSnapshot(
             level=str(evidence["level"]),
+            practice_level=shifted_level(
+                str(evidence["level"]), int(evidence.get("practice_offset", 0))
+            ),
             mastered=tuple(title for _, title in mastered),
             focus=tuple(title for _, title in focus),
             planned=tuple(title for _, title in plan),

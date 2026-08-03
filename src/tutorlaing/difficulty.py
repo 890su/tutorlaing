@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 LEVELS = ("A0", "A1", "A2", "B1", "B2", "C1")
@@ -57,3 +58,14 @@ POLICIES = {
 def level_policy(level: str) -> LevelPolicy:
     return POLICIES.get(level, POLICIES["A1"])
 
+
+def shifted_level(level: str, offset: int) -> str:
+    """Apply a temporary practice challenge without changing the CEFR profile."""
+    current = LEVELS.index(level) if level in LEVELS else LEVELS.index("A1")
+    return LEVELS[max(0, min(len(LEVELS) - 1, current + max(-1, min(1, offset))))]
+
+
+def practice_level(user: Any) -> str:
+    return shifted_level(
+        str(user["learner_level"]), int(user["practice_difficulty_offset"] or 0)
+    )

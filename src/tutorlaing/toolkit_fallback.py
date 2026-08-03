@@ -17,6 +17,8 @@ TEXT = {
         "topic_prompt": "Выберите подходящую фразу для этой ситуации.",
         "recall_prompt": "Ответьте естественной фразой на изучаемом языке.",
         "transform_prompt": "Сформулируйте ту же цель другими словами.",
+        "repair_prompt": "Исправьте реплику, чтобы она естественно подошла к ситуации.",
+        "mediate_prompt": "Передайте эту просьбу собеседнику одной естественной фразой.",
         "explanation": "Сверьте ответ с опорной фразой курса.",
         "hint": "Используйте ключевую фразу из этой темы.",
     },
@@ -29,6 +31,8 @@ TEXT = {
         "topic_prompt": "Оберіть відповідну фразу для цієї ситуації.",
         "recall_prompt": "Дайте природну відповідь мовою, яку вивчаєте.",
         "transform_prompt": "Сформулюйте ту саму мету іншими словами.",
+        "repair_prompt": "Виправте репліку, щоб вона природно пасувала до ситуації.",
+        "mediate_prompt": "Передайте це прохання співрозмовнику однією природною фразою.",
         "explanation": "Порівняйте відповідь з опорною фразою курсу.",
         "hint": "Використайте ключову фразу з цієї теми.",
     },
@@ -41,6 +45,8 @@ TEXT = {
         "topic_prompt": "Choose the phrase that fits this situation.",
         "recall_prompt": "Reply naturally in the language you are learning.",
         "transform_prompt": "Express the same goal in another natural way.",
+        "repair_prompt": "Repair the turn so it sounds natural in this situation.",
+        "mediate_prompt": "Relay this request to the other person in one natural sentence.",
         "explanation": "Compare your answer with the course reference phrase.",
         "hint": "Use the key phrase from this topic.",
     },
@@ -53,6 +59,8 @@ TEXT = {
         "topic_prompt": "Wybierz zwrot pasujący do tej sytuacji.",
         "recall_prompt": "Odpowiedz naturalnie w języku, którego się uczysz.",
         "transform_prompt": "Wyraź ten sam cel innymi naturalnymi słowami.",
+        "repair_prompt": "Popraw wypowiedź, aby naturalnie pasowała do sytuacji.",
+        "mediate_prompt": "Przekaż tę prośbę rozmówcy jednym naturalnym zdaniem.",
         "explanation": "Porównaj odpowiedź ze zwrotem wzorcowym z kursu.",
         "hint": "Użyj kluczowego zwrotu z tego tematu.",
     },
@@ -148,17 +156,17 @@ def _build_topic(material: dict[str, Any], language: str) -> DrillPack:
         ),
         2: (
             "translation_choice",
-            "meaning_choice",
+            "register_choice",
             "complete_sentence",
-            "transform",
+            "dialogue_repair",
             "free_recall",
         ),
         1: (
-            "meaning_choice",
+            "register_choice",
             "complete_sentence",
-            "transform",
-            "correct_error",
-            "free_recall",
+            "constrained_paraphrase",
+            "dialogue_repair",
+            "mediation",
         ),
     }[policy.choice_items]
     items: list[DrillItem] = []
@@ -175,9 +183,11 @@ def _build_topic(material: dict[str, Any], language: str) -> DrillPack:
             prompt = copy["topic_prompt"]
         else:
             options = []
-            prompt = (
-                copy["transform_prompt"] if kind == "transform" else copy["recall_prompt"]
-            )
+            prompt = {
+                "constrained_paraphrase": copy["transform_prompt"],
+                "dialogue_repair": copy["repair_prompt"],
+                "mediation": copy["mediate_prompt"],
+            }.get(kind, copy["recall_prompt"])
         items.append(
             DrillItem(
                 type=kind,

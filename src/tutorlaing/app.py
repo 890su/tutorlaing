@@ -25,7 +25,8 @@ from .engine import (
     review_interval_days,
     select_bottleneck,
 )
-from .difficulty import level_policy
+from .adaptive_difficulty import AdaptiveDifficultyService, DifficultyProposal
+from .difficulty import level_policy, practice_level, shifted_level
 from .drill_fallback import build_adaptive_fallback
 from .exercise_bank import ExerciseBank, material_signature
 from .i18n import tr
@@ -78,6 +79,7 @@ class TutorlaingBot:
         self.workspace = TelegramWorkspace(storage, self.telegram)
         self.language_support = LanguageSupport(storage, self.ai)
         self.progress_service = ProgressService(storage)
+        self.adaptive_difficulty = AdaptiveDifficultyService(storage)
         self.feedback = FeedbackPresenter(
             storage, self.workspace, self.language_support, self.ai
         )
@@ -264,7 +266,7 @@ class TutorlaingBot:
         step = scenario.steps[step_index]
         instruction = self._instruction_text(chat_id, step.context_ru, "scenario-step")
         language = self._language(chat_id)
-        learner_level = str(self.storage.get_user(chat_id)["learner_level"])
+        learner_level = practice_level(self.storage.get_user(chat_id))
         level_guidance = tr(
             language,
             f"task.level.{learner_level}",
@@ -805,11 +807,13 @@ class TutorlaingBot:
                 }
             )
         recurring_problem_material.extend(problem_history["drill_items"])
+        working_level = practice_level(current)
         material = {
             "recent_learner_material": recent_material,
             "recurring_problem_material": recurring_problem_material,
-            "learner_level": str(current["learner_level"]),
-            "level_policy": level_policy(str(current["learner_level"])).ai_instruction,
+            "learner_level": working_level,
+            "profile_level": str(current["learner_level"]),
+            "level_policy": level_policy(working_level).ai_instruction,
         }
         user = current
         material_revision = f"history:{material_signature(material)}"
@@ -818,7 +822,7 @@ class TutorlaingBot:
             target_language=target_language,
             instruction_language=str(user["instruction_language"]),
             translation_language=str(user["translation_language"]),
-            learner_level=str(user["learner_level"]),
+            learner_level=working_level,
             mode="adaptive",
             scenario_id=material_revision,
         )
@@ -881,7 +885,7 @@ class TutorlaingBot:
                 target_language=target_language,
                 instruction_language=str(user["instruction_language"]),
                 translation_language=str(user["translation_language"]),
-                learner_level=str(user["learner_level"]),
+                learner_level=working_level,
                 mode="adaptive",
                 scenario_id=material_revision,
                 source=source,
@@ -1097,6 +1101,7 @@ class TutorlaingBot:
         session = self.storage.drill_session(drill_id, chat_id)
         correct = int(session["correct_count"])
         total = int(session["total_items"])
+        proposal = self.adaptive_difficulty.assess(chat_id)
         keyboard = [
             [
                 {
@@ -1107,6 +1112,13 @@ class TutorlaingBot:
             [{"text": self._t(chat_id, "action.reviews"), "callback_data": "reviews:list"}],
             home_row(self._language(chat_id)),
         ]
+        completion_body = self._t(
+            chat_id, "drill.score", correct=correct, total=total
+        )
+        if proposal is not None:
+            offer_text, offer_keyboard = self._difficulty_offer(chat_id, proposal)
+            completion_body += f"\n\n{offer_text}"
+            keyboard[0:0] = offer_keyboard
         if str(session["mode"]) == "toolkit_cards":
             keyboard.insert(
                 0,
@@ -1132,7 +1144,7 @@ class TutorlaingBot:
             chat_id,
             card(
                 self._t(chat_id, "drill.complete"),
-                self._t(chat_id, "drill.score", correct=correct, total=total),
+                completion_body,
                 "PRACTICE",
                 self._language(chat_id),
             )
@@ -1140,6 +1152,64 @@ class TutorlaingBot:
             + route("REVIEW", self._language(chat_id)),
             keyboard,
             surface="drill_complete",
+        )
+
+    def _difficulty_offer(
+        self, chat_id: int, proposal: DifficultyProposal
+    ) -> tuple[str, list[list[dict[str, str]]]]:
+        user = self.storage.get_user(chat_id)
+        profile = str(user["learner_level"])
+        target = shifted_level(profile, proposal.direction)
+        direction = "up" if proposal.direction > 0 else "down"
+        text = self._t(
+            chat_id,
+            f"difficulty.offer_{direction}",
+            level=target,
+            score=round(proposal.average_score * 100),
+        )
+        return text, [
+            [
+                {
+                    "text": self._t(
+                        chat_id, f"difficulty.apply_{direction}", level=target
+                    ),
+                    "callback_data": f"difficulty:accept:{proposal.id}",
+                }
+            ],
+            [
+                {
+                    "text": self._t(chat_id, "difficulty.keep"),
+                    "callback_data": f"difficulty:dismiss:{proposal.id}",
+                }
+            ],
+        ]
+
+    def resolve_difficulty(
+        self, chat_id: int, proposal_id: int, accepted: bool
+    ) -> None:
+        try:
+            self.adaptive_difficulty.resolve(chat_id, proposal_id, accepted)
+        except KeyError:
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        user = self.storage.get_user(chat_id)
+        if accepted:
+            summary = self._t(
+                chat_id,
+                "difficulty.changed",
+                level=practice_level(user),
+                profile=str(user["learner_level"]),
+            )
+        else:
+            summary = self._t(chat_id, "difficulty.kept")
+        self._workspace(
+            chat_id,
+            card(self._t(chat_id, "progress.title"), summary),
+            [
+                [{"text": self._t(chat_id, "action.progress"), "callback_data": "progress"}],
+                home_row(self._language(chat_id)),
+            ],
+            surface="difficulty_result",
         )
 
     def handle_drill_text(self, chat_id: int, text: str, user: Any) -> None:
@@ -1548,6 +1618,10 @@ class TutorlaingBot:
             self.skip_drill_item(chat_id, int(data.rsplit(":", 1)[1]))
         elif data.startswith("drill:next:"):
             self.advance_drill(chat_id, data.split(":", 2)[2])
+        elif data.startswith("difficulty:accept:"):
+            self.resolve_difficulty(chat_id, int(data.rsplit(":", 1)[1]), True)
+        elif data.startswith("difficulty:dismiss:"):
+            self.resolve_difficulty(chat_id, int(data.rsplit(":", 1)[1]), False)
         elif data == "drill:resume":
             self.resume_activity(chat_id)
         elif data == "drill:stop:confirm":

@@ -258,3 +258,34 @@ refresh, чтобы кэш не превращался в вечный фикс�
 bank с `source=recovery`. Точный accepted answer проверяется до AI; модель нужна
 только для семантически допустимых альтернатив, которые нельзя надёжно сравнить
 детерминированно.
+
+## 2026-08-03 — Profile level and working difficulty are separate evidence domains
+
+`learner_level` остаётся заявленным уровнем профиля и не переписывается по
+нескольким ответам. Временная `practice_difficulty_offset` принимает только
+`-1/0/+1` и применяется к новым заданиям, AI analysis и сноскам. Решение
+предлагает отдельный `AdaptiveDifficultyService`, зависящий от узкого Protocol;
+SQL, Telegram presentation и пороговые правила не смешиваются.
+
+Recognition имеет вес 0.4, active recall — 1.0 и выше. Повышение требует 12
+взвешенных попыток, 8 продуктивных ответов, два разных дня, score ≥ 0.90,
+severe rate ≤ 0.05 и hint rate ≤ 0.10. Понижение требует 10 попыток, 6
+продуктивных ответов и два дня при score < 0.55 или severe rate > 0.30.
+Предложение никогда не применяется без callback пользователя; после решения
+действует 7-дневный cooldown. После принятия новое смещение автоматически не
+наращивается, а ручная смена профиля сбрасывает его.
+
+Автоматически менять CEFR после каждой успешной сессии отклонено: это смешивает
+удобство практики с невалидированной аттестацией и нестабильно на малой выборке.
+Краткий ответ также не считается слабым без явного требования задания к детали
+или конструкции.
+
+## 2026-08-03 — Exercise contract carries adaptation metadata
+
+Тип упражнения недостаточен для будущего подбора. `exercise_bank` хранит
+`response_mode`, `variant_group`, `evidence_weight`, трёхмерный difficulty
+vector (linguistic/cognitive/support), rubric и prerequisites. Сейчас значения
+детерминированно выводятся из валидированного `DrillItem`; это сохраняет строгую
+AI schema и обратную совместимость. Новые формы — reconstruction, dialogue
+repair, register choice, mediation и constrained paraphrase — проходят через
+прежний drill renderer и не создают параллельную state machine.

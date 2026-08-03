@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from .catalog import ScenarioCatalog
 from .contracts import Keyboard, MenuStore
+from .difficulty import practice_level
 from .i18n import tr
 from .language_support import LanguageSupport
 from .navigation import back_row, home_row, reply_navigation
@@ -186,7 +187,7 @@ class LearnerMenu:
                     instruction=values["instruction_language"],
                     translation=values["translation_language"],
                     target=values["target_language"],
-                    level=user["learner_level"],
+                    level=practice_level(user),
                     reminders=reminder_label,
                 ),
             ),
@@ -221,7 +222,7 @@ class LearnerMenu:
                     instruction=values["instruction_language"],
                     translation=values["translation_language"],
                     target=values["target_language"],
-                    level=user["learner_level"],
+                    level=practice_level(user),
                 ),
             ),
             [
@@ -294,7 +295,8 @@ class LearnerMenu:
             return "\n".join(f"• {item}" for item in items) if items else empty
 
         body = (
-            f"{self.text(chat_id, 'progress.level', level=snapshot.level)}\n"
+            f"{self.text(chat_id, 'progress.profile_level', level=snapshot.level)}\n"
+            f"{self.text(chat_id, 'progress.level', level=snapshot.practice_level)}\n"
             f"{progress('', len(snapshot.mastered), snapshot.total_scenarios).splitlines()[-1]}\n\n"
             f"{self.text(chat_id, 'progress.mastered')}\n{lines(snapshot.mastered)}\n\n"
             f"{self.text(chat_id, 'progress.focus')}\n{lines(snapshot.focus[:4])}\n\n"

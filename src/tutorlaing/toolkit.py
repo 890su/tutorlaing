@@ -15,6 +15,7 @@ from .ai import (
 )
 from .catalog import ScenarioCatalog
 from .content import Scenario
+from .difficulty import practice_level
 from .contracts import (
     Keyboard,
     TelegramGateway,
@@ -208,6 +209,7 @@ class PracticeToolkit:
             self.show_topics(chat_id)
             return
         bank_mode = f"toolkit_{mode}"
+        working_level = practice_level(user)
         bank_context = scenario_id or ""
         if mode == "cards":
             problem_phrases = [
@@ -228,7 +230,7 @@ class PracticeToolkit:
             target_language=str(user["target_language"]),
             instruction_language=language,
             translation_language=str(user["translation_language"]),
-            learner_level=str(user["learner_level"]),
+            learner_level=working_level,
             mode=bank_mode,
             scenario_id=bank_context,
         )
@@ -297,7 +299,7 @@ class PracticeToolkit:
                 target_language=str(user["target_language"]),
                 instruction_language=language,
                 translation_language=str(user["translation_language"]),
-                learner_level=str(user["learner_level"]),
+                learner_level=working_level,
                 mode=bank_mode,
                 scenario_id=bank_context,
                 source="fallback" if used_fallback else "ai",
@@ -516,7 +518,7 @@ class PracticeToolkit:
         if mode == "topic":
             scenario = scenarios[scenario_id or ""]
             material = self._scenario_material(scenario)
-            material["learner_level"] = str(user["learner_level"])
+            material["learner_level"] = practice_level(user)
             return material
         target_language = str(user["target_language"])
         history = self.store.problem_history(
@@ -583,7 +585,7 @@ class PracticeToolkit:
         randomizer.shuffle(selected)
         return {
             "phrases": selected[:FLASHCARD_ITEMS],
-            "learner_level": str(user["learner_level"]),
+            "learner_level": practice_level(user),
             "selection_policy": {
                 "problem_items": sum(
                     item["priority"] == "problem" for item in selected

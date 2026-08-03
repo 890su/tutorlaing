@@ -916,6 +916,37 @@ class AppFlowTests(unittest.TestCase):
             "settings", self.telegram.messages[-1]["keyboard"][-1][0]["callback_data"]
         )
 
+    def test_difficulty_proposal_requires_callback_and_preserves_profile(self) -> None:
+        chat_id = 250
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.storage.set_learner_level(chat_id, "B1")
+        proposal = self.storage.create_difficulty_proposal(
+            chat_id,
+            "pl",
+            1,
+            "mixed_production",
+            {
+                "average_score": 0.96,
+                "severe_rate": 0.0,
+                "hint_rate": 0.0,
+                "production_attempts": 12,
+                "distinct_days": 2,
+            },
+        )
+
+        self.bot.handle_callback(
+            chat_id,
+            "Learner",
+            "difficulty",
+            f"difficulty:accept:{proposal['id']}",
+        )
+
+        user = self.storage.get_user(chat_id)
+        self.assertEqual("B1", user["learner_level"])
+        self.assertEqual(1, user["practice_difficulty_offset"])
+        self.assertIn("B2", self.telegram.messages[-1]["text"])
+
     def test_finish_confirmation_preserves_active_task_until_confirmed(self) -> None:
         chat_id = 26
         self.storage.ensure_user(chat_id, "Learner")

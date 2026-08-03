@@ -93,6 +93,34 @@ class ExerciseBankTests(unittest.TestCase):
             )
         )
 
+    def test_saved_exercise_has_formal_adaptation_metadata(self) -> None:
+        self.bank.add_pack(
+            1,
+            varied_pack(),
+            target_language="pl",
+            instruction_language="ru",
+            translation_language="ru",
+            learner_level="B1",
+            mode="adaptive",
+            private=True,
+        )
+        rows = self.storage.exercise_candidates(
+            1,
+            target_language="pl",
+            instruction_language="ru",
+            translation_language="ru",
+            learner_level="B1",
+            mode="adaptive",
+        )
+        choice = next(row for row in rows if row["options_json"] != "[]")
+        recall = next(row for row in rows if row["options_json"] == "[]")
+        self.assertEqual("choice", choice["response_mode"])
+        self.assertEqual(0.4, choice["evidence_weight"])
+        self.assertEqual("text", recall["response_mode"])
+        self.assertTrue(recall["variant_group"])
+        self.assertIn('"cognitive"', recall["difficulty_vector_json"])
+        self.assertIn('"accepted_answers"', recall["rubric_json"])
+
     def test_material_signature_is_stable_but_changes_with_new_evidence(self) -> None:
         first = material_signature({"errors": ["case"], "level": "B1"})
         reordered = material_signature({"level": "B1", "errors": ["case"]})

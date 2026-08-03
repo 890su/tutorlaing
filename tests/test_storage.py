@@ -42,6 +42,33 @@ class StorageTests(unittest.TestCase):
         self.storage.ensure_user(1)
         self.assertEqual({"database": "ok", "users": 1}, self.storage.health())
 
+    def test_manual_profile_level_resets_temporary_difficulty(self) -> None:
+        self.storage.ensure_user(5)
+        proposal = self.storage.create_difficulty_proposal(
+            5,
+            "pl",
+            1,
+            "production",
+            {
+                "average_score": 0.95,
+                "severe_rate": 0.0,
+                "hint_rate": 0.0,
+                "production_attempts": 12,
+                "distinct_days": 2,
+            },
+        )
+        self.storage.resolve_difficulty_proposal(
+            5,
+            int(proposal["id"]),
+            True,
+            datetime.now(timezone.utc) + timedelta(days=7),
+        )
+        self.assertEqual(1, self.storage.get_user(5)["practice_difficulty_offset"])
+        self.storage.set_learner_level(5, "A2")
+        user = self.storage.get_user(5)
+        self.assertEqual("A2", user["learner_level"])
+        self.assertEqual(0, user["practice_difficulty_offset"])
+
     def test_new_session_abandons_previous_active_session(self) -> None:
         self.storage.ensure_user(9)
         first = self.storage.start_session(9, "pharmacy")

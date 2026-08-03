@@ -7,6 +7,7 @@ from typing import Any
 from .ai import AIClient, AIError, ResponseAnalysis
 from .content import Scenario
 from .contracts import LanguageStore
+from .difficulty import practice_level
 from .engine import Evaluation, evaluate_response
 
 
@@ -56,7 +57,7 @@ class ResponseEvaluator:
                 str(user["instruction_language"]),
                 str(user["target_language"]),
                 rule_evaluation.score,
-                str(user["learner_level"]),
+                practice_level(user),
             )
         except AIError:
             LOGGER.exception("AI response analysis failed")

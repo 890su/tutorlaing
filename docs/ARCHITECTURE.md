@@ -179,3 +179,35 @@ Content hash включает scope и owner, поэтому дедуплика�
 nullable `exercise_id`. Fingerprint истории входит в `scenario_id` личного pack:
 новая значимая ошибка создаёт новую границу подбора, а случайная перестановка
 курируемого материала — нет. Два показа полного набора разрешают refresh.
+
+## Контракт адаптивной сложности
+
+`AdaptiveDifficultyService` принимает только `AdaptiveDifficultyStore` и
+возвращает объяснимый `DifficultyProposal`. Storage adapter предоставляет
+нормализованные попытки, сохраняет skill snapshots и атомарно разрешает
+proposal. Telegram composition root лишь показывает предложение и передаёт
+явное accept/dismiss; он не рассчитывает пороги.
+
+```text
+drill/review/scenario evidence
+            ↓
+weighted skill snapshots
+            ↓
+conservative threshold rules
+            ↓
+pending proposal ── accept/dismiss callback
+            ↓
+practice_difficulty_offset (-1/0/+1)
+```
+
+`learner_level` и offset намеренно не объединены. `practice_level(user)` —
+единственная функция их композиции, используемая генерацией, оценкой,
+словарными сносками и exercise-bank lookup. Ручная смена профиля сбрасывает
+offset и pending proposal. Границы A0/C1 и уже принятое ненулевое смещение не
+создают новые рекомендации.
+
+Формат exercises подготовлен к следующему selector: response mode и evidence
+weight позволяют не приравнивать узнавание к воспроизведению, variant group —
+не показывать поверхностные дубли, difficulty vector — независимо менять
+языковую сложность, когнитивную операцию и объём опор. Rubric и prerequisites
+зарезервированы как явные данные, а не скрытая логика prompt.
