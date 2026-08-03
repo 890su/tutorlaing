@@ -405,6 +405,25 @@ class AppFlowTests(unittest.TestCase):
         ]
         self.assertIn("reminder:test", callbacks)
 
+    def test_reengagement_card_starts_one_task_only_after_user_action(self) -> None:
+        chat_id = 403
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.send_reengagement_reminder(chat_id, "normal", 8)
+
+        message = self.telegram.messages[-1]
+        self.assertIn("прогресс сохранён", message["text"].lower())
+        self.assertEqual(
+            "reengagement:continue", message["keyboard"][0][0]["callback_data"]
+        )
+        before = len(self.telegram.messages)
+        self.bot.handle_callback(
+            chat_id, "Learner", "continue", "reengagement:continue"
+        )
+        self.assertEqual(before + 1, len(self.telegram.messages))
+        self.assertIsNotNone(self.storage.get_user(chat_id)["last_interaction_at"])
+
     def test_home_installs_persistent_bottom_navigation(self) -> None:
         chat_id = 35
         self.storage.ensure_user(chat_id, "Learner")

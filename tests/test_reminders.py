@@ -4,7 +4,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from tutorlaing.reminders import ReminderScheduler, next_reminder_at, pause_until_tomorrow
+from tutorlaing.reminders import (
+    ReminderScheduler,
+    next_reminder_at,
+    pause_until_tomorrow,
+    reengagement_inactive_days,
+)
 from tutorlaing.privacy import CONSENT_VERSION
 from tutorlaing.storage import Storage
 
@@ -12,9 +17,15 @@ from tutorlaing.storage import Storage
 class FakeReminderBot:
     def __init__(self):
         self.sent = []
+        self.reengagement = []
 
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
         self.sent.append((chat_id, mode))
+
+    def send_reengagement_reminder(
+        self, chat_id: int, mode: str, inactive_days: int
+    ) -> None:
+        self.reengagement.append((chat_id, mode, inactive_days))
 
 
 class FailingReminderBot(FakeReminderBot):
@@ -23,6 +34,61 @@ class FailingReminderBot(FakeReminderBot):
 
 
 class ReminderTests(unittest.TestCase):
+    def test_reengagement_threshold_depends_on_selected_mode(self) -> None:
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+        base = {
+            "last_interaction_at": (now - timedelta(days=2)).isoformat(),
+            "last_reengagement_at": None,
+            "consent_at": now.isoformat(),
+            "created_at": now.isoformat(),
+        }
+        self.assertEqual(
+            2,
+            reengagement_inactive_days(
+                {**base, "reminder_mode": "intensive"}, now
+            ),
+        )
+        self.assertIsNone(
+            reengagement_inactive_days({**base, "reminder_mode": "normal"}, now)
+        )
+
+    def test_inactive_learner_receives_motivation_instead_of_another_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(61, "Learner")
+            storage.accept_consent(61, CONSENT_VERSION)
+            now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+            storage.record_user_interaction(61, now - timedelta(days=4))
+            storage.set_reminder_mode(61, "normal", now - timedelta(minutes=1))
+            bot = FakeReminderBot()
+
+            sent = ReminderScheduler(bot, storage, interval=60).tick(now)
+
+            self.assertEqual(1, sent)
+            self.assertEqual([], bot.sent)
+            self.assertEqual([(61, "normal", 4)], bot.reengagement)
+            self.assertEqual(now.isoformat(), storage.get_user(61)["last_reengagement_at"])
+            storage.close()
+
+    def test_inactive_cooldown_suppresses_extra_tasks_and_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(62, "Learner")
+            storage.accept_consent(62, CONSENT_VERSION)
+            now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+            storage.record_user_interaction(62, now - timedelta(days=4))
+            storage.set_reminder_mode(62, "normal", now - timedelta(minutes=1))
+            storage.record_reengagement_delivery(62, now - timedelta(hours=2))
+            bot = FakeReminderBot()
+
+            sent = ReminderScheduler(bot, storage, interval=60).tick(now)
+
+            self.assertEqual(0, sent)
+            self.assertEqual([], bot.sent)
+            self.assertEqual([], bot.reengagement)
+            self.assertGreater(storage.get_user(62)["reminder_next_at"], now.isoformat())
+            storage.close()
+
     def test_next_slot_respects_warsaw_quiet_hours(self) -> None:
         now = datetime(2026, 8, 1, 20, 0, tzinfo=timezone.utc)  # 22:00 Warsaw
         result = next_reminder_at("aggressive", now)

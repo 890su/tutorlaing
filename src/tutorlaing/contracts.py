@@ -126,9 +126,15 @@ class ReminderStore(Protocol):
         self, chat_id: int, outcome: str, mode: str
     ) -> None: ...
 
+    def record_reengagement_delivery(self, chat_id: int, sent_at: datetime) -> None: ...
+
 
 class ReminderDelivery(Protocol):
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None: ...
+
+    def send_reengagement_reminder(
+        self, chat_id: int, mode: str, inactive_days: int
+    ) -> None: ...
 
 
 class UpdateStore(Protocol):

@@ -289,3 +289,21 @@ vector (linguistic/cognitive/support), rubric и prerequisites. Сейчас з�
 AI schema и обратную совместимость. Новые формы — reconstruction, dialogue
 repair, register choice, mediation и constrained paraphrase — проходят через
 прежний drill renderer и не создают параллельную state machine.
+
+## 2026-08-03 — Re-engagement replaces delivery slots instead of adding messages
+
+Длительное отсутствие определяется по отдельному `last_interaction_at`, потому
+что `users.updated_at` меняется самим scheduler и не является пользовательской
+активностью. Входящее сообщение и callback считаются взаимодействием; простой
+показ reminder — нет.
+
+При достижении порога один штатный slot становится re-engagement prompt. Пока
+не истёк cooldown, остальные slots резервируются и пропускаются без доставки:
+мотивация не должна усиливать выбранную частоту и создавать чувство давления.
+Кнопка явно материализует одно текущее или ближайшее задание. Автоматически
+вкладывать задание в мотивирующее сообщение отклонено, поскольку это повторяло
+бы уже игнорируемый поток и занимало больше ленты.
+
+Пороги v1 — 5/3/2/1 день для gentle/normal/intensive/aggressive, повтор не чаще
+того же интервала. Они являются продуктовой гипотезой и должны оцениваться по
+return-to-task и mute/block rate. `off`, pause и quiet hours имеют приоритет.

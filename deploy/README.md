@@ -99,5 +99,6 @@ Tutorlaing volume is included.
 - Interactive toolkit: 10 history-aware flashcards, bidirectional phrase variants and level-aware topic drills
 - Telegram UI: persistent four-action bottom navigation; full options in message, compact A/B/C/D callbacks
 - Reminder scheduler: active in all learning stages with five-minute retry; user mode defaults to off, Europe/Warsaw quiet hours
+- Re-engagement: after 5/3/2/1 inactive days by reminder mode, one normal slot becomes a localized motivational card; other slots are suppressed until cooldown
 - Old n8n, Google MCP and Twenty CRM containers/volumes: removed
 - Management bridge is intentionally retained until direct SSH is stable

@@ -1401,6 +1401,47 @@ class TutorlaingBot:
             ],
         )
 
+    def send_reengagement_reminder(
+        self, chat_id: int, mode: str, inactive_days: int
+    ) -> None:
+        key = (
+            "reengagement.long"
+            if inactive_days >= 14
+            else "reengagement.week"
+            if inactive_days >= 7
+            else "reengagement.short"
+        )
+        self.telegram.send_message(
+            chat_id,
+            card(
+                self._t(chat_id, "reengagement.title"),
+                self._t(chat_id, key),
+            ),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "reengagement.action"),
+                        "callback_data": "reengagement:continue",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "action.pause"),
+                        "callback_data": "reminder:pause",
+                    },
+                    {
+                        "text": self._t(chat_id, "action.reminders"),
+                        "callback_data": "reminders",
+                    },
+                ],
+            ],
+        )
+        self.storage.event(
+            chat_id,
+            "reengagement_prompt_shown",
+            {"mode": mode, "inactive_days": inactive_days},
+        )
+
     def show_privacy(self, chat_id: int, *, back_to_settings: bool = False) -> None:
         self.menu.show_privacy(chat_id, back_to_settings=back_to_settings)
 
@@ -1435,6 +1476,7 @@ class TutorlaingBot:
             self.telegram.send_message(chat_id, "Сейчас доступна только закрытая alpha.")
             return
         user = self.storage.ensure_user(chat_id, first_name)
+        self.storage.record_user_interaction(chat_id)
         command = text.strip().split(maxsplit=1)[0].lower()
         if command.startswith("/") and user["toolkit_input_mode"]:
             self.storage.set_user_state(chat_id, toolkit_input_mode=None)
@@ -1536,6 +1578,7 @@ class TutorlaingBot:
             self.telegram.answer_callback(callback_id, "Закрытая alpha")
             return
         user = self.storage.ensure_user(chat_id, first_name)
+        self.storage.record_user_interaction(chat_id)
         try:
             self.telegram.answer_callback(callback_id)
         except TelegramError:
@@ -1596,6 +1639,12 @@ class TutorlaingBot:
             )
             self.storage.record_reminder_delivery(
                 chat_id, "manual_test", mode
+            )
+        elif data == "reengagement:continue":
+            current = self.storage.get_user(chat_id)
+            mode = str(current["reminder_mode"])
+            self.send_scheduled_reminder(
+                chat_id, mode if mode != "off" else "gentle"
             )
         elif data == "reminder:pause":
             current = self.storage.get_user(chat_id)
