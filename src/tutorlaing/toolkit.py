@@ -5,7 +5,14 @@ from dataclasses import replace
 from random import SystemRandom
 from typing import Any
 
-from .ai import AIClient, AIError, DrillPack, FLASHCARD_ITEMS, PhraseTranslation
+from .ai import (
+    AIClient,
+    AIError,
+    DrillPack,
+    FLASHCARD_ITEMS,
+    PROMPT_VERSION,
+    PhraseTranslation,
+)
 from .catalog import ScenarioCatalog
 from .content import Scenario
 from .contracts import (
@@ -16,6 +23,7 @@ from .contracts import (
     TransportError,
 )
 from .i18n import tr
+from .exercise_bank import ExerciseBank, material_signature
 from .navigation import back_row, home_row
 from .toolkit_fallback import build_toolkit_fallback
 from .ui import card
@@ -73,6 +81,7 @@ class PracticeToolkit:
         ai: AIClient | None,
         delivery: ToolkitDelivery,
         telegram: TelegramGateway,
+        exercise_bank: ExerciseBank | None = None,
     ):
         self.store = store
         self.workspace = workspace
@@ -80,6 +89,7 @@ class PracticeToolkit:
         self.ai = ai
         self.delivery = delivery
         self.telegram = telegram
+        self.exercise_bank = exercise_bank or ExerciseBank(store)
 
     def show_menu(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
@@ -197,6 +207,36 @@ class PracticeToolkit:
         except KeyError:
             self.show_topics(chat_id)
             return
+        bank_mode = f"toolkit_{mode}"
+        bank_context = scenario_id or ""
+        if mode == "cards":
+            problem_phrases = [
+                {
+                    "target_phrase": item.get("target_phrase", ""),
+                    "meaning": item.get("practical_meaning_ru", ""),
+                }
+                for item in material.get("phrases", [])
+                if item.get("priority") == "problem"
+            ]
+            bank_context = (
+                f"history:{material_signature(problem_phrases)}"
+                if problem_phrases
+                else "catalog"
+            )
+        bank_pack = self.exercise_bank.find_pack(
+            chat_id,
+            target_language=str(user["target_language"]),
+            instruction_language=language,
+            translation_language=str(user["translation_language"]),
+            learner_level=str(user["learner_level"]),
+            mode=bank_mode,
+            scenario_id=bank_context,
+        )
+        self.store.event(
+            chat_id,
+            "exercise_bank_lookup",
+            {"mode": bank_mode, "hit": bank_pack is not None},
+        )
         self.workspace.show(
             chat_id,
             card(
@@ -205,9 +245,12 @@ class PracticeToolkit:
             ),
             surface="toolkit_preparing",
         )
-        used_fallback = self.ai is None
+        used_fallback = False
         try:
-            if self.ai is None:
+            if bank_pack is not None:
+                pack = bank_pack.pack
+            elif self.ai is None:
+                used_fallback = True
                 pack = build_toolkit_fallback(mode, material, language)
             else:
                 try:
@@ -247,8 +290,26 @@ class PracticeToolkit:
             )
             return
 
+        if bank_pack is None:
+            bank_pack = self.exercise_bank.add_pack(
+                chat_id,
+                pack,
+                target_language=str(user["target_language"]),
+                instruction_language=language,
+                translation_language=str(user["translation_language"]),
+                learner_level=str(user["learner_level"]),
+                mode=bank_mode,
+                scenario_id=bank_context,
+                source="fallback" if used_fallback else "ai",
+                provider=("local" if used_fallback else str(self.ai.provider)),
+                model=("curated-fallback" if used_fallback else str(self.ai.model)),
+                prompt_version=("fallback-v1" if used_fallback else PROMPT_VERSION),
+                private=mode == "cards",
+            )
+
         if mode == "cards":
             pack = shuffle_flashcard_options(pack)
+            bank_pack = replace(bank_pack, pack=pack)
 
         if used_fallback:
             self.store.event(
@@ -261,14 +322,14 @@ class PracticeToolkit:
             None,
             pack.title,
             pack.focus,
-            [item.to_dict() for item in pack.items],
-            mode=f"toolkit_{mode}",
+            bank_pack.drill_items(),
+            mode=bank_mode,
             replace_active=False,
         )
         self.store.event(
             chat_id,
             "toolkit_started",
-            {"mode": mode, "scenario_id": scenario_id},
+            {"mode": mode, "scenario_id": scenario_id, "source": bank_pack.source},
         )
         self.delivery.send_drill_item(chat_id, drill_id)
         self.delivery.schedule_next_assignment(chat_id)

@@ -13,6 +13,7 @@ from .ai import (
     FailoverAIClient,
     GeminiClient,
     OpenAIClient,
+    PROMPT_VERSION,
     ResponseAnalysis,
 )
 from .config import Settings
@@ -25,6 +26,7 @@ from .engine import (
     select_bottleneck,
 )
 from .difficulty import level_policy
+from .exercise_bank import ExerciseBank, material_signature
 from .i18n import tr
 from .feedback import FeedbackPresenter
 from .evaluation_service import ResponseEvaluator
@@ -71,6 +73,7 @@ class TutorlaingBot:
                     settings.ai_failover_cooldown,
                 )
         self.catalog = ScenarioCatalog()
+        self.exercise_bank = ExerciseBank(storage)
         self.workspace = TelegramWorkspace(storage, self.telegram)
         self.language_support = LanguageSupport(storage, self.ai)
         self.progress_service = ProgressService(storage)
@@ -89,7 +92,13 @@ class TutorlaingBot:
             storage, self.telegram, self
         )
         self.toolkit = PracticeToolkit(
-            storage, self.workspace, self.catalog, self.ai, self, self.telegram
+            storage,
+            self.workspace,
+            self.catalog,
+            self.ai,
+            self,
+            self.telegram,
+            self.exercise_bank,
         )
         self.offset = 0
         self.running = True
@@ -761,9 +770,6 @@ class TutorlaingBot:
                 ],
             )
             return
-        if self.ai is None:
-            self.telegram.send_message(chat_id, "Закрепление временно недоступно: AI выключен.")
-            return
         recent_material = []
         for source in sources:
             analysis = ResponseAnalysis.from_dict(json.loads(source["result_json"]))
@@ -805,36 +811,71 @@ class TutorlaingBot:
             "level_policy": level_policy(str(current["learner_level"])).ai_instruction,
         }
         user = current
+        material_revision = f"history:{material_signature(material)}"
+        bank_pack = self.exercise_bank.find_pack(
+            chat_id,
+            target_language=target_language,
+            instruction_language=str(user["instruction_language"]),
+            translation_language=str(user["translation_language"]),
+            learner_level=str(user["learner_level"]),
+            mode="adaptive",
+            scenario_id=material_revision,
+        )
+        self.storage.event(
+            chat_id,
+            "exercise_bank_lookup",
+            {"mode": "adaptive", "hit": bank_pack is not None},
+        )
+        if bank_pack is None and self.ai is None:
+            self.telegram.send_message(chat_id, "Закрепление временно недоступно: AI выключен.")
+            return
         if announce:
             try:
                 self.telegram.send_chat_action(chat_id, "typing")
             except TelegramError:
                 LOGGER.debug("Could not send typing action", exc_info=True)
-        try:
-            pack = self.ai.generate_drill_pack(
-                material,
-                str(user["instruction_language"]),
-                str(user["target_language"]),
-            )
-        except AIError:
-            LOGGER.exception("AI drill generation failed")
-            self.storage.event(chat_id, "ai_fallback_used", {"operation": "drill_generation"})
-            self.telegram.send_message(
+        if bank_pack is None:
+            try:
+                pack = self.ai.generate_drill_pack(
+                    material,
+                    str(user["instruction_language"]),
+                    str(user["target_language"]),
+                )
+            except AIError:
+                LOGGER.exception("AI drill generation failed")
+                self.storage.event(chat_id, "ai_fallback_used", {"operation": "drill_generation"})
+                self.telegram.send_message(
+                    chat_id,
+                    "Не удалось собрать задания. Основные сценарии и повторы продолжают работать.",
+                    [
+                        [{"text": "Попробовать ещё раз", "callback_data": "drill:start"}],
+                        home_row(self._language(chat_id)),
+                    ],
+                )
+                return
+            bank_pack = self.exercise_bank.add_pack(
                 chat_id,
-                "Не удалось собрать задания. Основные сценарии и повторы продолжают работать.",
-                [
-                    [{"text": "Попробовать ещё раз", "callback_data": "drill:start"}],
-                    home_row(self._language(chat_id)),
-                ],
+                pack,
+                target_language=target_language,
+                instruction_language=str(user["instruction_language"]),
+                translation_language=str(user["translation_language"]),
+                learner_level=str(user["learner_level"]),
+                mode="adaptive",
+                scenario_id=material_revision,
+                source="ai",
+                provider=str(self.ai.provider),
+                model=str(self.ai.model),
+                prompt_version=PROMPT_VERSION,
+                private=True,
+                tags=["personal:errors"],
             )
-            return
         self.storage.suspend_activity(chat_id)
         drill_id = self.storage.start_drill(
             chat_id,
             int(sources[0]["id"]) if sources else None,
-            pack.title,
-            pack.focus,
-            [item.to_dict() for item in pack.items],
+            bank_pack.pack.title,
+            bank_pack.pack.focus,
+            bank_pack.drill_items(),
             replace_active=False,
         )
         self.send_drill_item(chat_id, drill_id, scheduled=scheduled)

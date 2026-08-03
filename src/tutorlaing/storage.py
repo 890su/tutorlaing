@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -184,7 +185,69 @@ class Storage:
             user_answer TEXT,
             score REAL,
             answered_at TEXT,
+            exercise_id INTEGER REFERENCES exercise_bank(id) ON DELETE SET NULL,
             UNIQUE(drill_session_id, position)
+        );
+
+        CREATE TABLE IF NOT EXISTS exercise_bank (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_hash TEXT NOT NULL UNIQUE,
+            scope TEXT NOT NULL CHECK(scope IN ('global', 'user_private', 'curated')),
+            owner_chat_id INTEGER REFERENCES users(chat_id) ON DELETE CASCADE,
+            target_language TEXT NOT NULL,
+            instruction_language TEXT NOT NULL,
+            translation_language TEXT NOT NULL,
+            learner_level TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            scenario_id TEXT NOT NULL DEFAULT '',
+            pack_title TEXT NOT NULL,
+            pack_focus TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            skill TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            context TEXT NOT NULL,
+            options_json TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            accepted_answers_json TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            hint TEXT NOT NULL,
+            difficulty INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'active',
+            quality_score REAL NOT NULL DEFAULT 0.6,
+            use_count INTEGER NOT NULL DEFAULT 0,
+            answer_count INTEGER NOT NULL DEFAULT 0,
+            correct_count INTEGER NOT NULL DEFAULT 0,
+            skip_count INTEGER NOT NULL DEFAULT 0,
+            avg_score REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_used_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS exercise_tags (
+            exercise_id INTEGER NOT NULL REFERENCES exercise_bank(id) ON DELETE CASCADE,
+            tag TEXT NOT NULL,
+            PRIMARY KEY(exercise_id, tag)
+        );
+
+        CREATE TABLE IF NOT EXISTS learner_exercise_stats (
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            exercise_id INTEGER NOT NULL REFERENCES exercise_bank(id) ON DELETE CASCADE,
+            seen_count INTEGER NOT NULL DEFAULT 0,
+            answer_count INTEGER NOT NULL DEFAULT 0,
+            correct_count INTEGER NOT NULL DEFAULT 0,
+            skip_count INTEGER NOT NULL DEFAULT 0,
+            avg_score REAL NOT NULL DEFAULT 0,
+            mastery_strength REAL NOT NULL DEFAULT 0,
+            last_score REAL,
+            last_seen_at TEXT,
+            next_due_at TEXT,
+            PRIMARY KEY(chat_id, exercise_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_reviews_due
@@ -195,6 +258,13 @@ class Storage:
             ON ai_analyses(chat_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_drill_sessions_chat
             ON drill_sessions(chat_id, status, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_exercise_bank_lookup
+            ON exercise_bank(target_language, instruction_language, translation_language,
+                             learner_level, mode, scenario_id, status);
+        CREATE INDEX IF NOT EXISTS idx_exercise_tags_tag
+            ON exercise_tags(tag, exercise_id);
+        CREATE INDEX IF NOT EXISTS idx_learner_exercise_due
+            ON learner_exercise_stats(chat_id, next_due_at);
         """
         with self._lock, self._connection:
             self._connection.executescript(schema)
@@ -234,6 +304,12 @@ class Storage:
             )
             self._ensure_column(
                 "drill_sessions", "mode", "TEXT NOT NULL DEFAULT 'adaptive'"
+            )
+            self._ensure_column("drill_items", "exercise_id", "INTEGER")
+            self._ensure_column("exercise_bank", "provider", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("exercise_bank", "model", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(
+                "exercise_bank", "prompt_version", "TEXT NOT NULL DEFAULT ''"
             )
             self._ensure_column(
                 "sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
@@ -623,6 +699,282 @@ class Storage:
                 (update_id,),
             )
 
+    def exercise_candidates(
+        self,
+        chat_id: int,
+        *,
+        target_language: str,
+        instruction_language: str,
+        translation_language: str,
+        learner_level: str,
+        mode: str,
+        scenario_id: str = "",
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        """Return reusable content; private material never crosses learner boundaries."""
+        now = utc_now()
+        with self._lock:
+            return self._connection.execute(
+                """
+                SELECT exercise_bank.*, learner_exercise_stats.mastery_strength,
+                       learner_exercise_stats.next_due_at,
+                       learner_exercise_stats.last_seen_at,
+                       learner_exercise_stats.seen_count AS learner_seen_count
+                FROM exercise_bank
+                LEFT JOIN learner_exercise_stats
+                  ON learner_exercise_stats.exercise_id = exercise_bank.id
+                 AND learner_exercise_stats.chat_id = ?
+                WHERE exercise_bank.target_language = ?
+                  AND exercise_bank.instruction_language = ?
+                  AND exercise_bank.translation_language = ?
+                  AND exercise_bank.learner_level = ?
+                  AND exercise_bank.mode = ?
+                  AND exercise_bank.scenario_id = ?
+                  AND exercise_bank.status = 'active'
+                  AND exercise_bank.quality_score >= 0.45
+                  AND (
+                    exercise_bank.scope IN ('global', 'curated')
+                    OR (exercise_bank.scope = 'user_private' AND exercise_bank.owner_chat_id = ?)
+                  )
+                ORDER BY
+                  CASE
+                    WHEN learner_exercise_stats.next_due_at IS NOT NULL
+                     AND learner_exercise_stats.next_due_at <= ? THEN 0
+                    WHEN learner_exercise_stats.seen_count IS NULL THEN 1
+                    ELSE 2
+                  END,
+                  COALESCE(learner_exercise_stats.mastery_strength, 0) ASC,
+                  COALESCE(learner_exercise_stats.last_seen_at, '') ASC,
+                  exercise_bank.quality_score DESC,
+                  exercise_bank.use_count ASC
+                LIMIT ?
+                """,
+                (
+                    chat_id,
+                    target_language,
+                    instruction_language,
+                    translation_language,
+                    learner_level,
+                    mode,
+                    scenario_id,
+                    chat_id,
+                    now,
+                    max(1, min(500, limit)),
+                ),
+            ).fetchall()
+
+    def save_exercise_pack(
+        self,
+        chat_id: int,
+        *,
+        target_language: str,
+        instruction_language: str,
+        translation_language: str,
+        learner_level: str,
+        mode: str,
+        scenario_id: str,
+        title: str,
+        focus: str,
+        items: list[dict[str, Any]],
+        source: str,
+        private: bool,
+        provider: str = "",
+        model: str = "",
+        prompt_version: str = "",
+        tags: list[str] | None = None,
+    ) -> list[int]:
+        """Persist a validated pack and return stable IDs for drill attempts."""
+        scope = (
+            "user_private"
+            if private
+            else ("curated" if source == "fallback" else "global")
+        )
+        owner_chat_id = chat_id if private else None
+        now = utc_now()
+        base_tags = {
+            f"mode:{mode}",
+            f"target:{target_language}",
+            f"level:{learner_level}",
+            *(tags or []),
+        }
+        ids: list[int] = []
+        with self._lock, self._connection:
+            for item in items:
+                canonical = {
+                    "scope": scope,
+                    "owner_chat_id": owner_chat_id,
+                    "target_language": target_language,
+                    "instruction_language": instruction_language,
+                    "translation_language": translation_language,
+                    "learner_level": learner_level,
+                    "mode": mode,
+                    "scenario_id": scenario_id,
+                    "item": item,
+                }
+                content_hash = hashlib.sha256(
+                    json.dumps(canonical, ensure_ascii=False, sort_keys=True).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                quality = 0.75 if source == "fallback" else 0.6
+                self._connection.execute(
+                    """
+                    INSERT INTO exercise_bank(
+                        content_hash, scope, owner_chat_id, target_language,
+                        instruction_language, translation_language, learner_level,
+                        mode, scenario_id, pack_title, pack_focus, item_type, skill,
+                        prompt, context, options_json, correct_answer,
+                        accepted_answers_json, explanation, hint, difficulty,
+                        source, provider, model, prompt_version, quality_score,
+                        created_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    )
+                    ON CONFLICT(content_hash) DO UPDATE SET
+                        updated_at = excluded.updated_at,
+                        status = 'active'
+                    """,
+                    (
+                        content_hash,
+                        scope,
+                        owner_chat_id,
+                        target_language,
+                        instruction_language,
+                        translation_language,
+                        learner_level,
+                        mode,
+                        scenario_id,
+                        title,
+                        focus,
+                        item["type"],
+                        item["skill"],
+                        item["prompt"],
+                        item["context"],
+                        json.dumps(item.get("options", []), ensure_ascii=False),
+                        item["correct_answer"],
+                        json.dumps(item.get("accepted_answers", []), ensure_ascii=False),
+                        item["explanation"],
+                        item["hint"],
+                        int(item["difficulty"]),
+                        source,
+                        provider,
+                        model,
+                        prompt_version,
+                        quality,
+                        now,
+                        now,
+                    ),
+                )
+                row = self._connection.execute(
+                    "SELECT id FROM exercise_bank WHERE content_hash = ?", (content_hash,)
+                ).fetchone()
+                exercise_id = int(row["id"])
+                item_tags = base_tags | {
+                    f"type:{item['type']}",
+                    f"skill:{str(item['skill']).strip().lower()}",
+                    f"difficulty:{int(item['difficulty'])}",
+                }
+                if scenario_id:
+                    item_tags.add(f"scenario:{scenario_id}")
+                self._connection.executemany(
+                    "INSERT OR IGNORE INTO exercise_tags(exercise_id, tag) VALUES (?, ?)",
+                    ((exercise_id, tag[:200]) for tag in sorted(item_tags) if tag),
+                )
+                ids.append(exercise_id)
+        return ids
+
+    def mark_exercises_used(self, chat_id: int, exercise_ids: list[int]) -> None:
+        if not exercise_ids:
+            return
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.executemany(
+                """
+                UPDATE exercise_bank SET use_count = use_count + 1,
+                    last_used_at = ?, updated_at = ? WHERE id = ?
+                """,
+                ((now, now, exercise_id) for exercise_id in exercise_ids),
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO learner_exercise_stats(chat_id, exercise_id, seen_count, last_seen_at)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(chat_id, exercise_id) DO UPDATE SET
+                    seen_count = learner_exercise_stats.seen_count + 1,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                ((chat_id, exercise_id, now) for exercise_id in exercise_ids),
+            )
+
+    def _record_exercise_attempt_locked(
+        self, chat_id: int, exercise_id: int, answer: str, score: float
+    ) -> None:
+        skipped = not answer.strip()
+        now_dt = datetime.now(timezone.utc)
+        current = self._connection.execute(
+            "SELECT * FROM learner_exercise_stats WHERE chat_id = ? AND exercise_id = ?",
+            (chat_id, exercise_id),
+        ).fetchone()
+        old_answers = int(current["answer_count"]) if current else 0
+        old_average = float(current["avg_score"]) if current else 0.0
+        old_mastery = float(current["mastery_strength"]) if current else 0.0
+        new_average = ((old_average * old_answers) + score) / (old_answers + 1)
+        mastery = (old_mastery * 0.7) + (score * 0.3)
+        if skipped or score < 0.4:
+            due_after = timedelta(days=1)
+        elif score < 0.8:
+            due_after = timedelta(days=3)
+        elif mastery < 0.7:
+            due_after = timedelta(days=7)
+        else:
+            due_after = timedelta(days=14)
+        next_due = (now_dt + due_after).isoformat()
+        self._connection.execute(
+            """
+            INSERT INTO learner_exercise_stats(
+                chat_id, exercise_id, answer_count, correct_count, skip_count,
+                avg_score, mastery_strength, last_score, last_seen_at, next_due_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, exercise_id) DO UPDATE SET
+                answer_count = learner_exercise_stats.answer_count + 1,
+                correct_count = learner_exercise_stats.correct_count + excluded.correct_count,
+                skip_count = learner_exercise_stats.skip_count + excluded.skip_count,
+                avg_score = excluded.avg_score,
+                mastery_strength = excluded.mastery_strength,
+                last_score = excluded.last_score,
+                last_seen_at = excluded.last_seen_at,
+                next_due_at = excluded.next_due_at
+            """,
+            (
+                chat_id,
+                exercise_id,
+                int(score >= 0.6),
+                int(skipped),
+                new_average,
+                mastery,
+                score,
+                now_dt.isoformat(),
+                next_due,
+            ),
+        )
+        global_row = self._connection.execute(
+            "SELECT answer_count, avg_score FROM exercise_bank WHERE id = ?",
+            (exercise_id,),
+        ).fetchone()
+        if global_row is not None:
+            count = int(global_row["answer_count"])
+            average = float(global_row["avg_score"])
+            aggregate = ((average * count) + score) / (count + 1)
+            self._connection.execute(
+                """
+                UPDATE exercise_bank SET answer_count = answer_count + 1,
+                    correct_count = correct_count + ?, skip_count = skip_count + ?,
+                    avg_score = ?, updated_at = ? WHERE id = ?
+                """,
+                (int(score >= 0.6), int(skipped), aggregate, now_dt.isoformat(), exercise_id),
+            )
+
     def start_drill(
         self,
         chat_id: int,
@@ -675,8 +1027,8 @@ class Storage:
                     INSERT INTO drill_items(
                         drill_session_id, position, item_type, skill, prompt,
                         context, options_json, correct_answer,
-                        accepted_answers_json, explanation, hint, difficulty
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        accepted_answers_json, explanation, hint, difficulty, exercise_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         drill_id,
@@ -691,6 +1043,7 @@ class Storage:
                         item["explanation"],
                         item["hint"],
                         int(item["difficulty"]),
+                        item.get("exercise_id"),
                     ),
                 )
             self._connection.execute(
@@ -741,7 +1094,14 @@ class Storage:
     def answer_drill_item(self, item_id: int, answer: str, score: float) -> None:
         with self._lock, self._connection:
             row = self._connection.execute(
-                "SELECT drill_session_id, status FROM drill_items WHERE id = ?", (item_id,)
+                """
+                SELECT drill_items.drill_session_id, drill_items.status,
+                       drill_items.exercise_id, drill_sessions.chat_id
+                FROM drill_items
+                JOIN drill_sessions ON drill_sessions.id = drill_items.drill_session_id
+                WHERE drill_items.id = ?
+                """,
+                (item_id,),
             ).fetchone()
             if row is None or row["status"] != "pending":
                 raise KeyError(f"Drill item unavailable: {item_id}")
@@ -753,6 +1113,13 @@ class Storage:
                 self._connection.execute(
                     "UPDATE drill_sessions SET correct_count = correct_count + 1 WHERE id = ?",
                     (row["drill_session_id"],),
+                )
+            if row["exercise_id"] is not None:
+                self._record_exercise_attempt_locked(
+                    int(row["chat_id"]),
+                    int(row["exercise_id"]),
+                    answer,
+                    max(0.0, min(1.0, float(score))),
                 )
 
     def advance_drill(self, drill_id: str, chat_id: int) -> bool:

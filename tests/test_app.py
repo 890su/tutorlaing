@@ -187,6 +187,15 @@ class FakeAI:
         return []
 
 
+class CountingAI(FakeAI):
+    def __init__(self) -> None:
+        self.toolkit_calls = 0
+
+    def generate_toolkit_pack(self, mode, *_args, **_kwargs) -> DrillPack:
+        self.toolkit_calls += 1
+        return super().generate_toolkit_pack(mode, *_args, **_kwargs)
+
+
 class AppFlowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -611,6 +620,27 @@ class AppFlowTests(unittest.TestCase):
         self.assertIsNotNone(session)
         self.assertEqual("toolkit_cards", session["mode"])
         self.assertEqual(10, session["total_items"])
+
+    def test_toolkit_reuses_a_valid_bank_pack_without_a_second_ai_call(self) -> None:
+        ai = CountingAI()
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=ai)
+        chat_id = 33
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+
+        bot.handle_callback(chat_id, "Learner", "cards-1", "toolkit:start:cards")
+        bot.stop_drill(chat_id)
+        bot.handle_callback(chat_id, "Learner", "cards-2", "toolkit:start:cards")
+
+        self.assertEqual(1, ai.toolkit_calls)
+        session = self.storage.active_drill(chat_id)
+        self.assertIsNotNone(session)
+        self.assertTrue(
+            all(
+                self.storage.drill_item(str(session["id"]), index)["exercise_id"]
+                for index in range(int(session["total_items"]))
+            )
+        )
 
     def test_toolkit_card_material_prioritizes_a_failed_scenario_phrase(self) -> None:
         chat_id = 32
