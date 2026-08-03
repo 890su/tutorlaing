@@ -539,6 +539,68 @@ class Storage:
                 parameters,
             ).fetchone()
 
+    def recent_ai_analyses(
+        self, chat_id: int, target_language: str, limit: int = 5
+    ) -> list[sqlite3.Row]:
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT * FROM ai_analyses
+                    WHERE chat_id = ? AND operation = 'response_analysis'
+                      AND target_language = ? AND status = 'completed'
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (chat_id, target_language, max(1, min(20, limit))),
+                ).fetchall()
+            )
+
+    def problem_history(
+        self, chat_id: int, target_language: str, limit: int = 12
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return recent low-scoring evidence without teaching-policy decisions."""
+
+        bounded = max(1, min(50, limit))
+        with self._lock:
+            scenario_steps = list(
+                self._connection.execute(
+                    """
+                    SELECT s.scenario_id, r.step_index,
+                           MIN(r.score) AS worst_score,
+                           COUNT(*) AS failures,
+                           MAX(r.created_at) AS last_failed_at
+                    FROM responses r
+                    JOIN sessions s ON s.id = r.session_id
+                    WHERE s.chat_id = ? AND s.target_language = ?
+                      AND r.score < 0.6
+                    GROUP BY s.scenario_id, r.step_index
+                    ORDER BY last_failed_at DESC, failures DESC
+                    LIMIT ?
+                    """,
+                    (chat_id, target_language, bounded),
+                ).fetchall()
+            )
+            drill_items = list(
+                self._connection.execute(
+                    """
+                    SELECT di.item_type, di.skill, di.prompt, di.context,
+                           di.correct_answer, di.user_answer, di.score,
+                           di.answered_at, ds.mode
+                    FROM drill_items di
+                    JOIN drill_sessions ds ON ds.id = di.drill_session_id
+                    WHERE ds.chat_id = ? AND ds.target_language = ?
+                      AND di.status = 'answered' AND COALESCE(di.score, 0) < 0.6
+                    ORDER BY di.answered_at DESC
+                    LIMIT ?
+                    """,
+                    (chat_id, target_language, bounded),
+                ).fetchall()
+            )
+        return {
+            "scenario_steps": [dict(row) for row in scenario_steps],
+            "drill_items": [dict(row) for row in drill_items],
+        }
+
     def claim_update(self, update_id: int) -> bool:
         with self._lock, self._connection:
             cursor = self._connection.execute(
@@ -773,7 +835,9 @@ class Storage:
                       AND reminder_next_at <= ?
                       AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
                       AND toolkit_input_mode IS NULL
-                      AND stage IN ('idle', 'drill', 'waiting')
+                      AND stage IN (
+                          'idle', 'waiting', 'scenario', 'practice', 'review', 'drill'
+                      )
                     ORDER BY reminder_next_at ASC
                     """,
                     (CONSENT_VERSION, current, current),
@@ -801,6 +865,33 @@ class Storage:
                 "UPDATE users SET reminder_next_at = ?, updated_at = ? WHERE chat_id = ?",
                 (next_at.isoformat() if next_at else None, utc_now(), chat_id),
             )
+
+    def retry_failed_reminder(
+        self, chat_id: int, expected_at: datetime, retry_at: datetime
+    ) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE users SET reminder_next_at = ?, updated_at = ?
+                WHERE chat_id = ? AND reminder_next_at = ?
+                """,
+                (
+                    retry_at.isoformat(),
+                    utc_now(),
+                    chat_id,
+                    expected_at.isoformat(),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def record_reminder_delivery(
+        self, chat_id: int, outcome: str, mode: str
+    ) -> None:
+        self.event(
+            chat_id,
+            "reminder_delivery",
+            {"outcome": outcome, "mode": mode},
+        )
 
     def queue_assignment(self, chat_id: int, assignment: str) -> None:
         self.set_user_state(

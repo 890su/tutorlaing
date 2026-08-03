@@ -17,6 +17,11 @@ class FakeReminderBot:
         self.sent.append((chat_id, mode))
 
 
+class FailingReminderBot(FakeReminderBot):
+    def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
+        raise RuntimeError("temporary Telegram failure")
+
+
 class ReminderTests(unittest.TestCase):
     def test_next_slot_respects_warsaw_quiet_hours(self) -> None:
         now = datetime(2026, 8, 1, 20, 0, tzinfo=timezone.utc)  # 22:00 Warsaw
@@ -67,6 +72,47 @@ class ReminderTests(unittest.TestCase):
             scheduler = ReminderScheduler(bot, storage, interval=60)
             self.assertEqual(1, scheduler.tick(now))
             self.assertEqual([(56, "normal")], bot.sent)
+            storage.close()
+
+    def test_scheduler_delivers_while_scenario_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(59, "Learner")
+            storage.accept_consent(59, CONSENT_VERSION)
+            storage.start_session(59, "pharmacy")
+            now = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
+            storage.set_reminder_mode(59, "normal", now - timedelta(minutes=1))
+            bot = FakeReminderBot()
+
+            sent = ReminderScheduler(bot, storage, interval=60).tick(now)
+
+            self.assertEqual(1, sent)
+            self.assertEqual([(59, "normal")], bot.sent)
+            storage.close()
+
+    def test_failed_delivery_is_retried_in_five_minutes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(60, "Learner")
+            storage.accept_consent(60, CONSENT_VERSION)
+            now = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
+            storage.set_reminder_mode(60, "normal", now - timedelta(minutes=1))
+
+            sent = ReminderScheduler(
+                FailingReminderBot(), storage, interval=60
+            ).tick(now)
+
+            self.assertEqual(0, sent)
+            retry_at = datetime.fromisoformat(
+                str(storage.get_user(60)["reminder_next_at"])
+            )
+            self.assertEqual(now + timedelta(minutes=5), retry_at)
+            event = storage._connection.execute(
+                "SELECT properties FROM events WHERE chat_id = ? AND event_name = ? ORDER BY id DESC LIMIT 1",
+                (60, "reminder_delivery"),
+            ).fetchone()
+            self.assertIsNotNone(event)
+            self.assertIn('"outcome": "failed"', event["properties"])
             storage.close()
 
     def test_scheduler_does_not_deliver_during_quiet_hours(self) -> None:

@@ -729,10 +729,14 @@ class TutorlaingBot:
             self._schedule_next_assignment(chat_id)
             return
         current = self.storage.get_user(chat_id)
-        source = self.storage.latest_ai_analysis(
-            chat_id, str(current["target_language"])
+        target_language = str(current["target_language"])
+        sources = self.storage.recent_ai_analyses(
+            chat_id, target_language, limit=5
         )
-        if source is None:
+        problem_history = self.storage.problem_history(
+            chat_id, target_language, limit=16
+        )
+        if not sources and not any(problem_history.values()):
             self.telegram.send_message(
                 chat_id,
                 card(
@@ -748,15 +752,43 @@ class TutorlaingBot:
         if self.ai is None:
             self.telegram.send_message(chat_id, "Закрепление временно недоступно: AI выключен.")
             return
-        analysis = ResponseAnalysis.from_dict(json.loads(source["result_json"]))
+        recent_material = []
+        for source in sources:
+            analysis = ResponseAnalysis.from_dict(json.loads(source["result_json"]))
+            recent_material.append(
+                {
+                    "learner_response": str(source["source_text"]),
+                    "natural_response": analysis.natural_response,
+                    "meaning_gaps": analysis.meaning_gaps,
+                    "corrections": analysis.critical_corrections,
+                    "optional_improvements": analysis.optional_improvements,
+                    "grammar_chunks": [chunk.text for chunk in analysis.grammar_chunks],
+                    "scenario_id": source["scenario_id"],
+                    "step_index": source["step_index"],
+                }
+            )
+
+        scenarios = self._scenarios_for_user(current)
+        recurring_problem_material = []
+        for evidence in problem_history["scenario_steps"]:
+            scenario = scenarios.get(str(evidence["scenario_id"]))
+            step_index = int(evidence["step_index"])
+            if scenario is None or not 0 <= step_index < len(scenario.steps):
+                continue
+            step = scenario.steps[step_index]
+            recurring_problem_material.append(
+                {
+                    "kind": "scenario_step",
+                    "context": step.context_ru,
+                    "target_chunk": step.target_chunk,
+                    "failures": int(evidence["failures"]),
+                    "worst_score": float(evidence["worst_score"]),
+                }
+            )
+        recurring_problem_material.extend(problem_history["drill_items"])
         material = {
-            "learner_response": str(source["source_text"]),
-            "natural_response": analysis.natural_response,
-            "meaning_gaps": analysis.meaning_gaps,
-            "corrections": analysis.critical_corrections,
-            "optional_improvements": analysis.optional_improvements,
-            "grammar_chunks": [chunk.text for chunk in analysis.grammar_chunks],
-            "scenario_id": source["scenario_id"],
+            "recent_learner_material": recent_material,
+            "recurring_problem_material": recurring_problem_material,
         }
         user = current
         if announce:
@@ -785,7 +817,7 @@ class TutorlaingBot:
         self.storage.suspend_activity(chat_id)
         drill_id = self.storage.start_drill(
             chat_id,
-            int(source["id"]),
+            int(sources[0]["id"]) if sources else None,
             pack.title,
             pack.focus,
             [item.to_dict() for item in pack.items],
@@ -984,6 +1016,16 @@ class TutorlaingBot:
             [{"text": self._t(chat_id, "action.reviews"), "callback_data": "reviews:list"}],
             home_row(self._language(chat_id)),
         ]
+        if str(session["mode"]) == "toolkit_cards":
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": self._t(chat_id, "toolkit.more_cards"),
+                        "callback_data": "toolkit:start:cards",
+                    }
+                ],
+            )
         resume = self.menu.resume_action(self.storage.get_user(chat_id))
         if resume:
             keyboard.insert(
@@ -1143,6 +1185,38 @@ class TutorlaingBot:
                 self.advance_drill(chat_id, drill_id, scheduled=True)
             else:
                 self.send_drill_item(chat_id, drill_id, scheduled=True)
+            return
+        stage = str(user["stage"])
+        if stage == "scenario" and user["current_scenario"]:
+            scenario = self._scenarios_for_user(user).get(
+                str(user["current_scenario"])
+            )
+            step_index = int(user["current_step"])
+            if scenario is not None and 0 <= step_index < len(scenario.steps):
+                self.send_scenario_step(
+                    chat_id, scenario, step_index, scheduled=True
+                )
+                return
+        if (
+            stage == "practice"
+            and user["current_scenario"]
+            and user["current_session"]
+        ):
+            scenario = self._scenarios_for_user(user).get(
+                str(user["current_scenario"])
+            )
+            if scenario is not None:
+                self.begin_practice(
+                    chat_id,
+                    scenario,
+                    str(user["current_session"]),
+                    scheduled=True,
+                )
+                return
+        if stage == "review" and user["current_review"]:
+            self.begin_review(
+                chat_id, int(user["current_review"]), scheduled=True
+            )
             return
         due = self.storage.pending_reviews(chat_id)
         if due:
@@ -1334,6 +1408,15 @@ class TutorlaingBot:
             self.show_reminders(chat_id)
         elif data.startswith("reminder:set:"):
             self.set_reminder_mode(chat_id, data.rsplit(":", 1)[1])
+        elif data == "reminder:test":
+            user = self.storage.get_user(chat_id)
+            mode = str(user["reminder_mode"])
+            self.send_scheduled_reminder(
+                chat_id, mode if mode != "off" else "gentle"
+            )
+            self.storage.record_reminder_delivery(
+                chat_id, "manual_test", mode
+            )
         elif data == "reminder:pause":
             current = self.storage.get_user(chat_id)
             until = pause_until_tomorrow(timezone_name=str(current["timezone"]))

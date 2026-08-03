@@ -107,6 +107,14 @@ class ReminderStore(Protocol):
         self, chat_id: int, next_at: datetime | None
     ) -> None: ...
 
+    def retry_failed_reminder(
+        self, chat_id: int, expected_at: datetime, retry_at: datetime
+    ) -> bool: ...
+
+    def record_reminder_delivery(
+        self, chat_id: int, outcome: str, mode: str
+    ) -> None: ...
+
 
 class ReminderDelivery(Protocol):
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None: ...
@@ -136,6 +144,10 @@ class ToolkitStore(Protocol):
     def suspend_activity(self, chat_id: int) -> bool: ...
 
     def active_drill(self, chat_id: int) -> Any | None: ...
+
+    def problem_history(
+        self, chat_id: int, target_language: str, limit: int = 12
+    ) -> dict[str, list[dict[str, Any]]]: ...
 
     def start_drill(
         self,

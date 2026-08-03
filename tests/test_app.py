@@ -140,6 +140,11 @@ class FakeAI:
                     ("Czy może pani powtórzyć?", "Можете повторить?", "Просьба повторить."),
                     ("Piątek mi pasuje.", "Пятница мне подходит", "Подтверждение времени."),
                     ("Kran przecieka.", "Кран протекает", "Описание неисправности."),
+                    ("Potrzebuję pomocy.", "Мне нужна помощь", "Просьба о помощи."),
+                    ("Gdzie jest przystanek?", "Где остановка?", "Вопрос о дороге."),
+                    ("Poproszę rachunek.", "Счёт, пожалуйста", "Просьба в кафе."),
+                    ("Nie rozumiem.", "Я не понимаю", "Сообщение о непонимании."),
+                    ("Ile to kosztuje?", "Сколько это стоит?", "Вопрос о цене."),
                 )
             ),
         )
@@ -321,6 +326,20 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual("aggressive", user["reminder_mode"])
         self.assertIsNotNone(user["reminder_next_at"])
 
+    def test_reminder_settings_include_a_manual_delivery_check(self) -> None:
+        chat_id = 34
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.show_reminders(chat_id)
+
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("reminder:test", callbacks)
+
     def test_scheduled_reminder_advances_answered_drill_one_item(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
         chat_id = 14
@@ -382,6 +401,19 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertEqual(before + 1, len(self.telegram.messages))
         self.assertIn("2/2", self.telegram.messages[-1]["text"])
+        self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+
+    def test_scheduled_reminder_resends_only_the_current_scenario_task(self) -> None:
+        chat_id = 33
+        self.bot.start(chat_id, "Learner")
+        self.bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        before = len(self.telegram.messages)
+
+        self.bot.send_scheduled_reminder(chat_id, "normal")
+
+        self.assertEqual(before + 1, len(self.telegram.messages))
+        self.assertIn("1/2", self.telegram.messages[-1]["text"])
         self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
 
     def test_immediate_learning_flow_edits_one_workspace_message(self) -> None:
@@ -469,7 +501,28 @@ class AppFlowTests(unittest.TestCase):
         session = self.storage.active_drill(chat_id)
         self.assertIsNotNone(session)
         self.assertEqual("toolkit_cards", session["mode"])
-        self.assertEqual(5, session["total_items"])
+        self.assertEqual(10, session["total_items"])
+
+    def test_toolkit_card_material_prioritizes_a_failed_scenario_phrase(self) -> None:
+        chat_id = 32
+        self.storage.ensure_user(chat_id, "Learner")
+        session_id = self.storage.start_session(chat_id, "pharmacy")
+        self.storage.add_response(
+            session_id, 1, "scenario", "Nie wiem", 0.1, (0,)
+        )
+        user = self.storage.get_user(chat_id)
+
+        material = self.bot.toolkit._pack_material(user, "cards", None)
+
+        self.assertEqual(10, len(material["phrases"]))
+        failed = [
+            item
+            for item in material["phrases"]
+            if item.get("scenario_id") == "pharmacy" and item.get("step_index") == 1
+        ]
+        self.assertEqual(1, len(failed))
+        self.assertEqual("problem", failed[0]["priority"])
+        self.assertGreaterEqual(material["selection_policy"]["problem_items"], 1)
 
     def test_phrase_tool_translates_both_directions_with_variants(self) -> None:
         class RecordingAI(FakeAI):
@@ -581,7 +634,7 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual("active", self.storage.session(scenario_session)["status"])
 
         drill_id = str(overlay["current_drill"])
-        for _ in range(5):
+        for _ in range(10):
             session = self.storage.drill_session(drill_id, chat_id)
             item = self.storage.drill_item(drill_id, int(session["current_index"]))
             bot.handle_callback(
@@ -599,6 +652,12 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual(
             "task:resume", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
         )
+        completion_callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("toolkit:start:cards", completion_callbacks)
 
     def test_toolkit_drill_can_temporarily_overlay_another_drill(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())

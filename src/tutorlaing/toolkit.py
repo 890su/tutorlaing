@@ -5,7 +5,7 @@ from dataclasses import replace
 from random import SystemRandom
 from typing import Any
 
-from .ai import AIClient, AIError, DrillPack, PhraseTranslation
+from .ai import AIClient, AIError, DrillPack, FLASHCARD_ITEMS, PhraseTranslation
 from .catalog import ScenarioCatalog
 from .content import Scenario
 from .contracts import (
@@ -40,7 +40,7 @@ def shuffle_flashcard_options(
 
     The AI is allowed to return options in any order and often puts the correct
     one first.  We therefore enforce varied positions in application code.  A
-    five-card pack uses every A-D position at least once.
+    Any pack of at least four cards uses every A-D position at least once.
     """
 
     rng = randomizer or SystemRandom()
@@ -455,17 +455,80 @@ class PracticeToolkit:
         if mode == "topic":
             scenario = scenarios[scenario_id or ""]
             return self._scenario_material(scenario)
+        target_language = str(user["target_language"])
+        history = self.store.problem_history(
+            int(user["chat_id"]), target_language, limit=20
+        )
+        problem_steps = {
+            (str(item["scenario_id"]), int(item["step_index"]))
+            for item in history["scenario_steps"]
+        }
+        phrases = [
+            {
+                "topic": scenario.title_pl,
+                "scenario_id": scenario.id,
+                "step_index": step_index,
+                "practical_meaning_ru": step.context_ru,
+                "target_phrase": step.target_chunk,
+                "priority": (
+                    "problem"
+                    if (scenario.id, step_index) in problem_steps
+                    else "regular"
+                ),
+            }
+            for scenario in scenarios.values()
+            for step_index, step in enumerate(scenario.steps)
+        ]
+
+        failed_cards = []
+        known_phrases = {str(item["target_phrase"]) for item in phrases}
+        for item in history["drill_items"]:
+            if item["item_type"] != "flashcard" or not item["context"]:
+                continue
+            phrase = str(item["context"]).strip()
+            if phrase in known_phrases:
+                for candidate in phrases:
+                    if candidate["target_phrase"] == phrase:
+                        candidate["priority"] = "problem"
+                continue
+            meaning = str(item["correct_answer"]).strip()
+            if phrase and meaning:
+                failed_cards.append(
+                    {
+                        "topic": "learner_history",
+                        "practical_meaning_ru": meaning,
+                        "target_phrase": phrase,
+                        "priority": "problem",
+                    }
+                )
+                known_phrases.add(phrase)
+
+        randomizer = SystemRandom()
+        problem = failed_cards + [
+            item for item in phrases if item["priority"] == "problem"
+        ]
+        regular = [item for item in phrases if item["priority"] != "problem"]
+        randomizer.shuffle(problem)
+        randomizer.shuffle(regular)
+        problem_limit = min(len(problem), 7)
+        selected = problem[:problem_limit]
+        selected.extend(regular[: FLASHCARD_ITEMS - len(selected)])
+        if len(selected) < FLASHCARD_ITEMS:
+            selected.extend(
+                problem[problem_limit : problem_limit + FLASHCARD_ITEMS - len(selected)]
+            )
+        randomizer.shuffle(selected)
         return {
-            "phrases": [
-                {
-                    "topic": scenario.title_pl,
-                    "practical_meaning_ru": step.context_ru,
-                    "target_phrase": step.target_chunk,
-                }
-                for scenario in scenarios.values()
-                for step in scenario.steps
-            ],
+            "phrases": selected[:FLASHCARD_ITEMS],
             "learner_level": str(user["learner_level"]),
+            "selection_policy": {
+                "problem_items": sum(
+                    item["priority"] == "problem" for item in selected
+                ),
+                "random_items": sum(
+                    item["priority"] != "problem" for item in selected
+                ),
+            },
         }
 
     @staticmethod

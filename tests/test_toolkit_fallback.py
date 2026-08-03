@@ -6,20 +6,20 @@ from tutorlaing.toolkit import shuffle_flashcard_options
 
 
 class ToolkitFallbackTests(unittest.TestCase):
-    def test_cards_are_five_four_option_items(self) -> None:
+    def test_cards_are_ten_four_option_items(self) -> None:
         material = {
             "phrases": [
                 {
                     "target_phrase": f"Phrase {index}",
                     "practical_meaning_ru": f"Meaning {index}",
                 }
-                for index in range(6)
+                for index in range(12)
             ]
         }
 
         pack = build_toolkit_fallback("cards", material, "en")
 
-        self.assertEqual(5, len(pack.items))
+        self.assertEqual(10, len(pack.items))
         self.assertTrue(all(item.type == "flashcard" for item in pack.items))
         self.assertTrue(all(len(item.options) == 4 for item in pack.items))
         self.assertTrue(all(item.correct_answer in item.options for item in pack.items))
@@ -31,7 +31,7 @@ class ToolkitFallbackTests(unittest.TestCase):
                     "target_phrase": f"Phrase {index}",
                     "practical_meaning_ru": f"Meaning {index}",
                 }
-                for index in range(6)
+                for index in range(12)
             ]
         }
 

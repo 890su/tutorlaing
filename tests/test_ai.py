@@ -128,13 +128,18 @@ class GeminiClientTests(unittest.TestCase):
         self.assertEqual("formal", result.alternatives[0].register)
         self.assertIn("незнакомого мужчины", result.usage_note)
 
-    def test_flashcard_pack_enforces_five_four_option_cards(self) -> None:
+    def test_flashcard_pack_enforces_ten_four_option_cards(self) -> None:
         phrases = (
             ("Dzień dobry", "Добрый день"),
             ("Od dwóch dni", "Уже два дня"),
             ("Proszę powtórzyć", "Повторите, пожалуйста"),
             ("Piątek mi pasuje", "Пятница мне подходит"),
             ("Kran przecieka", "Кран протекает"),
+            ("Potrzebuję pomocy", "Мне нужна помощь"),
+            ("Gdzie jest przystanek?", "Где остановка?"),
+            ("Poproszę rachunek", "Счёт, пожалуйста"),
+            ("Nie rozumiem", "Я не понимаю"),
+            ("Ile to kosztuje?", "Сколько это стоит?"),
         )
         items = [
             {
@@ -176,7 +181,7 @@ class GeminiClientTests(unittest.TestCase):
 
         pack = client.generate_toolkit_pack("cards", {}, "ru", "pl", "ru")
 
-        self.assertEqual(5, len(pack.items))
+        self.assertEqual(10, len(pack.items))
         self.assertTrue(all(item.type == "flashcard" for item in pack.items))
         self.assertTrue(all(len(item.options) == 4 for item in pack.items))
 

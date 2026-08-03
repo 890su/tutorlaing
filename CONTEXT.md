@@ -2,7 +2,7 @@
 project_id: tutorlaing
 project_type: telegram-service
 status: alpha
-updated: 2026-08-02
+updated: 2026-08-03
 ---
 
 # Tutorlaing context
@@ -25,12 +25,13 @@ Telegram-first адаптивный тренер практического яз
   невалидном ответе обоих AI routes.
 - Языковая модель профиля разделяет instruction, translation и target language;
   explanation/translation поддерживают `ru/uk/en/pl`, target — `pl/en`.
-- AI формирует 5-заданийные контекстные drill packs минимум 3 типов; выбор
+- AI формирует 8-заданийные контекстные drill packs минимум 4 типов; выбор
   проверяется локально, свободная формулировка — AI с допустимыми вариантами.
 - Напоминания opt-in: off/gentle/normal/intensive/aggressive, quiet hours
   `Europe/Warsaw`, пауза на день и защита от повторной доставки. Scheduler
-  видит состояния `idle`, `waiting` и `drill`: один tick доставляет ровно одно
-  queued assignment или продолжает один drill item.
+  видит состояния `idle`, `waiting`, `scenario`, `practice`, `review` и `drill`:
+  один tick доставляет ровно одно задание. Ошибка доставки планирует retry через
+  пять минут и записывается в audit events; есть ручная проверка из настроек.
 - Основные Telegram-экраны используют стабильный маршрут
   `СИТУАЦИЯ → ФРАЗА → ЗАКРЕПЛЕНИЕ → ПОВТОР`.
 - Home работает как компактный dashboard: один приоритетный action выбирается
@@ -45,12 +46,14 @@ Telegram-first адаптивный тренер практического яз
   translation language только для target-language материала минимум на два
   уровня сложнее. Экран прогресса показывает закреплённое, фокус и три
   ближайшие ситуации; это не официальный CEFR.
-- `/tools` открывает интерактивную мастерскую: карточки по курируемым chunks
+- `/tools` открывает интерактивную мастерскую: наборы по 10 карточек по курируемым chunks
   с четырьмя вариантами и `Не помню`, перевод собственной фразы
   translation↔target с natural/formal/informal вариантами и тематический
   drill pack без обязательной предыдущей сессии. Все packs используют общую
   drill state machine и reminder delivery. Карточки и topic packs имеют
-  локальный curated fallback и доступны без внешнего AI.
+  локальный curated fallback и доступны без внешнего AI. Карточки в первую
+  очередь берут проблемные фразы из истории scenario/drill, остальные
+  выбирают случайно; правильные варианты программно перемешиваются.
 - Phrase translation является stateless overlay и не заменяет `stage`.
   Карточки, тематический pack и `Мои ошибки` сохраняют основную активность в
   `suspended_activity_json`, работают как временный drill и атомарно
@@ -72,8 +75,8 @@ Telegram-first адаптивный тренер практического яз
   Telegram update dispatch. Composition/state orchestration остаётся в app;
   SQLite скрыт за узкими Protocol-портами. Архитектура описана в
   docs/ARCHITECTURE.md и защищена regression test.
-- OpenAI smoke: русско-польский перевод с alternatives, 5 карточек по strict
-  schema и анализ польского ответа успешны. Локально проходят 74 теста.
+- OpenAI smoke: русско-польский перевод с alternatives и анализ польского ответа
+  успешны. Локально проходят 80 тестов, включая history-aware cards и reminder retry.
 - На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
   операторской машины нестабилен.
 

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from random import SystemRandom
 from typing import Any
 
-from .ai import AIError, DrillItem, DrillPack
+from .ai import AIError, DrillItem, DrillPack, FLASHCARD_ITEMS
 
 
 TEXT = {
@@ -79,7 +80,7 @@ def build_toolkit_fallback(
 
 def _build_cards(material: dict[str, Any], language: str) -> DrillPack:
     copy = _copy(language)
-    phrases: list[tuple[str, str]] = []
+    phrases: list[tuple[str, str, bool]] = []
     seen: set[tuple[str, str]] = set()
     for raw in material.get("phrases", []):
         phrase = str(raw.get("target_phrase", "")).strip()
@@ -87,14 +88,23 @@ def _build_cards(material: dict[str, Any], language: str) -> DrillPack:
         pair = (phrase, meaning)
         if phrase and meaning and pair not in seen:
             seen.add(pair)
-            phrases.append(pair)
-    meanings = _unique([meaning for _, meaning in phrases])
-    if len(phrases) < 5 or len(meanings) < 4:
+            phrases.append((phrase, meaning, raw.get("priority") == "problem"))
+    meanings = _unique([meaning for _, meaning, _ in phrases])
+    if len(phrases) < FLASHCARD_ITEMS or len(meanings) < 4:
         raise AIError("Not enough curated material for fallback flashcards")
 
+    randomizer = SystemRandom()
+    problem = [item for item in phrases if item[2]]
+    regular = [item for item in phrases if not item[2]]
+    randomizer.shuffle(problem)
+    randomizer.shuffle(regular)
+    selected = (problem + regular)[:FLASHCARD_ITEMS]
+    randomizer.shuffle(selected)
+
     items: list[DrillItem] = []
-    for index, (phrase, meaning) in enumerate(phrases[:5]):
-        distractors = [value for value in meanings if value != meaning][:3]
+    for index, (phrase, meaning, _) in enumerate(selected):
+        distractor_pool = [value for value in meanings if value != meaning]
+        distractors = randomizer.sample(distractor_pool, 3)
         options = [meaning, *distractors]
         shift = index % len(options)
         options = options[shift:] + options[:shift]

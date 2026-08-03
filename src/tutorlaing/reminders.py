@@ -81,6 +81,10 @@ class ReminderScheduler:
         )
 
     def start(self) -> None:
+        LOGGER.info(
+            "Reminder scheduler started",
+            extra={"interval_seconds": self.interval},
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -106,14 +110,33 @@ class ReminderScheduler:
                 continue
             try:
                 self.bot.send_scheduled_reminder(chat_id, mode)
-                sent += 1
             except Exception:
+                retry_at = current + timedelta(minutes=5)
                 LOGGER.exception("Scheduled reminder failed for a user")
+                try:
+                    self.storage.retry_failed_reminder(chat_id, next_at, retry_at)
+                    self.storage.record_reminder_delivery(chat_id, "failed", mode)
+                except Exception:
+                    LOGGER.exception("Could not persist reminder retry state")
+                continue
+            sent += 1
+            LOGGER.info(
+                "Scheduled reminder delivered",
+                extra={"chat_id": chat_id, "mode": mode},
+            )
+            try:
+                self.storage.record_reminder_delivery(chat_id, "sent", mode)
+            except Exception:
+                # Delivery already happened; never retry merely because audit
+                # persistence failed, otherwise the learner receives a duplicate.
+                LOGGER.exception("Could not persist reminder delivery audit")
         return sent
 
     def _run(self) -> None:
-        while not self._stopped.wait(self.interval):
+        while not self._stopped.is_set():
             try:
                 self.tick()
             except Exception:
                 LOGGER.exception("Reminder scheduler tick failed")
+            if self._stopped.wait(self.interval):
+                break

@@ -187,6 +187,38 @@ class StorageTests(unittest.TestCase):
         self.storage.set_user_state(chat_id, toolkit_input_mode=None)
         self.assertEqual(chat_id, self.storage.due_reminder_users(now)[0]["chat_id"])
 
+    def test_problem_history_combines_scenario_and_failed_card_evidence(self) -> None:
+        chat_id = 90
+        self.storage.ensure_user(chat_id, "Learner")
+        session_id = self.storage.start_session(chat_id, "pharmacy")
+        self.storage.add_response(
+            session_id, 1, "scenario", "wrong form", 0.25, (0,)
+        )
+        item = {
+            "type": "flashcard",
+            "skill": "meaning",
+            "prompt": "Meaning?",
+            "context": "Od dwóch dni.",
+            "options": ["two days", "tomorrow", "yesterday", "never"],
+            "correct_answer": "two days",
+            "accepted_answers": ["two days"],
+            "explanation": "Duration",
+            "hint": "od",
+            "difficulty": 1,
+        }
+        drill_id = self.storage.start_drill(
+            chat_id, None, "Cards", "History", [item], mode="toolkit_cards"
+        )
+        row = self.storage.drill_item(drill_id, 0)
+        self.storage.answer_drill_item(int(row["id"]), "never", 0.0)
+
+        history = self.storage.problem_history(chat_id, "pl")
+
+        self.assertEqual("pharmacy", history["scenario_steps"][0]["scenario_id"])
+        self.assertEqual(1, history["scenario_steps"][0]["step_index"])
+        self.assertEqual("flashcard", history["drill_items"][0]["item_type"])
+        self.assertEqual("Od dwóch dni.", history["drill_items"][0]["context"])
+
 
 if __name__ == "__main__":
     unittest.main()

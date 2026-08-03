@@ -138,6 +138,10 @@ DRILL_TYPES = {
     "translation_choice",
 }
 
+ADAPTIVE_DRILL_ITEMS = 8
+FLASHCARD_ITEMS = 10
+TOPIC_DRILL_ITEMS = 5
+
 
 @dataclass(frozen=True)
 class DrillItem:
@@ -193,22 +197,39 @@ class DrillPack:
 
     @classmethod
     def from_dict(
-        cls, data: dict[str, Any], *, flashcard_mode: bool = False
+        cls,
+        data: dict[str, Any],
+        *,
+        expected_items: int = 5,
+        flashcard_mode: bool = False,
     ) -> "DrillPack":
         raw_items = data.get("items", [])
         if not isinstance(raw_items, list):
             raise AIError("Drill items must be a list")
-        items = tuple(DrillItem.from_dict(item) for item in raw_items[:5])
-        if len(items) != 5:
-            raise AIError("Drill pack must contain exactly five items")
-        if not flashcard_mode and len({item.type for item in items}) < 3:
+        items = tuple(
+            DrillItem.from_dict(item) for item in raw_items[:expected_items]
+        )
+        if len(items) != expected_items:
+            raise AIError(
+                f"Drill pack must contain exactly {expected_items} items"
+            )
+        minimum_types = 4 if expected_items >= ADAPTIVE_DRILL_ITEMS else 3
+        minimum_recall = 3 if expected_items >= ADAPTIVE_DRILL_ITEMS else 2
+        if not flashcard_mode and len({item.type for item in items}) < minimum_types:
             raise AIError("Drill pack lacks exercise variety")
-        if not flashcard_mode and sum(not item.is_multiple_choice for item in items) < 2:
-            raise AIError("Drill pack needs at least two active-recall items")
+        if (
+            not flashcard_mode
+            and sum(not item.is_multiple_choice for item in items) < minimum_recall
+        ):
+            raise AIError(
+                f"Drill pack needs at least {minimum_recall} active-recall items"
+            )
         if flashcard_mode and any(
             item.type != "flashcard" or len(item.options) != 4 for item in items
         ):
-            raise AIError("Flashcard pack requires five four-option cards")
+            raise AIError(
+                f"Flashcard pack requires {expected_items} four-option cards"
+            )
         return cls(
             title=_text(data.get("title"), 200),
             focus=_text(data.get("focus"), 500),
@@ -432,16 +453,25 @@ DRILL_ITEM_SCHEMA: dict[str, Any] = {
     ],
 }
 
-DRILL_PACK_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "title": {"type": "string"},
-        "focus": {"type": "string"},
-        "items": {"type": "array", "minItems": 5, "maxItems": 5, "items": DRILL_ITEM_SCHEMA},
-    },
-    "required": ["title", "focus", "items"],
-}
+def drill_pack_schema(item_count: int) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "title": {"type": "string"},
+            "focus": {"type": "string"},
+            "items": {
+                "type": "array",
+                "minItems": item_count,
+                "maxItems": item_count,
+                "items": DRILL_ITEM_SCHEMA,
+            },
+        },
+        "required": ["title", "focus", "items"],
+    }
+
+
+DRILL_PACK_SCHEMA: dict[str, Any] = drill_pack_schema(TOPIC_DRILL_ITEMS)
 
 DRILL_EVALUATION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -699,8 +729,9 @@ class GeminiClient:
                     "target_language": learned_language,
                     "learner_material": material,
                     "requirements": [
-                        "Create exactly five exercises using at least three different types.",
-                        "Include at least two items without options for active recall.",
+                        f"Create exactly {ADAPTIVE_DRILL_ITEMS} exercises using at least four different types.",
+                        "Include at least three items without options for active recall.",
+                        "Prioritize recurring_problem_material, then vary contexts and forms.",
                         "Cover gender, number, case, ending or word form only when relevant to the material.",
                         "At least one item must transfer the phrase to a new realistic context.",
                         "For items with options, correct_answer must exactly equal one option.",
@@ -711,9 +742,9 @@ class GeminiClient:
                 },
                 ensure_ascii=False,
             ),
-            DRILL_PACK_SCHEMA,
+            drill_pack_schema(ADAPTIVE_DRILL_ITEMS),
         )
-        return DrillPack.from_dict(data)
+        return DrillPack.from_dict(data, expected_items=ADAPTIVE_DRILL_ITEMS)
 
     def generate_toolkit_pack(
         self,
@@ -732,17 +763,20 @@ class GeminiClient:
         )
         requirements = (
             [
-                "Create exactly five flashcard items, all with type flashcard.",
+                f"Create exactly {FLASHCARD_ITEMS} flashcard items, all with type flashcard.",
                 "Each context is one curated phrase in target_language.",
                 "Ask for its practical meaning and provide exactly four concise options in support_language.",
                 "One option is correct; three are plausible but meaningfully wrong distractors.",
                 "correct_answer must exactly equal one option.",
                 "The explanation briefly connects the phrase to its real-life use in explanation_language.",
+                "Use every supplied priority=problem phrase before regular phrases when possible.",
+                "Vary prompts between whole-phrase meaning, a useful word or chunk meaning, and choosing the phrase that fits a short real-life situation.",
+                "Keep context equal to the supplied target-language phrase and keep correct_answer in support_language so failed cards can be safely scheduled again.",
                 "Do not repeat a phrase and do not test isolated grammatical terminology.",
             ]
             if mode == "cards"
             else [
-                "Create exactly five exercises about only the supplied scenario.",
+                f"Create exactly {TOPIC_DRILL_ITEMS} exercises about only the supplied scenario.",
                 "Use at least three different exercise types and at least two active-recall items without options.",
                 "Include one translation_choice, one form-in-context task, and one realistic reply.",
                 "For an item with options, correct_answer must exactly equal one option.",
@@ -765,9 +799,17 @@ class GeminiClient:
                 },
                 ensure_ascii=False,
             ),
-            DRILL_PACK_SCHEMA,
+            drill_pack_schema(
+                FLASHCARD_ITEMS if mode == "cards" else TOPIC_DRILL_ITEMS
+            ),
         )
-        return DrillPack.from_dict(data, flashcard_mode=mode == "cards")
+        return DrillPack.from_dict(
+            data,
+            expected_items=(
+                FLASHCARD_ITEMS if mode == "cards" else TOPIC_DRILL_ITEMS
+            ),
+            flashcard_mode=mode == "cards",
+        )
 
     def evaluate_drill_answer(
         self,

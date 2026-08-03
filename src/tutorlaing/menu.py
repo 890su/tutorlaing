@@ -344,6 +344,14 @@ class LearnerMenu:
                     }
                 ]
             )
+        keyboard.append(
+            [
+                {
+                    "text": tr(language, "reminders.test"),
+                    "callback_data": "reminder:test",
+                }
+            ]
+        )
         if mode != "off":
             keyboard.append(
                 [{"text": tr(language, "action.pause"), "callback_data": "reminder:pause"}]
