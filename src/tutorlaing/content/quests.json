@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "quests": [
+    {
+      "id": "urzad_documents",
+      "title_ru": "Недостающий документ в urząd",
+      "title_target": "Brakujący dokument w urzędzie",
+      "category": "administration",
+      "goal_ru": "Узнать, какого документа не хватает, срок и способ подачи.",
+      "briefing_ru": "Вы пришли подать заявление. Сотрудник сообщает, что комплект неполный. Нужно спокойно выяснить детали и договориться о следующем шаге.",
+      "start_node": "u1",
+      "nodes": [
+        {
+          "id": "u1", "mode": "choice", "speaker": "Urzędniczka",
+          "message": "Dzień dobry. W czym mogę pomóc?", "task_ru": "Начните разговор и назовите цель визита.", "hint_ru": "В официальной ситуации начните с Dzień dobry и Poproszę…",
+          "choices": [
+            {"id": "a", "text": "Dzień dobry. Chciałbym złożyć wniosek o zameldowanie.", "next_node": "u2", "outcome": "good", "feedback_ru": "Цель сформулирована ясно и в подходящем регистре.", "points": 1, "effects": {"register": "formal"}},
+            {"id": "b", "text": "Ja tu z wnioskiem. Proszę szybko.", "next_node": "u1_repair", "outcome": "problem", "feedback_ru": "Смысл понятен, но требование звучит резко для первого обращения.", "points": 0.2, "effects": {"register": "too_direct"}},
+            {"id": "c", "text": "Nie wiem. Wszystko jest w papierach.", "next_node": "u1_repair", "outcome": "neutral", "feedback_ru": "Сотруднику всё ещё неизвестно, какое действие вам нужно.", "points": 0.4, "effects": {"goal_unclear": "yes"}}
+          ]
+        },
+        {
+          "id": "u1_repair", "mode": "choice", "speaker": "Urzędniczka",
+          "message": "Proszę powiedzieć konkretnie, jaką sprawę chce pan załatwić.", "task_ru": "Исправьте начало разговора.", "hint_ru": "Назовите действие: złożyć wniosek.",
+          "choices": [
+            {"id": "a", "text": "Chciałbym złożyć wniosek o zameldowanie.", "next_node": "u2", "outcome": "good", "feedback_ru": "Теперь сотрудник понимает цель визита.", "points": 0.8, "effects": {"goal_repaired": "yes"}},
+            {"id": "b", "text": "Przecież wszystko tu jest.", "next_node": "u_end_fail", "outcome": "problem", "feedback_ru": "Разговор остановился: цель так и не была сформулирована.", "points": 0, "effects": {"conversation_blocked": "yes"}}
+          ]
+        },
+        {
+          "id": "u2", "mode": "choice", "speaker": "Urzędniczka",
+          "message": "Brakuje potwierdzenia tytułu prawnego do lokalu.", "task_ru": "Выясните, что именно нужно принести.", "hint_ru": "Спросите: Jaki dokładnie dokument…?",
+          "choices": [
+            {"id": "a", "text": "Jaki dokładnie dokument powinienem przynieść?", "next_node": "u3", "outcome": "good", "feedback_ru": "Вы запросили конкретную и полезную информацию.", "points": 1, "effects": {"document": "umowa najmu lub zgoda właściciela"}},
+            {"id": "b", "text": "Ale mam umowę w telefonie.", "next_node": "u3", "outcome": "neutral", "feedback_ru": "Это полезная деталь, но ещё нужно уточнить допустимую форму документа.", "points": 0.5, "effects": {"document_format_unclear": "yes"}},
+            {"id": "c", "text": "To niemożliwe, proszę przyjąć wniosek.", "next_node": "u3_help", "outcome": "problem", "feedback_ru": "Требование не помогло выяснить, как исправить комплект.", "points": 0.1, "effects": {"conflict": "yes"}}
+          ]
+        },
+        {
+          "id": "u3", "mode": "free", "speaker": "Urzędniczka",
+          "message": "Może pan przynieść umowę najmu albo zgodę właściciela.", "task_ru": "Своими словами спросите, до какого срока можно донести документ.", "hint_ru": "Используйте do kiedy или termin.",
+          "expected_groups": [["do kiedy", "jaki jest termin", "do jakiego dnia"], ["dostarczyć", "przynieść", "donieść"]],
+          "reference_answer": "Do kiedy mogę dostarczyć ten dokument?", "success_next": "u4", "retry_next": "u3_help",
+          "success_feedback_ru": "Вы уточнили срок и сохранили контроль над следующим шагом.", "retry_feedback_ru": "В ответе не прозвучал вопрос о сроке. Сотрудник предлагает выбрать готовую формулировку."
+        },
+        {
+          "id": "u3_help", "mode": "choice", "speaker": "Urzędniczka",
+          "message": "Czy chce pan zapytać o dokument czy o termin?", "task_ru": "Выберите точный вопрос о сроке.", "hint_ru": "Нужен вопрос с do kiedy.",
+          "choices": [
+            {"id": "a", "text": "Do kiedy mogę dostarczyć ten dokument?", "next_node": "u4", "outcome": "good", "feedback_ru": "Теперь вопрос однозначен.", "points": 0.7, "effects": {"deadline_asked": "yes"}},
+            {"id": "b", "text": "Czy dokument jest ważny?", "next_node": "u_end_partial", "outcome": "neutral", "feedback_ru": "Вы уточнили не тот параметр и ушли без подтверждённого срока.", "points": 0.3, "effects": {"deadline_missing": "yes"}}
+          ]
+        },
+        {
+          "id": "u4", "mode": "choice", "speaker": "Urzędniczka",
+          "message": "Ma pan siedem dni. Dokument można dosłać przez ePUAP albo przynieść osobiście.", "task_ru": "Выберите способ и подтвердите, что вы поняли срок.", "hint_ru": "Повторите ключевую информацию своими словами.",
+          "choices": [
+            {"id": "a", "text": "Rozumiem: mam siedem dni i mogę wysłać dokument przez ePUAP.", "next_node": "u5", "outcome": "good", "feedback_ru": "Вы подтвердили и срок, и способ подачи.", "points": 1, "effects": {"deadline": "7 dni", "channel": "ePUAP"}},
+            {"id": "b", "text": "Dobrze, przyniosę później.", "next_node": "u5", "outcome": "neutral", "feedback_ru": "Намерение понятно, но срок и способ остались неподтверждёнными.", "points": 0.5, "effects": {"channel": "osobiście"}},
+            {"id": "c", "text": "Nie korzystam z ePUAP, więc nic nie mogę zrobić.", "next_node": "u_end_partial", "outcome": "problem", "feedback_ru": "Был доступен личный способ подачи, но он не был использован.", "points": 0.1, "effects": {"channel_rejected": "yes"}}
+          ]
+        },
+        {
+          "id": "u5", "mode": "free", "speaker": "Urzędniczka",
+          "message": "Czy ma pan jeszcze jakieś pytania?", "task_ru": "Завершите разговор: коротко подтвердите свой следующий шаг и поблагодарите.", "hint_ru": "Скажите, что отправите или принесёте документ, затем podziękować.",
+          "expected_groups": [["wyślę", "przyniosę", "dostarczę"], ["dziękuję", "dziękuje"]],
+          "reference_answer": "Wyślę dokument przez ePUAP w ciągu siedmiu dni. Dziękuję za pomoc.", "success_next": "u_end_success", "retry_next": "u_end_partial",
+          "success_feedback_ru": "Разговор завершён с ясным планом действия.", "retry_feedback_ru": "Вы завершили разговор, но следующий шаг остался недостаточно явным."
+        },
+        {"id": "u_end_success", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "success", "summary_ru": "Вы выяснили документ, срок и канал подачи и можете продолжить дело без нового визита."},
+        {"id": "u_end_partial", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "partial", "summary_ru": "Заявление не потеряно, но одна важная деталь — срок или способ подачи — осталась неподтверждённой."},
+        {"id": "u_end_fail", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "failure", "summary_ru": "Разговор завершился до выяснения требований. Полезно повторить нейтральное начало официального обращения."}
+      ]
+    },
+    {
+      "id": "clinic_visit",
+      "title_ru": "Запись к врачу и описание симптомов",
+      "title_target": "Rejestracja i opis objawów",
+      "category": "health",
+      "goal_ru": "Записаться на приём, понятно описать проблему и подтвердить время.",
+      "briefing_ru": "Вы звоните в регистратуру. Задача — сообщить цель, ответить на уточнение и получить подходящее время. Квест тренирует коммуникацию, а не медицинскую диагностику.",
+      "start_node": "d1",
+      "nodes": [
+        {"id": "d1", "mode": "choice", "speaker": "Rejestratorka", "message": "Przychodnia, słucham.", "task_ru": "Поздоровайтесь и скажите, что хотите записаться к врачу.", "hint_ru": "Используйте chciałbym umówić wizytę.", "choices": [
+          {"id": "a", "text": "Dzień dobry. Chciałbym umówić wizytę u lekarza rodzinnego.", "next_node": "d2", "outcome": "good", "feedback_ru": "Цель звонка понятна сразу.", "points": 1, "effects": {"doctor": "rodzinny"}},
+          {"id": "b", "text": "Potrzebuję lekarza dzisiaj.", "next_node": "d2", "outcome": "neutral", "feedback_ru": "Срочность понятна, но тип визита ещё нужно уточнить.", "points": 0.5, "effects": {"urgency": "today"}},
+          {"id": "c", "text": "Źle się czuję.", "next_node": "d1_repair", "outcome": "problem", "feedback_ru": "Регистратура ещё не знает, какое действие вы ожидаете.", "points": 0.2, "effects": {"goal_unclear": "yes"}}
+        ]},
+        {"id": "d1_repair", "mode": "choice", "speaker": "Rejestratorka", "message": "Czy chce pan umówić wizytę, czy porozmawiać z pielęgniarką?", "task_ru": "Уточните, что вам нужна запись.", "hint_ru": "Повторите umówić wizytę.", "choices": [
+          {"id": "a", "text": "Chciałbym umówić wizytę.", "next_node": "d2", "outcome": "good", "feedback_ru": "Теперь цель звонка однозначна.", "points": 0.8, "effects": {"goal_repaired": "yes"}},
+          {"id": "b", "text": "Nie wiem, proszę zdecydować.", "next_node": "d_end_fail", "outcome": "problem", "feedback_ru": "Запись не была запрошена.", "points": 0, "effects": {"booking_failed": "yes"}}
+        ]},
+        {"id": "d2", "mode": "free", "speaker": "Rejestratorka", "message": "Co panu dolega i od kiedy?", "task_ru": "Кратко назовите симптом и длительность.", "hint_ru": "Например: Boli mnie… od dwóch dni.", "expected_groups": [["boli", "mam", "kaszel", "gorączkę", "goraczke"], ["od", "dni", "wczoraj", "tygodnia"]], "reference_answer": "Boli mnie gardło od dwóch dni.", "success_next": "d3", "retry_next": "d2_help", "success_feedback_ru": "Вы дали регистратуре два ключевых факта: проблему и длительность.", "retry_feedback_ru": "Не хватило симптома или времени его появления."},
+        {"id": "d2_help", "mode": "choice", "speaker": "Rejestratorka", "message": "Proszę powiedzieć: co boli i od ilu dni?", "task_ru": "Выберите полный и конкретный ответ.", "hint_ru": "Нужны симптом и длительность.", "choices": [
+          {"id": "a", "text": "Boli mnie gardło od dwóch dni.", "next_node": "d3", "outcome": "good", "feedback_ru": "Ответ содержит оба необходимых элемента.", "points": 0.7, "effects": {"symptom": "gardło", "duration": "2 dni"}},
+          {"id": "b", "text": "Od dawna źle się czuję.", "next_node": "d_end_partial", "outcome": "neutral", "feedback_ru": "Описание осталось слишком общим для уверенной записи.", "points": 0.3, "effects": {"symptom_unclear": "yes"}}
+        ]},
+        {"id": "d3", "mode": "choice", "speaker": "Rejestratorka", "message": "Najbliższy termin jest jutro o 8:20 albo w czwartek o 16:40.", "task_ru": "Вы не можете утром. Выберите естественную реакцию.", "hint_ru": "Откажитесь от первого времени и подтвердите второе.", "choices": [
+          {"id": "a", "text": "Rano nie mogę. Czy mogę przyjść w czwartek o 16:40?", "next_node": "d4", "outcome": "good", "feedback_ru": "Вы объяснили ограничение и предложили конкретный вариант.", "points": 1, "effects": {"appointment": "czwartek 16:40"}},
+          {"id": "b", "text": "Czwartek.", "next_node": "d4", "outcome": "neutral", "feedback_ru": "Выбор понятен, но время лучше подтвердить полностью.", "points": 0.6, "effects": {"appointment": "czwartek"}},
+          {"id": "c", "text": "Żaden termin mi nie pasuje.", "next_node": "d_end_partial", "outcome": "problem", "feedback_ru": "Подходящий вечерний вариант не был использован.", "points": 0.1, "effects": {"appointment": "none"}}
+        ]},
+        {"id": "d4", "mode": "free", "speaker": "Rejestratorka", "message": "Proszę potwierdzić: czwartek, godzina 16:40, lekarz rodzinny.", "task_ru": "Подтвердите дату и время полным коротким ответом.", "hint_ru": "Используйте potwierdzam или pasuje mi.", "expected_groups": [["czwartek"], ["16 40", "16:40", "szesnasta czterdzieści"], ["potwierdzam", "pasuje", "zgadza się", "zgadza sie"]], "reference_answer": "Potwierdzam wizytę w czwartek o 16:40.", "success_next": "d_end_success", "retry_next": "d_end_partial", "success_feedback_ru": "Дата и время подтверждены без двусмысленности.", "retry_feedback_ru": "В подтверждении потерялась дата, время или само согласие."},
+        {"id": "d_end_success", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "success", "summary_ru": "Визит записан: вы описали проблему, выбрали время и подтвердили запись."},
+        {"id": "d_end_partial", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "partial", "summary_ru": "Контакт состоялся, но симптом или детали записи остались недостаточно точными."},
+        {"id": "d_end_fail", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "failure", "summary_ru": "Запись не создана, потому что цель звонка не была подтверждена."}
+      ]
+    },
+    {
+      "id": "landlord_repair",
+      "title_ru": "Ремонт в съёмной квартире",
+      "title_target": "Naprawa w wynajmowanym mieszkaniu",
+      "category": "housing",
+      "goal_ru": "Сообщить о поломке, согласовать доступ и получить конкретный срок ремонта.",
+      "briefing_ru": "На кухне течёт кран. Вы пишете арендодателю и должны договориться о визите мастера, не оставив вопрос без срока.",
+      "start_node": "l1",
+      "nodes": [
+        {"id": "l1", "mode": "free", "speaker": "Właściciel", "message": "Dzień dobry, co się stało?", "task_ru": "Опишите проблему и скажите, почему её нужно решить.", "hint_ru": "Назовите kran и cieknie/przecieka.", "expected_groups": [["kran"], ["cieknie", "przecieka", "kapie"]], "reference_answer": "Kran w kuchni przecieka i woda kapie na szafkę.", "success_next": "l2", "retry_next": "l1_help", "success_feedback_ru": "Поломка описана конкретно.", "retry_feedback_ru": "Из сообщения непонятно, что именно сломалось."},
+        {"id": "l1_help", "mode": "choice", "speaker": "Właściciel", "message": "Czy problem dotyczy kranu, zlewu czy pralki?", "task_ru": "Выберите конкретное описание.", "hint_ru": "Проблема — кран на кухне.", "choices": [
+          {"id": "a", "text": "Kran w kuchni przecieka.", "next_node": "l2", "outcome": "good", "feedback_ru": "Теперь объект и проблема ясны.", "points": 0.7, "effects": {"problem": "kran przecieka"}},
+          {"id": "b", "text": "Coś jest nie tak w kuchni.", "next_node": "l_end_fail", "outcome": "problem", "feedback_ru": "Описание осталось слишком общим для вызова мастера.", "points": 0.1, "effects": {"problem_unclear": "yes"}}
+        ]},
+        {"id": "l2", "mode": "choice", "speaker": "Właściciel", "message": "Mogę wysłać hydraulika jutro między 9:00 a 12:00. Czy ktoś będzie w mieszkaniu?", "task_ru": "Вас не будет дома. Предложите безопасный альтернативный доступ или другое время.", "hint_ru": "Не соглашайтесь автоматически; предложите konkretny termin.", "choices": [
+          {"id": "a", "text": "Nie będzie mnie wtedy. Mogę być po 17:00. Czy hydraulik może przyjść wieczorem?", "next_node": "l3", "outcome": "good", "feedback_ru": "Вы обозначили ограничение и предложили конкретное время.", "points": 1, "effects": {"availability": "po 17"}},
+          {"id": "b", "text": "Proszę wejść bez mnie.", "next_node": "l2_repair", "outcome": "problem", "feedback_ru": "Доступ без уточнения условий создаёт ненужную неопределённость.", "points": 0.2, "effects": {"access_unclear": "yes"}},
+          {"id": "c", "text": "Nie, jutro nie.", "next_node": "l2_repair", "outcome": "neutral", "feedback_ru": "Отказ понятен, но нового варианта пока нет.", "points": 0.4, "effects": {"alternative_missing": "yes"}}
+        ]},
+        {"id": "l2_repair", "mode": "choice", "speaker": "Właściciel", "message": "W takim razie proszę zaproponować inny termin.", "task_ru": "Назовите конкретное доступное окно.", "hint_ru": "Например: jutro po 17:00.", "choices": [
+          {"id": "a", "text": "Jutro mogę być w mieszkaniu po 17:00.", "next_node": "l3", "outcome": "good", "feedback_ru": "Теперь можно согласовать визит мастера.", "points": 0.8, "effects": {"availability": "jutro po 17"}},
+          {"id": "b", "text": "Kiedyś wieczorem.", "next_node": "l_end_partial", "outcome": "neutral", "feedback_ru": "Срок остался неопределённым.", "points": 0.3, "effects": {"deadline_unclear": "yes"}}
+        ]},
+        {"id": "l3", "mode": "choice", "speaker": "Właściciel", "message": "Hydraulik może przyjść jutro o 18:00. Proszę wysłać zdjęcie kranu.", "task_ru": "Подтвердите время и скажите, что отправите фото.", "hint_ru": "Подтвердите оба действия.", "choices": [
+          {"id": "a", "text": "Jutro o 18:00 mi pasuje. Zaraz wyślę zdjęcie kranu.", "next_node": "l4", "outcome": "good", "feedback_ru": "Время и подготовительное действие подтверждены.", "points": 1, "effects": {"visit": "jutro 18", "photo": "promised"}},
+          {"id": "b", "text": "Dobrze.", "next_node": "l4", "outcome": "neutral", "feedback_ru": "Согласие понятно, но детали лучше повторить.", "points": 0.5, "effects": {"visit": "assumed"}},
+          {"id": "c", "text": "Po co zdjęcie?", "next_node": "l_end_partial", "outcome": "problem", "feedback_ru": "Подготовка ремонта остановилась до подтверждения визита.", "points": 0.2, "effects": {"photo": "refused"}}
+        ]},
+        {"id": "l4", "mode": "free", "speaker": "Właściciel", "message": "Ustalone. Czy może pan jeszcze podać numer mieszkania?", "task_ru": "Назовите номер квартиры и кратко повторите время визита.", "hint_ru": "Нужны numer mieszkania и godzina.", "expected_groups": [["mieszkanie", "numer"], ["18", "osiemnastej", "18:00"]], "reference_answer": "Mieszkanie numer 24. Hydraulik przyjdzie jutro o 18:00.", "success_next": "l_end_success", "retry_next": "l_end_partial", "success_feedback_ru": "Мастер получил адресную деталь, а время ещё раз подтверждено.", "retry_feedback_ru": "В финальном сообщении потерялся номер квартиры или время."},
+        {"id": "l_end_success", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "success", "summary_ru": "Ремонт согласован: проблема, доступ, время и фото подтверждены."},
+        {"id": "l_end_partial", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "partial", "summary_ru": "Арендодатель знает о проблеме, но время или условия доступа требуют дополнительного сообщения."},
+        {"id": "l_end_fail", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "failure", "summary_ru": "Мастер не может быть вызван, пока поломка не описана конкретно."}
+      ]
+    },
+    {
+      "id": "work_schedule",
+      "title_ru": "Изменение рабочей смены",
+      "title_target": "Zmiana grafiku w pracy",
+      "category": "work",
+      "goal_ru": "Уточнить изменение графика, объяснить ограничение и согласовать альтернативу.",
+      "briefing_ru": "Руководитель пишет, что ваша смена изменилась. Новое время вам не подходит. Нужно выяснить детали и предложить решение, не обрывая разговор.",
+      "start_node": "w1",
+      "nodes": [
+        {"id": "w1", "mode": "choice", "speaker": "Kierowniczka", "message": "Cześć. W sobotę musisz przyjść na 6:00 zamiast na 10:00.", "task_ru": "Не соглашайтесь автоматически: сначала уточните причину изменения.", "hint_ru": "Спросите dlaczego или z czego wynika zmiana.", "choices": [
+          {"id": "a", "text": "Rozumiem. Z czego wynika ta zmiana?", "next_node": "w2", "outcome": "good", "feedback_ru": "Вы спокойно запросили контекст перед решением.", "points": 1, "effects": {"reason_asked": "yes"}},
+          {"id": "b", "text": "Dobrze, będę.", "next_node": "w2", "outcome": "neutral", "feedback_ru": "Вы согласились до проверки собственных возможностей.", "points": 0.4, "effects": {"premature_agreement": "yes"}},
+          {"id": "c", "text": "Nie przyjdę i już.", "next_node": "w1_repair", "outcome": "problem", "feedback_ru": "Граница понятна, но формулировка закрывает поиск решения.", "points": 0.2, "effects": {"conflict": "yes"}}
+        ]},
+        {"id": "w1_repair", "mode": "choice", "speaker": "Kierowniczka", "message": "Potrzebujemy kogoś rano. Czy możesz wyjaśnić, dlaczego nie możesz?", "task_ru": "Объясните ограничение нейтрально.", "hint_ru": "Используйте nie mogę, ponieważ…",
+          "choices": [
+            {"id": "a", "text": "Nie mogę być o 6:00, ponieważ wcześniej nie mam transportu.", "next_node": "w3", "outcome": "good", "feedback_ru": "Ограничение объяснено конкретно и без конфликта.", "points": 0.8, "effects": {"constraint": "transport"}},
+            {"id": "b", "text": "Bo nie i koniec.", "next_node": "w_end_fail", "outcome": "problem", "feedback_ru": "Разговор завершился без попытки найти замену.", "points": 0, "effects": {"negotiation_failed": "yes"}}
+          ]
+        },
+        {"id": "w2", "mode": "free", "speaker": "Kierowniczka", "message": "Kolega zachorował i musimy zmienić grafik. Czy 6:00 ci pasuje?", "task_ru": "Объясните, что в 6:00 вы не можете из-за транспорта.", "hint_ru": "Нужны nie mogę и transport/dojazd.", "expected_groups": [["nie mogę", "nie moge", "nie dam rady"], ["transport", "dojazd", "autobus", "pociąg"]], "reference_answer": "Nie mogę być o 6:00, ponieważ nie mam wtedy transportu.", "success_next": "w3", "retry_next": "w2_help", "success_feedback_ru": "Вы ясно назвали ограничение, которое можно учитывать при поиске решения.", "retry_feedback_ru": "Причина отказа осталась неясной."},
+        {"id": "w2_help", "mode": "choice", "speaker": "Kierowniczka", "message": "Potrzebuję konkretnej informacji: o której najwcześniej możesz być?", "task_ru": "Назовите самое раннее возможное время.", "hint_ru": "Дайте конкретный час.", "choices": [
+          {"id": "a", "text": "Najwcześniej mogę być o 8:00.", "next_node": "w3", "outcome": "good", "feedback_ru": "Появилась конкретная основа для компромисса.", "points": 0.7, "effects": {"earliest": "8:00"}},
+          {"id": "b", "text": "Rano mi nie pasuje.", "next_node": "w_end_partial", "outcome": "neutral", "feedback_ru": "Ограничение понятно, но альтернативы всё ещё нет.", "points": 0.3, "effects": {"alternative_missing": "yes"}}
+        ]},
+        {"id": "w3", "mode": "choice", "speaker": "Kierowniczka", "message": "Możesz zacząć o 8:00, jeśli zostaniesz do 16:00. Pasuje?", "task_ru": "Проверьте оба времени и подтвердите соглашение.", "hint_ru": "Повторите 8:00–16:00.", "choices": [
+          {"id": "a", "text": "Tak, mogę pracować od 8:00 do 16:00.", "next_node": "w4", "outcome": "good", "feedback_ru": "Обе границы смены подтверждены.", "points": 1, "effects": {"shift": "8-16"}},
+          {"id": "b", "text": "Tak, pasuje.", "next_node": "w4", "outcome": "neutral", "feedback_ru": "Согласие принято, но повтор времени снизил бы риск ошибки.", "points": 0.6, "effects": {"shift": "accepted"}},
+          {"id": "c", "text": "Nie chcę pracować dłużej.", "next_node": "w_end_partial", "outcome": "problem", "feedback_ru": "Компромисс не принят и новая альтернатива не предложена.", "points": 0.2, "effects": {"shift": "unresolved"}}
+        ]},
+        {"id": "w4", "mode": "free", "speaker": "Kierowniczka", "message": "Dobrze, zmieniam grafik. Proszę potwierdzić dzień i godziny.", "task_ru": "Подтвердите субботу и полный интервал смены.", "hint_ru": "Нужны sobota, od 8:00 do 16:00.", "expected_groups": [["sobotę", "sobote", "sobota"], ["8", "ósmej", "osmej"], ["16", "szesnastej"]], "reference_answer": "Potwierdzam: w sobotę pracuję od 8:00 do 16:00.", "success_next": "w_end_success", "retry_next": "w_end_partial", "success_feedback_ru": "Новый график подтверждён полностью.", "retry_feedback_ru": "В подтверждении потерялся день или одна из границ смены."},
+        {"id": "w_end_success", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "success", "summary_ru": "Вы выяснили причину, обозначили ограничение и согласовали конкретную смену."},
+        {"id": "w_end_partial", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "partial", "summary_ru": "Ограничение сообщено, но финальное время смены осталось неподтверждённым."},
+        {"id": "w_end_fail", "mode": "ending", "speaker": "", "message": "", "task_ru": "", "hint_ru": "", "ending": "failure", "summary_ru": "Переговоры остановились до появления альтернативного графика."}
+      ]
+    }
+  ]
+}

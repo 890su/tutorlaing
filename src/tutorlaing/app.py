@@ -37,6 +37,8 @@ from .menu import LearnerMenu
 from .navigation import home_row, reply_action
 from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
+from .quest_content import Quest, QuestCatalog, QuestNode
+from .quest_engine import QuestTransition, answer_free, choose
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
 from .telegram_api import TelegramAPI, TelegramError
@@ -75,6 +77,7 @@ class TutorlaingBot:
                     settings.ai_failover_cooldown,
                 )
         self.catalog = ScenarioCatalog()
+        self.quest_catalog = QuestCatalog()
         self.exercise_bank = ExerciseBank(storage)
         self.workspace = TelegramWorkspace(storage, self.telegram)
         self.language_support = LanguageSupport(storage, self.ai)
@@ -203,10 +206,463 @@ class TutorlaingBot:
     def show_scenarios(self, chat_id: int) -> None:
         self.menu.show_scenarios(chat_id)
 
+    def show_quests(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        language = self._language(chat_id)
+        quests = self.quest_catalog.for_user(user)
+        if not quests:
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "quest.list_title"),
+                    self._t(chat_id, "quest.unavailable"),
+                ),
+                [home_row(language)],
+                surface="quest_list",
+            )
+            return
+        history = {
+            str(row["quest_id"]): row
+            for row in self.storage.quest_history(
+                chat_id, str(user["target_language"])
+            )
+        }
+        keyboard: list[list[dict[str, str]]] = []
+        if user["stage"] == "quest" and user["current_quest"]:
+            keyboard.append(
+                [
+                    {
+                        "text": self._t(chat_id, "quest.continue"),
+                        "callback_data": "quest:resume",
+                    }
+                ]
+            )
+        for quest in quests.values():
+            completed = (
+                int(history[quest.id]["successes"] or 0)
+                if quest.id in history
+                else 0
+            )
+            marker = "✓ " if completed else ""
+            keyboard.append(
+                [
+                    {
+                        "text": f"{marker}{quest.title_target}",
+                        "callback_data": f"quest:start:{quest.id}",
+                    }
+                ]
+            )
+        keyboard.append(home_row(language))
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, "quest.list_title"),
+                self._t(chat_id, "quest.list_summary"),
+            ),
+            keyboard,
+            surface="quest_list",
+        )
+
+    def begin_quest(self, chat_id: int, quest_id: str) -> None:
+        user = self.storage.get_user(chat_id)
+        quests = self.quest_catalog.for_user(user)
+        quest = quests.get(quest_id)
+        if quest is None:
+            self.show_quests(chat_id)
+            return
+        resume = self.menu.resume_action(user)
+        if resume and str(user["stage"]) != "quest":
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "quest.conflict_title"),
+                    self._t(chat_id, "quest.conflict_summary"),
+                ),
+                [
+                    [
+                        {
+                            "text": self._t(chat_id, "action.return_to_activity"),
+                            "callback_data": resume,
+                        }
+                    ],
+                    home_row(self._language(chat_id)),
+                ],
+                surface="quest_conflict",
+            )
+            return
+        if str(user["stage"]) == "quest" and user["current_quest"]:
+            self.resume_quest(chat_id)
+            return
+        quest_session_id = self.storage.start_quest(
+            chat_id, quest.id, quest.start_node
+        )
+        briefing = self._instruction_text(
+            chat_id,
+            f"Цель: {quest.goal_ru}\n\n{quest.briefing_ru}",
+            "quest-briefing",
+        )
+        self._workspace(
+            chat_id,
+            card(self._t(chat_id, "quest.briefing"), briefing),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "quest.start"),
+                        "callback_data": f"quest:next:{quest_session_id}",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "action.stop"),
+                        "callback_data": "quest:stop:confirm",
+                    }
+                ],
+            ],
+            surface="quest_briefing",
+        )
+
+    def resume_quest(self, chat_id: int, *, scheduled: bool = False) -> None:
+        user = self.storage.get_user(chat_id)
+        quest_session_id = str(user["current_quest"] or "")
+        if str(user["stage"]) != "quest" or not quest_session_id:
+            self.show_quests(chat_id)
+            return
+        self.send_quest_node(chat_id, quest_session_id, scheduled=scheduled)
+
+    def send_quest_node(
+        self, chat_id: int, quest_session_id: str, *, scheduled: bool = False
+    ) -> None:
+        user = self.storage.get_user(chat_id)
+        if (
+            str(user["stage"]) != "quest"
+            or str(user["current_quest"] or "") != quest_session_id
+        ):
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        session = self.storage.quest_session(quest_session_id, chat_id)
+        if str(session["status"]) != "active":
+            self.show_quests(chat_id)
+            return
+        quest = self.quest_catalog.for_language(str(session["target_language"]))[
+            str(session["quest_id"])
+        ]
+        node = quest.nodes[str(session["current_node"])]
+        if node.mode == "ending":
+            self._complete_quest_view(chat_id, quest, node, quest_session_id)
+            return
+        step = int(session["steps_taken"]) + 1
+        task = self._instruction_text(chat_id, node.task_ru, "quest-task")
+        body = [
+            f"{self._t(chat_id, 'quest.mission')}: {quest.title_target}",
+            self._t(chat_id, "quest.step", step=step),
+        ]
+        facts = self._quest_facts(json.loads(str(session["state_json"])))
+        if facts:
+            body.append(
+                f"{self._t(chat_id, 'quest.facts')}\n"
+                + "\n".join(f"• {value}" for value in facts)
+            )
+        body.extend(
+            [
+                f"{node.speaker}\n{node.message}",
+                f"{self._t(chat_id, 'quest.your_move')}\n{task}",
+            ]
+        )
+        keyboard: list[list[dict[str, str]]] = []
+        if node.mode == "choice":
+            labels = ("A", "B", "C", "D")
+            body.append(
+                f"{self._t(chat_id, 'quest.options')}:\n"
+                + "\n".join(
+                    f"{labels[index]}. {choice.text}"
+                    for index, choice in enumerate(node.choices)
+                )
+            )
+            keyboard.append(
+                [
+                    {
+                        "text": labels[index],
+                        "callback_data": (
+                            f"quest:choice:{quest_session_id}:{node.id}:{choice.id}"
+                        ),
+                    }
+                    for index, choice in enumerate(node.choices)
+                ]
+            )
+        else:
+            body.append(self._t(chat_id, "quest.write"))
+        keyboard.extend(
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "action.hint"),
+                        "callback_data": f"quest:hint:{quest_session_id}:{node.id}",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "action.stop"),
+                        "callback_data": "quest:stop:confirm",
+                    }
+                ],
+            ]
+        )
+        self._workspace(
+            chat_id,
+            "\n\n".join(body),
+            keyboard,
+            force_new=scheduled,
+            surface="quest_node",
+        )
+
+    @staticmethod
+    def _quest_facts(state: dict[str, Any]) -> list[str]:
+        ignored = {"yes", "no", "assumed", "none", "unclear"}
+        values = []
+        for key, value in state.items():
+            text = str(value).strip()
+            if key.startswith("answer:") or not text or text in ignored:
+                continue
+            if text not in values:
+                values.append(text)
+        return values[-3:]
+
+    def answer_quest_choice(
+        self,
+        chat_id: int,
+        quest_session_id: str,
+        node_id: str,
+        choice_id: str,
+    ) -> None:
+        user = self.storage.get_user(chat_id)
+        if (
+            str(user["stage"]) != "quest"
+            or str(user["current_quest"] or "") != quest_session_id
+        ):
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        session, quest, node = self._quest_context(chat_id, quest_session_id)
+        if node.id != node_id or node.mode != "choice":
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        try:
+            transition = choose(
+                node, choice_id, json.loads(str(session["state_json"]))
+            )
+        except KeyError:
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        choice = next(item for item in node.choices if item.id == choice_id)
+        self._apply_quest_transition(
+            chat_id,
+            quest_session_id,
+            quest,
+            node,
+            transition,
+            input_kind="choice",
+            user_answer=choice.text,
+            choice_id=choice_id,
+        )
+
+    def handle_quest_text(self, chat_id: int, response: str, user: Any) -> None:
+        quest_session_id = str(user["current_quest"] or "")
+        session, quest, node = self._quest_context(chat_id, quest_session_id)
+        if node.mode != "free":
+            self._workspace(
+                chat_id,
+                self._t(chat_id, "drill.choose"),
+                surface="quest_node",
+            )
+            return
+        transition = answer_free(
+            node, response, json.loads(str(session["state_json"]))
+        )
+        self._apply_quest_transition(
+            chat_id,
+            quest_session_id,
+            quest,
+            node,
+            transition,
+            input_kind="text",
+            user_answer=response,
+            choice_id=None,
+            force_new=True,
+        )
+
+    def _quest_context(
+        self, chat_id: int, quest_session_id: str
+    ) -> tuple[Any, Quest, QuestNode]:
+        session = self.storage.quest_session(quest_session_id, chat_id)
+        quest = self.quest_catalog.for_language(str(session["target_language"]))[
+            str(session["quest_id"])
+        ]
+        return session, quest, quest.nodes[str(session["current_node"])]
+
+    def _apply_quest_transition(
+        self,
+        chat_id: int,
+        quest_session_id: str,
+        quest: Quest,
+        node: QuestNode,
+        transition: QuestTransition,
+        *,
+        input_kind: str,
+        user_answer: str,
+        choice_id: str | None,
+        force_new: bool = False,
+    ) -> None:
+        advanced = self.storage.advance_quest(
+            quest_session_id,
+            chat_id,
+            node.id,
+            transition.next_node,
+            input_kind=input_kind,
+            user_answer=user_answer,
+            choice_id=choice_id,
+            score=transition.points,
+            outcome=transition.outcome,
+            state=transition.state,
+        )
+        if not advanced:
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        feedback = self._instruction_text(
+            chat_id, transition.feedback_ru, "quest-consequence"
+        )
+        if transition.reference_answer:
+            feedback += "\n\n" + self._t(
+                chat_id,
+                "quest.reference",
+                answer=transition.reference_answer,
+            )
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, f"quest.outcome.{transition.outcome}"),
+                feedback,
+            ),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "action.next"),
+                        "callback_data": f"quest:next:{quest_session_id}",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "action.stop"),
+                        "callback_data": "quest:stop:confirm",
+                    }
+                ],
+            ],
+            force_new=force_new,
+            surface="quest_consequence",
+        )
+        self._schedule_next_assignment(chat_id)
+
+    def show_quest_hint(
+        self, chat_id: int, quest_session_id: str, node_id: str
+    ) -> None:
+        user = self.storage.get_user(chat_id)
+        if (
+            str(user["stage"]) != "quest"
+            or str(user["current_quest"] or "") != quest_session_id
+        ):
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        session, _, node = self._quest_context(chat_id, quest_session_id)
+        if str(session["current_node"]) != node_id:
+            return
+        hint = self._instruction_text(chat_id, node.hint_ru, "quest-hint")
+        self._workspace(
+            chat_id,
+            card(self._t(chat_id, "action.hint"), hint),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "action.resume_task"),
+                        "callback_data": f"quest:next:{quest_session_id}",
+                    }
+                ]
+            ],
+            surface="quest_hint",
+        )
+
+    def _complete_quest_view(
+        self, chat_id: int, quest: Quest, ending_node: QuestNode, quest_session_id: str
+    ) -> None:
+        session = self.storage.complete_quest(
+            quest_session_id, chat_id, ending_node.ending
+        )
+        steps = max(1, int(session["steps_taken"]))
+        score = round(float(session["score"]) / steps * 100)
+        summary = self._instruction_text(
+            chat_id, ending_node.summary_ru, "quest-ending"
+        )
+        body = (
+            f"{summary}\n\n"
+            + self._t(chat_id, "quest.score", score=score, steps=steps)
+        )
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, f"quest.ending.{ending_node.ending}"),
+                body,
+            ),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "quest.try_again"),
+                        "callback_data": f"quest:start:{quest.id}",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "action.quests"),
+                        "callback_data": "quests:list",
+                    }
+                ],
+                home_row(self._language(chat_id)),
+            ],
+            surface="quest_ending",
+        )
+
+    def confirm_stop_quest(self, chat_id: int) -> None:
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, "quest.stop_title"),
+                self._t(chat_id, "quest.stop_summary"),
+            ),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "quest.continue"),
+                        "callback_data": "quest:resume",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "action.confirm_finish"),
+                        "callback_data": "quest:stop",
+                    }
+                ],
+            ],
+            surface="quest_stop_confirmation",
+        )
+
+    def stop_quest(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        if user["current_quest"]:
+            self.storage.abandon_quest(str(user["current_quest"]), chat_id)
+        self.show_quests(chat_id)
+
     def resume_activity(self, chat_id: int) -> None:
         """Render whichever learning activity currently owns the profile state."""
         current = self.storage.get_user(chat_id)
-        if current["stage"] == "drill" and current["current_drill"]:
+        if current["stage"] == "quest" and current["current_quest"]:
+            self.resume_quest(chat_id)
+        elif current["stage"] == "drill" and current["current_drill"]:
             self.send_drill_item(chat_id, str(current["current_drill"]))
         elif current["stage"] == "scenario" and current["current_scenario"]:
             scenario = self._scenarios_for_user(current)[current["current_scenario"]]
@@ -242,6 +698,25 @@ class TutorlaingBot:
         scenario = self._scenarios_for_user(user).get(scenario_id)
         if not scenario:
             self._notice(chat_id, "Этот сценарий не найден.")
+            return
+        if str(user["stage"]) == "quest" and user["current_quest"]:
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "quest.conflict_title"),
+                    self._t(chat_id, "quest.conflict_summary"),
+                ),
+                [
+                    [
+                        {
+                            "text": self._t(chat_id, "quest.continue"),
+                            "callback_data": "quest:resume",
+                        }
+                    ],
+                    home_row(self._language(chat_id)),
+                ],
+                surface="quest_conflict",
+            )
             return
         current_user = user
         if current_user["current_drill"]:
@@ -1379,6 +1854,9 @@ class TutorlaingBot:
                 chat_id, int(user["current_review"]), scheduled=True
             )
             return
+        if stage == "quest" and user["current_quest"]:
+            self.resume_quest(chat_id, scheduled=True)
+            return
         due = self.storage.pending_reviews(chat_id)
         if due:
             self.begin_review(chat_id, int(due[0]["id"]), scheduled=True)
@@ -1447,6 +1925,9 @@ class TutorlaingBot:
 
     def cancel_activity(self, chat_id: int, notify: bool = True) -> None:
         current = self.storage.get_user(chat_id)
+        if current["current_quest"]:
+            self.storage.abandon_quest(str(current["current_quest"]), chat_id)
+            current = self.storage.get_user(chat_id)
         if current["current_drill"]:
             self.storage.abandon_drill(str(current["current_drill"]), chat_id)
             current = self.storage.get_user(chat_id)
@@ -1460,6 +1941,7 @@ class TutorlaingBot:
             current_step=0,
             current_session=None,
             current_review=None,
+            current_quest=None,
             pending_assignment=None,
             toolkit_input_mode=None,
             suspended_activity_json=None,
@@ -1544,6 +2026,9 @@ class TutorlaingBot:
         if command == "/scenarios":
             self.show_scenarios(chat_id)
             return
+        if command == "/quests":
+            self.show_quests(chat_id)
+            return
         if command == "/review":
             self.show_reviews(chat_id)
             return
@@ -1562,6 +2047,8 @@ class TutorlaingBot:
             self.handle_review_response(chat_id, text, user)
         elif stage == "drill":
             self.handle_drill_text(chat_id, text, user)
+        elif stage == "quest":
+            self.handle_quest_text(chat_id, text, user)
         elif stage == "waiting":
             self.telegram.send_message(
                 chat_id,
@@ -1610,6 +2097,26 @@ class TutorlaingBot:
             self.home(chat_id)
         elif data == "toolkit":
             self.toolkit.show_menu(chat_id)
+        elif data == "quests:list":
+            self.show_quests(chat_id)
+        elif data.startswith("quest:start:"):
+            self.begin_quest(chat_id, data.split(":", 2)[2])
+        elif data == "quest:resume":
+            self.resume_quest(chat_id)
+        elif data.startswith("quest:next:"):
+            self.send_quest_node(chat_id, data.split(":", 2)[2])
+        elif data.startswith("quest:choice:"):
+            _, _, quest_session_id, node_id, choice_id = data.split(":", 4)
+            self.answer_quest_choice(
+                chat_id, quest_session_id, node_id, choice_id
+            )
+        elif data.startswith("quest:hint:"):
+            _, _, quest_session_id, node_id = data.split(":", 3)
+            self.show_quest_hint(chat_id, quest_session_id, node_id)
+        elif data == "quest:stop:confirm":
+            self.confirm_stop_quest(chat_id)
+        elif data == "quest:stop":
+            self.stop_quest(chat_id)
         elif data == "toolkit:topics":
             self.toolkit.show_topics(chat_id)
         elif data.startswith("toolkit:topic:"):
