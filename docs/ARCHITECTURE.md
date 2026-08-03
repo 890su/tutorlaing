@@ -229,3 +229,20 @@ text/callback. `last_reengagement_at` записывается после усп
 Транспортный сбой сохраняет общий retry через пять минут. UI-кнопка вызывает
 существующий `send_scheduled_reminder`, поэтому выбор текущего scenario,
 review, drill или ближайшего задания остаётся в одной state machine.
+## Quest module
+
+Quest Engine разделён на четыре слоя:
+
+- `quest_content.py` — immutable content model, JSON loader и graph validation;
+- `quest_engine.py` — pure transition functions без Telegram, SQL и AI;
+- `Storage` через `QuestStore` — sessions, attempts и compare-current-node write;
+- `TutorlaingBot` — Telegram orchestration и workspace rendering.
+
+Контракт узла допускает `choice`, `free` или `ending`. Domain transition всегда
+возвращает `next_node`, outcome, feedback, points и новый state. Persistence
+принимает переход только если session active и `current_node == expected_node`.
+Это одновременно контракт идемпотентности callback и граница восстановления.
+
+Quest является main activity (`stage=quest`). Toolkit не знает его внутренней
+модели: он сохраняет и возвращает `current_quest` через общий activity snapshot.
+Reminder delivery также не вычисляет переходы, а только рендерит сохранённый узел.

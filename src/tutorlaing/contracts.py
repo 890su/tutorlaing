@@ -137,6 +137,39 @@ class ReminderDelivery(Protocol):
     ) -> None: ...
 
 
+class QuestStore(Protocol):
+    """Persistence port for the branching quest state machine."""
+
+    def get_user(self, chat_id: int) -> Any: ...
+
+    def start_quest(self, chat_id: int, quest_id: str, start_node: str) -> str: ...
+
+    def quest_session(self, quest_session_id: str, chat_id: int) -> Any: ...
+
+    def advance_quest(
+        self,
+        quest_session_id: str,
+        chat_id: int,
+        expected_node: str,
+        next_node: str,
+        *,
+        input_kind: str,
+        user_answer: str,
+        choice_id: str | None,
+        score: float,
+        outcome: str,
+        state: dict[str, Any],
+    ) -> bool: ...
+
+    def complete_quest(
+        self, quest_session_id: str, chat_id: int, ending: str
+    ) -> Any: ...
+
+    def abandon_quest(self, quest_session_id: str, chat_id: int) -> None: ...
+
+    def quest_history(self, chat_id: int, target_language: str) -> list[Any]: ...
+
+
 class UpdateStore(Protocol):
     def claim_update(self, update_id: int) -> bool: ...
 

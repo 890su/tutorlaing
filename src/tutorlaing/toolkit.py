@@ -668,6 +668,8 @@ class PracticeToolkit:
         stage = str(user["stage"])
         if stage in {"scenario", "practice", "review"}:
             return "task:resume"
+        if stage == "quest" and user["current_quest"]:
+            return "quest:resume"
         if stage == "waiting" and user["pending_assignment"]:
             return "assignment:next"
         if stage == "drill" and user["current_drill"]:

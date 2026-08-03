@@ -23,6 +23,7 @@ ACTIVITY_FIELDS = (
     "current_session",
     "current_review",
     "current_drill",
+    "current_quest",
     "pending_assignment",
 )
 
@@ -54,6 +55,7 @@ class Storage:
             current_session TEXT,
             current_review INTEGER,
             current_drill TEXT,
+            current_quest TEXT,
             toolkit_input_mode TEXT,
             suspended_activity_json TEXT,
             pending_assignment TEXT,
@@ -95,6 +97,34 @@ class Storage:
             response_text TEXT NOT NULL,
             score REAL NOT NULL,
             missing_groups TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS quest_sessions (
+            id TEXT PRIMARY KEY,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            quest_id TEXT NOT NULL,
+            target_language TEXT NOT NULL,
+            current_node TEXT NOT NULL,
+            state_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'active',
+            score REAL NOT NULL DEFAULT 0,
+            steps_taken INTEGER NOT NULL DEFAULT 0,
+            ending TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS quest_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quest_session_id TEXT NOT NULL REFERENCES quest_sessions(id) ON DELETE CASCADE,
+            node_id TEXT NOT NULL,
+            input_kind TEXT NOT NULL,
+            user_answer TEXT NOT NULL,
+            choice_id TEXT,
+            score REAL NOT NULL,
+            outcome TEXT NOT NULL,
+            state_json TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
 
@@ -289,6 +319,10 @@ class Storage:
             ON reviews(chat_id, status, due_at);
         CREATE INDEX IF NOT EXISTS idx_responses_session
             ON responses(session_id, phase, step_index);
+        CREATE INDEX IF NOT EXISTS idx_quest_sessions_chat
+            ON quest_sessions(chat_id, status, started_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_quest_attempts_session
+            ON quest_attempts(quest_session_id, id);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
             ON ai_analyses(chat_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_drill_sessions_chat
@@ -316,6 +350,7 @@ class Storage:
                 "users", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
             )
             self._ensure_column("users", "current_drill", "TEXT")
+            self._ensure_column("users", "current_quest", "TEXT")
             self._ensure_column("users", "toolkit_input_mode", "TEXT")
             self._ensure_column("users", "suspended_activity_json", "TEXT")
             self._ensure_column("users", "pending_assignment", "TEXT")
@@ -468,6 +503,7 @@ class Storage:
             "current_session",
             "current_review",
             "current_drill",
+            "current_quest",
             "toolkit_input_mode",
             "suspended_activity_json",
             "pending_assignment",
@@ -500,7 +536,8 @@ class Storage:
                 UPDATE users
                 SET stage = 'idle', current_scenario = NULL, current_step = 0,
                     current_session = NULL, current_review = NULL,
-                    current_drill = NULL, pending_assignment = NULL,
+                    current_drill = NULL, current_quest = NULL,
+                    pending_assignment = NULL,
                     toolkit_input_mode = NULL, suspended_activity_json = ?,
                     updated_at = ?
                 WHERE chat_id = ?
@@ -568,6 +605,203 @@ class Storage:
         )
         self.event(chat_id, "scenario_started", {"scenario_id": scenario_id})
         return session_id
+
+    def start_quest(self, chat_id: int, quest_id: str, start_node: str) -> str:
+        quest_session_id = str(uuid.uuid4())
+        now = utc_now()
+        user = self.get_user(chat_id)
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE quest_sessions SET status = 'abandoned', completed_at = ?
+                WHERE chat_id = ? AND status = 'active'
+                """,
+                (now, chat_id),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO quest_sessions(
+                    id, chat_id, quest_id, target_language, current_node,
+                    state_json, status, started_at
+                ) VALUES (?, ?, ?, ?, ?, '{}', 'active', ?)
+                """,
+                (
+                    quest_session_id,
+                    chat_id,
+                    quest_id,
+                    str(user["target_language"]),
+                    start_node,
+                    now,
+                ),
+            )
+        self.set_user_state(
+            chat_id,
+            stage="quest",
+            current_quest=quest_session_id,
+            current_scenario=None,
+            current_step=0,
+            current_session=None,
+            current_review=None,
+            current_drill=None,
+            pending_assignment=None,
+        )
+        self.event(
+            chat_id,
+            "quest_started",
+            {"quest_id": quest_id, "quest_session_id": quest_session_id},
+        )
+        return quest_session_id
+
+    def quest_session(self, quest_session_id: str, chat_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM quest_sessions WHERE id = ? AND chat_id = ?",
+                (quest_session_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Quest session not found: {quest_session_id}")
+        return row
+
+    def advance_quest(
+        self,
+        quest_session_id: str,
+        chat_id: int,
+        expected_node: str,
+        next_node: str,
+        *,
+        input_kind: str,
+        user_answer: str,
+        choice_id: str | None,
+        score: float,
+        outcome: str,
+        state: dict[str, Any],
+    ) -> bool:
+        now = utc_now()
+        state_json = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT current_node FROM quest_sessions
+                WHERE id = ? AND chat_id = ? AND status = 'active'
+                """,
+                (quest_session_id, chat_id),
+            ).fetchone()
+            if row is None or str(row["current_node"]) != expected_node:
+                return False
+            self._connection.execute(
+                """
+                INSERT INTO quest_attempts(
+                    quest_session_id, node_id, input_kind, user_answer,
+                    choice_id, score, outcome, state_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    quest_session_id,
+                    expected_node,
+                    input_kind,
+                    user_answer[:4000],
+                    choice_id,
+                    max(0.0, min(1.0, score)),
+                    outcome,
+                    state_json,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE quest_sessions SET current_node = ?, state_json = ?,
+                    score = score + ?, steps_taken = steps_taken + 1
+                WHERE id = ?
+                """,
+                (
+                    next_node,
+                    state_json,
+                    max(0.0, min(1.0, score)),
+                    quest_session_id,
+                ),
+            )
+        self.event(
+            chat_id,
+            "quest_step_completed",
+            {
+                "quest_session_id": quest_session_id,
+                "node_id": expected_node,
+                "outcome": outcome,
+            },
+        )
+        return True
+
+    def complete_quest(
+        self, quest_session_id: str, chat_id: int, ending: str
+    ) -> sqlite3.Row:
+        now = utc_now()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE quest_sessions SET status = 'completed', ending = ?,
+                    completed_at = ?
+                WHERE id = ? AND chat_id = ? AND status = 'active'
+                """,
+                (ending, now, quest_session_id, chat_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Quest session is not active: {quest_session_id}")
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'idle', current_quest = NULL,
+                    updated_at = ? WHERE chat_id = ? AND current_quest = ?
+                """,
+                (now, chat_id, quest_session_id),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM quest_sessions WHERE id = ?",
+                (quest_session_id,),
+            ).fetchone()
+        self.event(
+            chat_id,
+            "quest_completed",
+            {"quest_id": str(row["quest_id"]), "ending": ending},
+        )
+        return row
+
+    def abandon_quest(self, quest_session_id: str, chat_id: int) -> None:
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE quest_sessions SET status = 'abandoned', completed_at = ?
+                WHERE id = ? AND chat_id = ? AND status = 'active'
+                """,
+                (now, quest_session_id, chat_id),
+            )
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'idle', current_quest = NULL,
+                    updated_at = ? WHERE chat_id = ? AND current_quest = ?
+                """,
+                (now, chat_id, quest_session_id),
+            )
+        self.event(
+            chat_id,
+            "quest_abandoned",
+            {"quest_session_id": quest_session_id},
+        )
+
+    def quest_history(self, chat_id: int, target_language: str) -> list[sqlite3.Row]:
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT quest_id, COUNT(*) AS attempts,
+                           SUM(CASE WHEN ending = 'success' THEN 1 ELSE 0 END) AS successes,
+                           MAX(completed_at) AS last_completed_at
+                    FROM quest_sessions
+                    WHERE chat_id = ? AND target_language = ? AND status = 'completed'
+                    GROUP BY quest_id
+                    """,
+                    (chat_id, target_language),
+                ).fetchall()
+            )
 
     def abandon_session(self, session_id: str | None) -> None:
         if not session_id:
@@ -1332,7 +1566,8 @@ class Storage:
                       AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
                       AND toolkit_input_mode IS NULL
                       AND stage IN (
-                          'idle', 'waiting', 'scenario', 'practice', 'review', 'drill'
+                          'idle', 'waiting', 'scenario', 'practice', 'review', 'drill',
+                          'quest'
                       )
                     ORDER BY reminder_next_at ASC
                     """,

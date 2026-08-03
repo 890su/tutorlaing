@@ -94,16 +94,24 @@ class LearnerMenu:
                     "text": tr(language, "action.scenarios"),
                     "callback_data": "scenarios:list",
                 },
-                {"text": tr(language, "action.toolkit"), "callback_data": "toolkit"},
+                {"text": tr(language, "action.quests"), "callback_data": "quests:list"},
             ],
         ]
         if not (due_count and not resume):
             keyboard.append(
                 [
                     {
+                        "text": tr(language, "action.toolkit"),
+                        "callback_data": "toolkit",
+                    },
+                    {
                         "text": review_label,
                         "callback_data": "reviews:list",
                     },
+                ]
+            )
+            keyboard.append(
+                [
                     {
                         "text": tr(language, "action.progress"),
                         "callback_data": "progress",
@@ -117,14 +125,17 @@ class LearnerMenu:
             keyboard.append(
                 [
                     {
+                        "text": tr(language, "action.toolkit"),
+                        "callback_data": "toolkit",
+                    },
+                    {
                         "text": tr(language, "action.progress"),
                         "callback_data": "progress",
                     },
-                    {
-                        "text": tr(language, "action.settings"),
-                        "callback_data": "settings",
-                    },
                 ]
+            )
+            keyboard.append(
+                [{"text": tr(language, "action.settings"), "callback_data": "settings"}]
             )
         self.workspace.set_reply_keyboard(
             chat_id, reply_navigation(language)
@@ -452,6 +463,8 @@ class LearnerMenu:
         stage = str(user["stage"])
         if stage in {"scenario", "practice", "review"}:
             return "task:resume"
+        if stage == "quest" and user["current_quest"]:
+            return "quest:resume"
         if stage == "waiting" and user["pending_assignment"]:
             return "assignment:next"
         if stage == "drill" and user["current_drill"]:
