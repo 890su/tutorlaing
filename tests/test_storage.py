@@ -194,6 +194,7 @@ class StorageTests(unittest.TestCase):
         }
         self.assertIn("toolkit_input_mode", user_columns)
         self.assertIn("suspended_activity_json", user_columns)
+        self.assertIn("reply_keyboard_version", user_columns)
         self.assertIn("mode", drill_columns)
 
     def test_phrase_input_temporarily_suppresses_scheduled_delivery(self) -> None:

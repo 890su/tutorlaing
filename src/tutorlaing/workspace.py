@@ -26,8 +26,9 @@ class TelegramWorkspace:
         chat_id: int,
         keyboard: ReplyKeyboard,
         placeholder: str | None = None,
+        notice: str | None = None,
     ) -> None:
-        self.telegram.set_reply_keyboard(chat_id, keyboard, placeholder)
+        self.telegram.set_reply_keyboard(chat_id, keyboard, placeholder, notice)
 
     def start_new_surface(self, chat_id: int) -> None:
         """Make the next render a fresh message at the bottom of the chat."""

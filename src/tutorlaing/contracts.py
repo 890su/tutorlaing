@@ -38,6 +38,7 @@ class TelegramGateway(Protocol):
         chat_id: int,
         keyboard: ReplyKeyboard,
         placeholder: str | None = None,
+        notice: str | None = None,
     ) -> None: ...
 
     def send_temporary_message(

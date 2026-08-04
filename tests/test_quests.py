@@ -39,7 +39,7 @@ class FakeTelegram:
     def send_chat_action(self, chat_id, action="typing"):
         return None
 
-    def set_reply_keyboard(self, chat_id, keyboard, placeholder=None):
+    def set_reply_keyboard(self, chat_id, keyboard, placeholder=None, notice=None):
         return None
 
     def delete_message(self, chat_id, message_id):

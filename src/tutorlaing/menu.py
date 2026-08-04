@@ -24,6 +24,7 @@ LANGUAGE_LABELS = {
     "pl": "Polski",
 }
 REMINDER_MODES = ("off", "gentle", "normal", "intensive", "aggressive")
+REPLY_KEYBOARD_VERSION = "navigation-v3"
 
 
 class LearnerMenu:
@@ -101,11 +102,7 @@ class LearnerMenu:
             keyboard.append(
                 [{"text": review_label, "callback_data": "reviews:list"}]
             )
-        self.workspace.set_reply_keyboard(
-            chat_id,
-            reply_navigation(language),
-            tr(language, "navigation.placeholder"),
-        )
+        self.refresh_navigation(chat_id)
         self.workspace.show(
             chat_id,
             card(
@@ -118,11 +115,17 @@ class LearnerMenu:
 
     def refresh_navigation(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
+        language = str(user["instruction_language"])
+        signature = f"{REPLY_KEYBOARD_VERSION}:{language}"
+        if str(user["reply_keyboard_version"] or "") == signature:
+            return
         self.workspace.set_reply_keyboard(
             chat_id,
-            reply_navigation(str(user["instruction_language"])),
-            tr(str(user["instruction_language"]), "navigation.placeholder"),
+            reply_navigation(language),
+            tr(language, "navigation.placeholder"),
+            tr(language, "navigation.ready"),
         )
+        self.store.set_user_state(chat_id, reply_keyboard_version=signature)
 
     def start(self, chat_id: int, first_name: str = "") -> None:
         user = self.store.ensure_user(chat_id, first_name)

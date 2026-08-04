@@ -60,6 +60,7 @@ class Storage:
             suspended_activity_json TEXT,
             pending_assignment TEXT,
             workspace_message_id INTEGER,
+            reply_keyboard_version TEXT,
             consent_version INTEGER NOT NULL DEFAULT 0,
             instruction_language TEXT NOT NULL DEFAULT 'ru',
             translation_language TEXT NOT NULL DEFAULT 'ru',
@@ -364,6 +365,7 @@ class Storage:
             self._ensure_column("users", "suspended_activity_json", "TEXT")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
+            self._ensure_column("users", "reply_keyboard_version", "TEXT")
             self._ensure_column(
                 "users", "learner_level", "TEXT NOT NULL DEFAULT 'A1'"
             )
@@ -517,6 +519,7 @@ class Storage:
             "suspended_activity_json",
             "pending_assignment",
             "workspace_message_id",
+            "reply_keyboard_version",
         }
         invalid = set(values) - allowed
         if invalid:

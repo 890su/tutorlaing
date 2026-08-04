@@ -67,7 +67,11 @@ class FakeTelegram:
         return None
 
     def set_reply_keyboard(
-        self, chat_id: int, keyboard: list[list[str]], placeholder: str | None = None
+        self,
+        chat_id: int,
+        keyboard: list[list[str]],
+        placeholder: str | None = None,
+        notice: str | None = None,
     ) -> None:
         self.reply_keyboards.append(keyboard)
 
@@ -441,6 +445,20 @@ class AppFlowTests(unittest.TestCase):
             ],
             self.telegram.reply_keyboards[-1],
         )
+
+    def test_bottom_navigation_install_is_versioned_and_language_aware(self) -> None:
+        chat_id = 36
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.home(chat_id)
+        self.bot.home(chat_id)
+        self.assertEqual(1, len(self.telegram.reply_keyboards))
+
+        self.storage.set_language(chat_id, "instruction_language", "pl")
+        self.bot.menu.refresh_navigation(chat_id)
+        self.assertEqual(2, len(self.telegram.reply_keyboards))
+        self.assertEqual(["⌂ Menu główne"], self.telegram.reply_keyboards[-1][0])
 
     def test_bottom_navigation_opens_tools_and_cancels_phrase_input(self) -> None:
         chat_id = 36

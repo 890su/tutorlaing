@@ -35,7 +35,11 @@ class FakeTelegram:
         return None
 
     def set_reply_keyboard(
-        self, chat_id: int, keyboard: list[list[str]], placeholder: str | None = None
+        self,
+        chat_id: int,
+        keyboard: list[list[str]],
+        placeholder: str | None = None,
+        notice: str | None = None,
     ) -> None:
         self.reply_keyboards.append(keyboard)
 
@@ -105,7 +109,7 @@ class ApplicationModuleTests(unittest.TestCase):
         self.assertEqual("replacement", telegram.sent[-1]["text"])
         self.assertEqual([1], telegram.deleted)
 
-    def test_reply_keyboard_service_message_is_deleted(self) -> None:
+    def test_reply_keyboard_carrier_is_retained_so_keyboard_stays_visible(self) -> None:
         telegram = TelegramAPI("test-token")
         calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -117,9 +121,8 @@ class ApplicationModuleTests(unittest.TestCase):
 
         telegram.set_reply_keyboard(42, [["▶ Учиться", "🧰 Инструменты"]])
 
-        self.assertEqual(["sendMessage", "deleteMessage"], [item[0] for item in calls])
+        self.assertEqual(["sendMessage"], [item[0] for item in calls])
         self.assertTrue(calls[0][1]["reply_markup"]["is_persistent"])
-        self.assertEqual(77, calls[1][1]["message_id"])
 
     def test_update_dispatcher_deduplicates_and_routes_messages(self) -> None:
         telegram = FakeTelegram()
