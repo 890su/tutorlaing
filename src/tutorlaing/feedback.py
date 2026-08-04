@@ -76,21 +76,37 @@ class FeedbackPresenter:
         *,
         continuation: bool = False,
         force_new: bool = False,
+        standalone: bool = False,
     ) -> None:
         language = self._language(chat_id)
         lines = [
-            tr(language, "feedback.achieved")
-            if analysis.task_achieved
-            else tr(language, "feedback.partial")
+            (
+                tr(
+                    language,
+                    "text_action.correct"
+                    if analysis.task_achieved
+                    else "text_action.needs_work",
+                )
+                if standalone
+                else (
+                    tr(language, "feedback.achieved")
+                    if analysis.task_achieved
+                    else tr(language, "feedback.partial")
+                )
+            )
         ]
         if analysis.positive_feedback:
             lines.append(f"\n{tr(language, 'feedback.good')}: {analysis.positive_feedback}")
         if analysis.critical_corrections:
-            lines.append(f"\n{tr(language, 'feedback.fix')}:")
-            lines.extend(f"• {item}" for item in analysis.critical_corrections)
+            lines.append(
+                f"\n{tr(language, 'feedback.fix')}:\n"
+                + "\n".join(f"• {item}" for item in analysis.critical_corrections)
+            )
         elif analysis.optional_improvements:
-            lines.append(f"\n{tr(language, 'feedback.improve')}:")
-            lines.extend(f"• {item}" for item in analysis.optional_improvements)
+            lines.append(
+                f"\n{tr(language, 'feedback.improve')}:\n"
+                + "\n".join(f"• {item}" for item in analysis.optional_improvements)
+            )
         if analysis.natural_response:
             lines.append(
                 f"\n{tr(language, 'feedback.natural')}:\n{analysis.natural_response}"

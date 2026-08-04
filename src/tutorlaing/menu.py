@@ -99,46 +99,12 @@ class LearnerMenu:
         ]
         if not (due_count and not resume):
             keyboard.append(
-                [
-                    {
-                        "text": tr(language, "action.toolkit"),
-                        "callback_data": "toolkit",
-                    },
-                    {
-                        "text": review_label,
-                        "callback_data": "reviews:list",
-                    },
-                ]
-            )
-            keyboard.append(
-                [
-                    {
-                        "text": tr(language, "action.progress"),
-                        "callback_data": "progress",
-                    },
-                ]
-            )
-            keyboard.append(
-                [{"text": tr(language, "action.settings"), "callback_data": "settings"}]
-            )
-        else:
-            keyboard.append(
-                [
-                    {
-                        "text": tr(language, "action.toolkit"),
-                        "callback_data": "toolkit",
-                    },
-                    {
-                        "text": tr(language, "action.progress"),
-                        "callback_data": "progress",
-                    },
-                ]
-            )
-            keyboard.append(
-                [{"text": tr(language, "action.settings"), "callback_data": "settings"}]
+                [{"text": review_label, "callback_data": "reviews:list"}]
             )
         self.workspace.set_reply_keyboard(
-            chat_id, reply_navigation(language)
+            chat_id,
+            reply_navigation(language),
+            tr(language, "navigation.placeholder"),
         )
         self.workspace.show(
             chat_id,
@@ -153,7 +119,9 @@ class LearnerMenu:
     def refresh_navigation(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
         self.workspace.set_reply_keyboard(
-            chat_id, reply_navigation(str(user["instruction_language"]))
+            chat_id,
+            reply_navigation(str(user["instruction_language"])),
+            tr(str(user["instruction_language"]), "navigation.placeholder"),
         )
 
     def start(self, chat_id: int, first_name: str = "") -> None:

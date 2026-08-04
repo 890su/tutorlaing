@@ -246,6 +246,20 @@ class StorageTests(unittest.TestCase):
         self.assertEqual("flashcard", history["drill_items"][0]["item_type"])
         self.assertEqual("Od dwóch dni.", history["drill_items"][0]["context"])
 
+    def test_text_inbox_is_scoped_to_owner_and_cascades_on_delete(self) -> None:
+        self.storage.ensure_user(101, "One")
+        self.storage.ensure_user(102, "Two")
+        inbox_id = self.storage.save_text_inbox(101, "Potrzebuję pomocy.")
+
+        self.assertEqual(
+            "Potrzebuję pomocy.", self.storage.text_inbox(101, inbox_id)["text"]
+        )
+        with self.assertRaises(KeyError):
+            self.storage.text_inbox(102, inbox_id)
+        self.storage.delete_user(101)
+        with self.assertRaises(KeyError):
+            self.storage.text_inbox(101, inbox_id)
+
 
 if __name__ == "__main__":
     unittest.main()

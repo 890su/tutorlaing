@@ -4,6 +4,7 @@ from .i18n import tr
 
 
 REPLY_ACTION_KEYS = {
+    "home": "action.home",
     "learn": "navigation.learn",
     "tools": "navigation.tools",
     "progress": "navigation.progress",
@@ -44,6 +45,7 @@ def reply_navigation(language: str) -> list[list[str]]:
     """Stable bottom navigation; task-specific actions remain inline."""
 
     return [
+        [tr(language, REPLY_ACTION_KEYS["home"])],
         [tr(language, REPLY_ACTION_KEYS["learn"]), tr(language, REPLY_ACTION_KEYS["tools"])],
         [
             tr(language, REPLY_ACTION_KEYS["progress"]),

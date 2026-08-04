@@ -66,7 +66,9 @@ class FakeTelegram:
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         return None
 
-    def set_reply_keyboard(self, chat_id: int, keyboard: list[list[str]]) -> None:
+    def set_reply_keyboard(
+        self, chat_id: int, keyboard: list[list[str]], placeholder: str | None = None
+    ) -> None:
         self.reply_keyboards.append(keyboard)
 
     def delete_message(self, chat_id: int, message_id: int) -> None:
@@ -433,6 +435,7 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [
+                ["⌂ Главное меню"],
                 ["▶ Учиться", "🧰 Инструменты"],
                 ["📍 Прогресс", "⚙ Настройки"],
             ],
@@ -998,6 +1001,70 @@ class AppFlowTests(unittest.TestCase):
             for button in row
         ]
         self.assertIn("home", callbacks)
+
+    def test_bottom_navigation_opens_a_fresh_visible_surface(self) -> None:
+        chat_id = 280
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.home(chat_id)
+        old_workspace = int(self.storage.get_user(chat_id)["workspace_message_id"])
+
+        self.bot.handle_text(chat_id, "Learner", "📍 Прогресс", message_id=991)
+
+        new_workspace = int(self.storage.get_user(chat_id)["workspace_message_id"])
+        self.assertNotEqual(old_workspace, new_workspace)
+        self.assertIn((chat_id, 991), self.telegram.deleted)
+        self.assertIn("ПРОГРЕСС", self.telegram.messages[-1]["text"])
+
+    def test_inline_callback_edits_the_card_that_was_clicked(self) -> None:
+        chat_id = 281
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.home(chat_id)
+        clicked_message_id = int(self.storage.get_user(chat_id)["workspace_message_id"])
+        self.bot.workspace.start_new_surface(chat_id)
+        self.bot.show_progress(chat_id)
+
+        self.bot.handle_callback(
+            chat_id,
+            "Learner",
+            "home",
+            "home",
+            message_id=clicked_message_id,
+        )
+
+        self.assertEqual(clicked_message_id, self.telegram.edits[-1]["message_id"])
+
+    def test_free_text_outside_task_offers_actions_and_can_be_checked(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 282
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        bot.handle_text(chat_id, "Learner", "Ja potrzebuje pomocy.", message_id=992)
+
+        message = self.telegram.messages[-1]
+        self.assertIn("ЧТО СДЕЛАТЬ С ФРАЗОЙ", message["text"])
+        callbacks = [
+            button["callback_data"]
+            for row in message["keyboard"]
+            for button in row
+        ]
+        check_callback = next(value for value in callbacks if value.startswith("text:check:"))
+        self.assertTrue(any(value.endswith(":to_target") for value in callbacks))
+        self.assertTrue(any(value.endswith(":from_target") for value in callbacks))
+
+        bot.handle_callback(
+            chat_id,
+            "Learner",
+            "check",
+            check_callback,
+            message_id=int(message["message_id"]),
+        )
+
+        analysis = self.storage.latest_ai_analysis(chat_id, "pl")
+        self.assertEqual("standalone_phrase", analysis["operation"])
+        self.assertIn("Естественнее", self.telegram.edits[-1]["text"])
 
 
 if __name__ == "__main__":

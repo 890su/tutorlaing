@@ -34,7 +34,10 @@ class TelegramGateway(Protocol):
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None: ...
 
     def set_reply_keyboard(
-        self, chat_id: int, keyboard: ReplyKeyboard
+        self,
+        chat_id: int,
+        keyboard: ReplyKeyboard,
+        placeholder: str | None = None,
     ) -> None: ...
 
     def send_temporary_message(
@@ -170,6 +173,14 @@ class QuestStore(Protocol):
     def quest_history(self, chat_id: int, target_language: str) -> list[Any]: ...
 
 
+class TextInboxStore(Protocol):
+    """Owner-scoped persistence port for actions on standalone phrases."""
+
+    def save_text_inbox(self, chat_id: int, text: str) -> int: ...
+
+    def text_inbox(self, chat_id: int, inbox_id: int) -> Any: ...
+
+
 class UpdateStore(Protocol):
     def claim_update(self, update_id: int) -> bool: ...
 
@@ -179,10 +190,21 @@ class UpdateStore(Protocol):
 
 
 class UpdateTarget(Protocol):
-    def handle_text(self, chat_id: int, first_name: str, text: str) -> None: ...
+    def handle_text(
+        self,
+        chat_id: int,
+        first_name: str,
+        text: str,
+        message_id: int | None = None,
+    ) -> None: ...
 
     def handle_callback(
-        self, chat_id: int, first_name: str, callback_id: str, data: str
+        self,
+        chat_id: int,
+        first_name: str,
+        callback_id: str,
+        data: str,
+        message_id: int | None = None,
     ) -> None: ...
 
 
