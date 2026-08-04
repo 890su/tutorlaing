@@ -2194,6 +2194,7 @@ class TutorlaingBot:
             if user["toolkit_input_mode"]:
                 self.storage.set_user_state(chat_id, toolkit_input_mode=None)
                 user = self.storage.get_user(chat_id)
+            self.menu.refresh_navigation(chat_id)
             if navigation_action == "home":
                 self.home(chat_id)
             elif navigation_action == "learn":

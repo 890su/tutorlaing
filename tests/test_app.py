@@ -1015,6 +1015,7 @@ class AppFlowTests(unittest.TestCase):
         self.assertNotEqual(old_workspace, new_workspace)
         self.assertIn((chat_id, 991), self.telegram.deleted)
         self.assertIn("ПРОГРЕСС", self.telegram.messages[-1]["text"])
+        self.assertEqual(["⌂ Главное меню"], self.telegram.reply_keyboards[-1][0])
 
     def test_inline_callback_edits_the_card_that_was_clicked(self) -> None:
         chat_id = 281
