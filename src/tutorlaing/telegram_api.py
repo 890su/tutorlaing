@@ -100,14 +100,20 @@ class TelegramAPI:
         chat_id: int,
         keyboard: ReplyKeyboard,
         placeholder: str | None = None,
+        notice: str | None = None,
     ) -> None:
-        """Install persistent bottom navigation without leaving a service message."""
+        """Install persistent navigation using one retained carrier message.
 
-        result = self.call(
+        Telegram clients can hide a reply keyboard when its carrier message is
+        deleted.  The caller therefore version-gates this operation and the
+        concise carrier remains immediately above the real destination screen.
+        """
+
+        self.call(
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": "⌨️",
+                "text": notice or "⌨️ Нижнее меню включено.",
                 "reply_markup": {
                     "keyboard": [
                         [{"text": label} for label in row] for row in keyboard
@@ -121,11 +127,6 @@ class TelegramAPI:
                 },
             },
         )
-        if isinstance(result, dict) and result.get("message_id"):
-            try:
-                self.delete_message(chat_id, int(result["message_id"]))
-            except TelegramError:
-                LOGGER.info("Could not delete reply-keyboard service message", exc_info=True)
 
     def send_temporary_message(
         self, chat_id: int, text: str, ttl_seconds: int = 5

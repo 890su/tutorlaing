@@ -2435,6 +2435,7 @@ class TutorlaingBot:
                 self.storage.set_language(chat_id, field, language)
                 if field == "instruction_language":
                     self.menu.refresh_navigation(chat_id)
+                    self.workspace.start_new_surface(chat_id)
                 self.show_learning_settings(chat_id)
         elif data == "settings:level":
             self.show_level_choices(chat_id)

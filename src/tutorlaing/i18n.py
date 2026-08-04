@@ -12,6 +12,7 @@ CATALOG: dict[str, dict[str, str]] = {
     "navigation.progress": {"ru": "📍 Прогресс", "uk": "📍 Прогрес", "en": "📍 Progress", "pl": "📍 Postęp"},
     "navigation.settings": {"ru": "⚙ Настройки", "uk": "⚙ Налаштування", "en": "⚙ Settings", "pl": "⚙ Ustawienia"},
     "navigation.placeholder": {"ru": "Выберите раздел или напишите фразу", "uk": "Оберіть розділ або напишіть фразу", "en": "Choose a section or write a phrase", "pl": "Wybierz sekcję albo napisz zwrot"},
+    "navigation.ready": {"ru": "⌨️ Нижнее меню включено.", "uk": "⌨️ Нижнє меню ввімкнено.", "en": "⌨️ Bottom menu enabled.", "pl": "⌨️ Dolne menu jest włączone."},
     "task.level_label": {"ru": "Уровень: {level}", "uk": "Рівень: {level}", "en": "Level: {level}", "pl": "Poziom: {level}"},
     "task.level.A0": {"ru": "Опора: {chunk}\nМожно ответить 2–5 словами.", "uk": "Опора: {chunk}\nМожна відповісти 2–5 словами.", "en": "Model: {chunk}\nA 2–5 word reply is enough.", "pl": "Wzór: {chunk}\nWystarczy odpowiedź z 2–5 słów."},
     "task.level.A1": {"ru": "Опора: {chunk}\nОтветьте одним коротким предложением.", "uk": "Опора: {chunk}\nДайте відповідь одним коротким реченням.", "en": "Starter: {chunk}\nReply with one short sentence.", "pl": "Podpowiedź: {chunk}\nOdpowiedz jednym krótkim zdaniem."},
