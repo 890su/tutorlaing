@@ -45,16 +45,25 @@ class TelegramUpdateDispatcher:
                 )
                 return
             first_name = str(message.get("from", {}).get("first_name", ""))
-            self.target.handle_text(chat_id, first_name, str(text))
+            if message.get("message_id"):
+                self.target.handle_text(
+                    chat_id, first_name, str(text), int(message["message_id"])
+                )
+            else:
+                self.target.handle_text(chat_id, first_name, str(text))
             return
 
         if "callback_query" in update:
             callback = update["callback_query"]
             message = callback.get("message")
             if message:
-                self.target.handle_callback(
+                values = (
                     int(message["chat"]["id"]),
                     str(callback.get("from", {}).get("first_name", "")),
                     str(callback["id"]),
                     str(callback.get("data", "")),
                 )
+                if message.get("message_id"):
+                    self.target.handle_callback(*values, int(message["message_id"]))
+                else:
+                    self.target.handle_callback(*values)

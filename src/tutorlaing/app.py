@@ -18,7 +18,7 @@ from .ai import (
 )
 from .config import Settings
 from .catalog import ScenarioCatalog
-from .content import Scenario
+from .content import Scenario, ScenarioStep
 from .engine import (
     normalize,
     review_due_at,
@@ -42,7 +42,7 @@ from .quest_engine import QuestTransition, answer_free, choose
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
 from .telegram_api import TelegramAPI, TelegramError
-from .toolkit import PracticeToolkit
+from .toolkit import LANGUAGE_LABELS, PracticeToolkit
 from .ui import card, progress, route
 from .workspace import TelegramWorkspace
 from .update_dispatcher import TelegramUpdateDispatcher
@@ -156,6 +156,18 @@ class TutorlaingBot:
 
     def _notice(self, chat_id: int, text: str) -> None:
         self.telegram.send_temporary_message(chat_id, text)
+
+    def _focus_new_surface(
+        self, chat_id: int, incoming_message_id: int | None = None
+    ) -> None:
+        """Put a navigation result below the learner's latest message."""
+
+        if incoming_message_id is not None:
+            try:
+                self.telegram.delete_message(chat_id, incoming_message_id)
+            except TelegramError:
+                LOGGER.debug("Could not delete reply-navigation message", exc_info=True)
+        self.workspace.start_new_surface(chat_id)
 
     def home(self, chat_id: int) -> None:
         self.menu.home(chat_id)
@@ -1181,6 +1193,177 @@ class TutorlaingBot:
     def explain_custom_grammar(self, chat_id: int, fragment: str) -> None:
         self.feedback.explain_custom_grammar(chat_id, fragment)
 
+    def offer_text_actions(self, chat_id: int, text: str) -> None:
+        phrase = text.strip()
+        if not phrase:
+            self.home(chat_id)
+            return
+        inbox_id = self.storage.save_text_inbox(chat_id, phrase)
+        user = self.storage.get_user(chat_id)
+        language = self._language(chat_id)
+        target = LANGUAGE_LABELS.get(
+            str(user["target_language"]), str(user["target_language"])
+        )
+        translation = LANGUAGE_LABELS.get(
+            str(user["translation_language"]), str(user["translation_language"])
+        )
+        keyboard: list[list[dict[str, str]]] = [
+            [
+                {
+                    "text": self._t(
+                        chat_id, "text_action.translate_to", name=target
+                    ),
+                    "callback_data": f"text:translate:{inbox_id}:to_target",
+                }
+            ]
+        ]
+        if str(user["translation_language"]) != str(user["target_language"]):
+            keyboard.append(
+                [
+                    {
+                        "text": self._t(
+                            chat_id,
+                            "text_action.translate_to",
+                            name=translation,
+                        ),
+                        "callback_data": f"text:translate:{inbox_id}:from_target",
+                    }
+                ]
+            )
+        keyboard.extend(
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "text_action.check"),
+                        "callback_data": f"text:check:{inbox_id}",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "text_action.grammar"),
+                        "callback_data": f"text:grammar:{inbox_id}",
+                    }
+                ],
+                home_row(language),
+            ]
+        )
+        preview = phrase if len(phrase) <= 800 else phrase[:797] + "…"
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, "text_action.title"),
+                self._t(chat_id, "text_action.summary", text=preview),
+            ),
+            keyboard,
+            force_new=True,
+            surface="text_actions",
+        )
+
+    def translate_text_inbox(self, chat_id: int, inbox_id: int, mode: str) -> None:
+        try:
+            phrase = str(self.storage.text_inbox(chat_id, inbox_id)["text"])
+        except KeyError:
+            self._notice(chat_id, self._t(chat_id, "text_action.expired"))
+            return
+        self.storage.set_user_state(chat_id, toolkit_input_mode=mode)
+        self.toolkit.handle_phrase(chat_id, phrase)
+
+    def analyze_text_inbox(
+        self, chat_id: int, inbox_id: int, *, grammar: bool = False
+    ) -> None:
+        try:
+            phrase = str(self.storage.text_inbox(chat_id, inbox_id)["text"])
+        except KeyError:
+            self._notice(chat_id, self._t(chat_id, "text_action.expired"))
+            return
+        if self.ai is None:
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "toolkit.error_title"),
+                    self._t(chat_id, "text_action.ai_unavailable"),
+                ),
+                [home_row(self._language(chat_id))],
+                surface="text_action_error",
+            )
+            return
+        user = self.storage.get_user(chat_id)
+        step = ScenarioStep(
+            id="standalone-phrase",
+            interlocutor_pl="",
+            context_ru=self._t(chat_id, "text_action.check_context"),
+            hint_ru="",
+            expected_groups=(),
+            target_chunk=phrase,
+            bottleneck_ru="",
+            task_blocking=False,
+        )
+        try:
+            self.telegram.send_chat_action(chat_id, "typing")
+        except TelegramError:
+            LOGGER.debug("Could not send text-check typing action", exc_info=True)
+        self.storage.event(
+            chat_id,
+            "ai_analysis_requested",
+            {"operation": "standalone_phrase", "inbox_id": inbox_id},
+        )
+        try:
+            analysis = self.ai.analyze_response(
+                step,
+                phrase,
+                str(user["instruction_language"]),
+                str(user["target_language"]),
+                0.5,
+                practice_level(user),
+            )
+        except AIError:
+            LOGGER.exception("Standalone phrase analysis failed")
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "toolkit.error_title"),
+                    self._t(chat_id, "text_action.ai_unavailable"),
+                ),
+                [
+                    [
+                        {
+                            "text": self._t(chat_id, "toolkit.retry"),
+                            "callback_data": (
+                                f"text:grammar:{inbox_id}"
+                                if grammar
+                                else f"text:check:{inbox_id}"
+                            ),
+                        }
+                    ],
+                    home_row(self._language(chat_id)),
+                ],
+                surface="text_action_error",
+            )
+            return
+        analysis_id = self.storage.add_ai_analysis(
+            chat_id=chat_id,
+            operation="standalone_phrase",
+            target_language=str(user["target_language"]),
+            source_text=phrase,
+            result=analysis.to_dict(),
+            provider=analysis.provider,
+            model=analysis.model,
+            prompt_version=analysis.prompt_version,
+            latency_ms=analysis.latency_ms,
+            usage=analysis.usage,
+        )
+        self.storage.event(
+            chat_id,
+            "ai_analysis_completed",
+            {"operation": "standalone_phrase", "analysis_id": analysis_id},
+        )
+        if grammar:
+            self.feedback.explain_grammar(chat_id, analysis_id, "all")
+        else:
+            self.feedback.show_result(
+                chat_id, analysis, analysis_id, standalone=True
+            )
+
     def translate_analysis(self, chat_id: int, analysis_id: int) -> None:
         self.feedback.translate_analysis(chat_id, analysis_id)
 
@@ -1953,7 +2136,13 @@ class TutorlaingBot:
                 [home_row(self._language(chat_id))],
             )
 
-    def handle_text(self, chat_id: int, first_name: str, text: str) -> None:
+    def handle_text(
+        self,
+        chat_id: int,
+        first_name: str,
+        text: str,
+        message_id: int | None = None,
+    ) -> None:
         if not self.is_allowed(chat_id):
             self.telegram.send_message(chat_id, "Сейчас доступна только закрытая alpha.")
             return
@@ -1963,6 +2152,23 @@ class TutorlaingBot:
         if command.startswith("/") and user["toolkit_input_mode"]:
             self.storage.set_user_state(chat_id, toolkit_input_mode=None)
             user = self.storage.get_user(chat_id)
+        if command in {
+            "/start",
+            "/menu",
+            "/privacy",
+            "/delete_me",
+            "/settings",
+            "/progress",
+            "/tools",
+            "/toolkit",
+            "/reminders",
+            "/drill",
+            "/scenarios",
+            "/quests",
+            "/review",
+            "/review_now",
+        }:
+            self._focus_new_surface(chat_id, message_id)
         if command in {"/start", "/menu"}:
             self.start(chat_id, first_name)
             return
@@ -1984,10 +2190,13 @@ class TutorlaingBot:
             return
         navigation_action = reply_action(text)
         if navigation_action:
+            self._focus_new_surface(chat_id, message_id)
             if user["toolkit_input_mode"]:
                 self.storage.set_user_state(chat_id, toolkit_input_mode=None)
                 user = self.storage.get_user(chat_id)
-            if navigation_action == "learn":
+            if navigation_action == "home":
+                self.home(chat_id)
+            elif navigation_action == "learn":
                 if self.menu.resume_action(user):
                     self.resume_activity(chat_id)
                 elif self.storage.pending_reviews(chat_id):
@@ -2050,16 +2259,17 @@ class TutorlaingBot:
         elif stage == "quest":
             self.handle_quest_text(chat_id, text, user)
         elif stage == "waiting":
-            self.telegram.send_message(
-                chat_id,
-                self._drill_continuation_text(chat_id),
-                [[{"text": "Следующее задание →", "callback_data": "assignment:next"}]],
-            )
+            self.offer_text_actions(chat_id, text)
         else:
-            self.home(chat_id)
+            self.offer_text_actions(chat_id, text)
 
     def handle_callback(
-        self, chat_id: int, first_name: str, callback_id: str, data: str
+        self,
+        chat_id: int,
+        first_name: str,
+        callback_id: str,
+        data: str,
+        message_id: int | None = None,
     ) -> None:
         if not self.is_allowed(chat_id):
             self.telegram.answer_callback(callback_id, "Закрытая alpha")
@@ -2070,6 +2280,9 @@ class TutorlaingBot:
             self.telegram.answer_callback(callback_id)
         except TelegramError:
             LOGGER.warning("Could not acknowledge callback", exc_info=True)
+        if message_id is not None:
+            self.workspace.focus_message(chat_id, message_id)
+            user = self.storage.get_user(chat_id)
 
         if (
             user["toolkit_input_mode"]
@@ -2097,6 +2310,15 @@ class TutorlaingBot:
             self.home(chat_id)
         elif data == "toolkit":
             self.toolkit.show_menu(chat_id)
+        elif data.startswith("text:translate:"):
+            _, _, inbox_id, mode = data.split(":", 3)
+            self.translate_text_inbox(chat_id, int(inbox_id), mode)
+        elif data.startswith("text:check:"):
+            self.analyze_text_inbox(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("text:grammar:"):
+            self.analyze_text_inbox(
+                chat_id, int(data.rsplit(":", 1)[1]), grammar=True
+            )
         elif data == "quests:list":
             self.show_quests(chat_id)
         elif data.startswith("quest:start:"):

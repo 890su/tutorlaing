@@ -77,6 +77,13 @@ class Storage:
             updated_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS text_inbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            text TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
@@ -323,6 +330,8 @@ class Storage:
             ON quest_sessions(chat_id, status, started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_quest_attempts_session
             ON quest_attempts(quest_session_id, id);
+        CREATE INDEX IF NOT EXISTS idx_text_inbox_chat
+            ON text_inbox(chat_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
             ON ai_analyses(chat_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_drill_sessions_chat
@@ -519,6 +528,37 @@ class Storage:
             self._connection.execute(
                 f"UPDATE users SET {assignments} WHERE chat_id = ?", parameters
             )
+
+    def save_text_inbox(self, chat_id: int, text: str) -> int:
+        """Persist a free phrase so short callback payloads can reference it safely."""
+
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "INSERT INTO text_inbox(chat_id, text, created_at) VALUES (?, ?, ?)",
+                (chat_id, text[:4000], utc_now()),
+            )
+            inbox_id = int(cursor.lastrowid)
+            self._connection.execute(
+                """
+                DELETE FROM text_inbox WHERE chat_id = ? AND id NOT IN (
+                    SELECT id FROM text_inbox WHERE chat_id = ?
+                    ORDER BY id DESC LIMIT 20
+                )
+                """,
+                (chat_id, chat_id),
+            )
+        self.event(chat_id, "free_text_actions_offered", {"inbox_id": inbox_id})
+        return inbox_id
+
+    def text_inbox(self, chat_id: int, inbox_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM text_inbox WHERE id = ? AND chat_id = ?",
+                (inbox_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Text inbox item not found: {inbox_id}")
+        return row
 
     def suspend_activity(self, chat_id: int) -> bool:
         """Move the current learning activity aside for a temporary tool drill."""
@@ -912,7 +952,8 @@ class Storage:
             return self._connection.execute(
                 f"""
                 SELECT * FROM ai_analyses
-                WHERE chat_id = ? AND operation = 'response_analysis'
+                WHERE chat_id = ?
+                  AND operation IN ('response_analysis', 'standalone_phrase')
                 {language_filter}
                 ORDER BY id DESC LIMIT 1
                 """,

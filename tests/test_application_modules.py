@@ -34,7 +34,9 @@ class FakeTelegram:
     def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         return None
 
-    def set_reply_keyboard(self, chat_id: int, keyboard: list[list[str]]) -> None:
+    def set_reply_keyboard(
+        self, chat_id: int, keyboard: list[list[str]], placeholder: str | None = None
+    ) -> None:
         self.reply_keyboards.append(keyboard)
 
     def delete_message(self, chat_id: int, message_id: int) -> None:
@@ -52,15 +54,24 @@ class Target:
         self.calls: list[tuple[Any, ...]] = []
         self.should_fail = False
 
-    def handle_text(self, chat_id: int, first_name: str, text: str) -> None:
+    def handle_text(
+        self, chat_id: int, first_name: str, text: str, message_id: int | None = None
+    ) -> None:
         if self.should_fail:
             raise RuntimeError("failed")
-        self.calls.append(("text", chat_id, first_name, text))
+        self.calls.append(("text", chat_id, first_name, text, message_id))
 
     def handle_callback(
-        self, chat_id: int, first_name: str, callback_id: str, data: str
+        self,
+        chat_id: int,
+        first_name: str,
+        callback_id: str,
+        data: str,
+        message_id: int | None = None,
     ) -> None:
-        self.calls.append(("callback", chat_id, first_name, callback_id, data))
+        self.calls.append(
+            ("callback", chat_id, first_name, callback_id, data, message_id)
+        )
 
 
 class ApplicationModuleTests(unittest.TestCase):
@@ -126,7 +137,7 @@ class ApplicationModuleTests(unittest.TestCase):
         dispatcher.dispatch(update)
         dispatcher.dispatch(update)
 
-        self.assertEqual([("text", 42, "Igor", "Cześć")], target.calls)
+        self.assertEqual([("text", 42, "Igor", "Cześć", None)], target.calls)
 
     def test_update_dispatcher_releases_failed_update_for_retry(self) -> None:
         telegram = FakeTelegram()
@@ -143,7 +154,42 @@ class ApplicationModuleTests(unittest.TestCase):
 
         dispatcher.dispatch(update)
 
-        self.assertEqual([("text", 42, "", "retry")], target.calls)
+        self.assertEqual([("text", 42, "", "retry", None)], target.calls)
+
+    def test_update_dispatcher_forwards_visible_message_ids(self) -> None:
+        target = Target()
+        dispatcher = TelegramUpdateDispatcher(self.storage, FakeTelegram(), target)
+
+        dispatcher.dispatch(
+            {
+                "update_id": 93,
+                "message": {
+                    "message_id": 501,
+                    "chat": {"id": 42},
+                    "from": {"first_name": "Igor"},
+                    "text": "⌂ Главное меню",
+                },
+            }
+        )
+        dispatcher.dispatch(
+            {
+                "update_id": 94,
+                "callback_query": {
+                    "id": "cb",
+                    "data": "home",
+                    "from": {"first_name": "Igor"},
+                    "message": {"message_id": 502, "chat": {"id": 42}},
+                },
+            }
+        )
+
+        self.assertEqual(
+            [
+                ("text", 42, "Igor", "⌂ Главное меню", 501),
+                ("callback", 42, "Igor", "cb", "home", 502),
+            ],
+            target.calls,
+        )
 
     def test_catalog_has_isolated_polish_and_english_courses(self) -> None:
         catalog = ScenarioCatalog()

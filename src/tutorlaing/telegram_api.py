@@ -96,7 +96,10 @@ class TelegramAPI:
         self.call("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
 
     def set_reply_keyboard(
-        self, chat_id: int, keyboard: ReplyKeyboard
+        self,
+        chat_id: int,
+        keyboard: ReplyKeyboard,
+        placeholder: str | None = None,
     ) -> None:
         """Install persistent bottom navigation without leaving a service message."""
 
@@ -112,7 +115,9 @@ class TelegramAPI:
                     "resize_keyboard": True,
                     "is_persistent": True,
                     "one_time_keyboard": False,
-                    "input_field_placeholder": "Выберите раздел или напишите ответ",
+                    "input_field_placeholder": (
+                        placeholder or "Выберите раздел или напишите фразу"
+                    )[:64],
                 },
             },
         )

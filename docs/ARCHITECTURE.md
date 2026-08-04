@@ -246,3 +246,15 @@ Quest Engine разделён на четыре слоя:
 Quest является main activity (`stage=quest`). Toolkit не знает его внутренней
 модели: он сохраняет и возвращает `current_quest` через общий activity snapshot.
 Reminder delivery также не вычисляет переходы, а только рендерит сохранённый узел.
+
+## Telegram message focus and text inbox
+
+`TelegramUpdateDispatcher` передаёт application layer message id входящего
+reply и callback. `TelegramWorkspace.start_new_surface` применяется к глобальной
+reply-навигации, а `focus_message` — к inline callback. Благодаря этому политика
+видимости не зависит от последнего сохранённого message id.
+
+`text_inbox` хранит не более 20 последних свободных фраз пользователя и отделён
+от learning activity. Callback с inbox id проходит owner check; перевод
+делегируется существующему toolkit, standalone check — существующему AI analysis
+contract, grammar — `FeedbackPresenter`. Удаление профиля каскадно удаляет inbox.

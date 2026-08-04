@@ -21,8 +21,23 @@ class TelegramWorkspace:
         self.store = store
         self.telegram = telegram
 
-    def set_reply_keyboard(self, chat_id: int, keyboard: ReplyKeyboard) -> None:
-        self.telegram.set_reply_keyboard(chat_id, keyboard)
+    def set_reply_keyboard(
+        self,
+        chat_id: int,
+        keyboard: ReplyKeyboard,
+        placeholder: str | None = None,
+    ) -> None:
+        self.telegram.set_reply_keyboard(chat_id, keyboard, placeholder)
+
+    def start_new_surface(self, chat_id: int) -> None:
+        """Make the next render a fresh message at the bottom of the chat."""
+
+        self.store.set_user_state(chat_id, workspace_message_id=None)
+
+    def focus_message(self, chat_id: int, message_id: int) -> None:
+        """Route an inline callback back to the card the learner can see."""
+
+        self.store.set_user_state(chat_id, workspace_message_id=message_id)
 
     def show(
         self,
