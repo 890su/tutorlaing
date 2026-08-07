@@ -639,6 +639,12 @@ class TutorlaingBot:
             accepted_answers=list(draft.accepted_answers),
             explanation=draft.explanation,
         )
+        keyboard = [
+            [{"text": self._t(chat_id, "toolkit.forgot"), "callback_data": f"background:reveal:{card_id}"}],
+            [{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}],
+        ]
+        if scheduled:
+            keyboard.extend(self._scheduled_reminder_controls(chat_id))
         self._workspace(
             chat_id,
             card(
@@ -647,10 +653,7 @@ class TutorlaingBot:
                 f"{prompt}\n\n{draft.context}\n\n"
                 f"{self._t(chat_id, 'background.write')}",
             ),
-            [
-                [{"text": self._t(chat_id, "toolkit.forgot"), "callback_data": f"background:reveal:{card_id}"}],
-                [{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}],
-            ],
+            keyboard,
             force_new=scheduled,
             surface="background_card",
         )
@@ -934,6 +937,8 @@ class TutorlaingBot:
                 ],
             ]
         )
+        if scheduled:
+            keyboard.extend(self._scheduled_reminder_controls(chat_id))
         self._workspace(
             chat_id,
             "\n\n".join(body),
@@ -2395,12 +2400,7 @@ class TutorlaingBot:
                 ]
             )
         if scheduled:
-            keyboard.append(
-                [
-                    {"text": self._t(chat_id, "action.pause"), "callback_data": "reminder:pause"},
-                    {"text": self._t(chat_id, "action.reminders"), "callback_data": "reminders"},
-                ]
-            )
+            keyboard.extend(self._scheduled_reminder_controls(chat_id))
         keyboard.append(
             [{"text": self._t(chat_id, "coach.open"), "callback_data": "coach:open"}]
         )
@@ -2755,6 +2755,17 @@ class TutorlaingBot:
             ],
             surface="finish_confirmation",
         )
+
+    def _scheduled_reminder_controls(self, chat_id: int) -> list[list[dict[str, str]]]:
+        """Keep every proactive card dismissible in the same way."""
+
+        return [
+            [
+                {"text": self._t(chat_id, "action.snooze"), "callback_data": "reminder:snooze:2h"},
+                {"text": self._t(chat_id, "action.pause"), "callback_data": "reminder:pause"},
+            ],
+            [{"text": self._t(chat_id, "action.reminders"), "callback_data": "reminders"}],
+        ]
 
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
         user = self.storage.get_user(chat_id)
