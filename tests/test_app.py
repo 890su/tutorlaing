@@ -518,7 +518,7 @@ class AppFlowTests(unittest.TestCase):
             for row in self.telegram.messages[-1]["keyboard"]
             for button in row
         ]
-        self.assertIn("Слова и смысл · текущая тема", labels)
+        self.assertIn("Синонимы и смысл фраз · текущая тема", labels)
         self.assertIn("Переводные карточки · 4 варианта", labels)
         self.assertIn("background:menu:toolkit", callbacks)
 
@@ -534,13 +534,14 @@ class AppFlowTests(unittest.TestCase):
         )
 
         menu = self.telegram.messages[-1]
-        self.assertIn("СЛОВА И СМЫСЛ", menu["text"])
+        self.assertIn("СИНОНИМЫ И СМЫСЛ ФРАЗ", menu["text"])
         self.assertIn("Синонимы и близкие формулировки", menu["text"])
         callbacks = [row[0]["callback_data"] for row in menu["keyboard"]]
-        self.assertEqual(["background:start", "toolkit"], callbacks)
+        self.assertIn("background:start:synonym", callbacks)
+        self.assertEqual("toolkit", callbacks[-1])
 
         self.bot.handle_callback(
-            chat_id, "Learner", "semantic-start", "background:start"
+            chat_id, "Learner", "semantic-start", "background:start:synonym"
         )
 
         current = self.storage.get_user(chat_id)
@@ -563,7 +564,7 @@ class AppFlowTests(unittest.TestCase):
             for row in self.telegram.messages[-1]["keyboard"]
         ]
         self.assertEqual(
-            ["background:start", "background:return"], feedback_callbacks
+            ["background:menu:toolkit", "background:return"], feedback_callbacks
         )
         self.assertEqual(0, self.storage.get_user(chat_id)["current_step"])
 

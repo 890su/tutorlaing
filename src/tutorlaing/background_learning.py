@@ -53,9 +53,13 @@ class BackgroundLearningService:
         context: dict[str, Any],
         *,
         semantic_only: bool = False,
+        semantic_kind: str | None = None,
     ) -> BackgroundCardDraft | None:
         selection = self._select_source(
-            chat_id, context, semantic_only=semantic_only
+            chat_id,
+            context,
+            semantic_only=semantic_only,
+            semantic_kind=semantic_kind,
         )
         if selection is None:
             return None
@@ -67,7 +71,9 @@ class BackgroundLearningService:
         semantic_cards = learning_card_seeds(selected.get("learning_cards"))
         semantic_kinds = tuple(card.kind for card in semantic_cards)
         card_type = (
-            self._next_semantic_type(recent, semantic_kinds)
+            semantic_kind
+            if semantic_kind is not None
+            else self._next_semantic_type(recent, semantic_kinds)
             if semantic_only
             else self._next_type(recent, reference, semantic_kinds)
         )
@@ -110,6 +116,7 @@ class BackgroundLearningService:
         context: dict[str, Any],
         *,
         semantic_only: bool = False,
+        semantic_kind: str | None = None,
     ) -> tuple[str, dict[str, Any]] | None:
         pools: dict[str, list[dict[str, Any]]] = {
             "current_activity": [context],
@@ -118,12 +125,19 @@ class BackgroundLearningService:
             ),
             "older_due": self._candidate_list(context.get("due_candidates")),
         }
-        if semantic_only:
+        if semantic_only or semantic_kind is not None:
             pools = {
                 reason: [
                     candidate
                     for candidate in candidates
-                    if learning_card_seeds(candidate.get("learning_cards"))
+                    if any(
+                        card.kind == semantic_kind
+                        if semantic_kind is not None
+                        else True
+                        for card in learning_card_seeds(
+                            candidate.get("learning_cards")
+                        )
+                    )
                 ]
                 for reason, candidates in pools.items()
             }

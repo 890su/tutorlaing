@@ -185,6 +185,46 @@ class BackgroundLearningTests(unittest.TestCase):
         self.assertEqual("synonym", draft.card_type)
         self.assertEqual("mam ból gardła", draft.correct_answer)
 
+    def test_requested_semantic_kind_uses_that_kind_from_a_related_topic(self) -> None:
+        service = BackgroundLearningService(FakeStore())
+
+        draft = service.build(
+            42,
+            "scenario",
+            "session-1",
+            {
+                "reference": "Boli mnie gardło.",
+                "task": "Opisz objaw.",
+                "learning_cards": [
+                    {
+                        "kind": "synonym",
+                        "cue": "Jak inaczej powiedzieć: «boli mnie gardło»?",
+                        "answer": "mam ból gardła",
+                    }
+                ],
+                "related_candidates": [
+                    {
+                        "reference": "Termin mi pasuje.",
+                        "task": "Potwierdź termin.",
+                        "learning_cards": [
+                            {
+                                "kind": "meaning_in_context",
+                                "cue": "Co znaczy «pasuje» przy umawianiu wizyty?",
+                                "answer": "termin jest odpowiedni",
+                            }
+                        ],
+                    }
+                ],
+            },
+            semantic_only=True,
+            semantic_kind="meaning_in_context",
+        )
+
+        self.assertIsNotNone(draft)
+        self.assertEqual("meaning_in_context", draft.card_type)
+        self.assertEqual("related_activity", draft.reason)
+        self.assertEqual("termin jest odpowiedni", draft.correct_answer)
+
     def test_semantic_only_mode_returns_none_without_authored_material(self) -> None:
         service = BackgroundLearningService(FakeStore())
 

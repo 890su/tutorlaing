@@ -563,10 +563,11 @@ class TutorlaingBot:
             keyboard: list[list[dict[str, str]]] = [
                 [
                     {
-                        "text": self._t(chat_id, "background.start"),
-                        "callback_data": "background:start",
+                        "text": self._t(chat_id, f"background.kind.{kind}"),
+                        "callback_data": f"background:start:{kind}",
                     }
                 ]
+                for kind in kinds
             ]
         else:
             body = self._t(chat_id, "background.menu_unavailable")
@@ -600,8 +601,12 @@ class TutorlaingBot:
             surface="background_menu",
         )
 
-    def start_semantic_practice(self, chat_id: int) -> None:
-        if not self._send_background_card(chat_id, semantic_only=True):
+    def start_semantic_practice(
+        self, chat_id: int, semantic_kind: str | None = None
+    ) -> None:
+        if not self._send_background_card(
+            chat_id, semantic_only=True, semantic_kind=semantic_kind
+        ):
             self.show_semantic_practice(chat_id)
 
     def _send_background_card(
@@ -610,6 +615,7 @@ class TutorlaingBot:
         *,
         scheduled: bool = False,
         semantic_only: bool = False,
+        semantic_kind: str | None = None,
     ) -> bool:
         semantic_context = self._semantic_practice_context(chat_id)
         if semantic_context is None:
@@ -621,6 +627,7 @@ class TutorlaingBot:
             activity_id,
             context,
             semantic_only=semantic_only,
+            semantic_kind=semantic_kind,
         )
         if draft is None:
             return False
@@ -692,7 +699,7 @@ class TutorlaingBot:
                 [
                     {
                         "text": self._t(chat_id, "background.more"),
-                        "callback_data": "background:start",
+                        "callback_data": "background:menu:toolkit",
                     }
                 ],
             )
@@ -718,7 +725,7 @@ class TutorlaingBot:
                 [
                     {
                         "text": self._t(chat_id, "background.more"),
-                        "callback_data": "background:start",
+                        "callback_data": "background:menu:toolkit",
                     }
                 ],
             )
@@ -3161,6 +3168,12 @@ class TutorlaingBot:
             )
         elif data == "background:start":
             self.start_semantic_practice(chat_id)
+        elif data.startswith("background:start:"):
+            semantic_kind = data.rsplit(":", 1)[1]
+            if semantic_kind in LEARNING_CARD_KINDS:
+                self.start_semantic_practice(chat_id, semantic_kind)
+            else:
+                self.show_semantic_practice(chat_id)
         elif data.startswith("background:reveal:"):
             self.reveal_background_card(chat_id, int(data.rsplit(":", 1)[1]))
         elif data == "background:return":
