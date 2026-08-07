@@ -88,16 +88,17 @@ flowchart LR
 | `app.py` | Composition root и orchestration учебной state machine | concrete adapters + application services | Переходы scenario/practice/review/drill |
 | `storage.py` | SQLite schema, migrations и транзакционные операции | вызовы портов | Персистентное состояние и audit events |
 
-Telegram-навигация имеет три непересекающихся слоя. Reply keyboard v5 отвечает
-только за четыре постоянных назначения (`Сегодня`, `Мои занятия`, `Практика`,
-`Инструменты`). Inline callback относится к действию видимой карточки и при
+Telegram-навигация имеет три непересекающихся слоя. Reply keyboard v6 отвечает
+только за четыре постоянных назначения (`Сегодня`, `Учиться`, `Помощник`,
+`Профиль`). Внутренние форматы выбираются внутри `Учиться`, а `Мои занятия`
+сохраняет параллельную работу. Inline callback относится к действию видимой карточки и при
 необходимости несёт identity объекта. `commands.py` открывает те же верхние
 разделы и служебные команды (`help`, `grammar`, privacy, deletion). `app.py`
 отсекает неизвестные slash-команды и устаревшие callback до маршрутизации
 ответа учебному занятию.
 
 `Слова и смысл` является одним activity-linked use case с двумя discovery links:
-из `Практики` и первым пунктом `Инструментов`. Оба callback вызывают один экран
+из быстрой практики в `Учиться` и из `Помощника`. Оба callback вызывают один экран
 и один semantic-only selector. Это допустимое перекрёстное обнаружение, а не
 дублирование state: карточка хранит один `background_card_id`, а foreground
 session и position не меняются. Полная карта находится в `docs/MENU_MAP.md`.

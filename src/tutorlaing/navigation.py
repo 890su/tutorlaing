@@ -5,9 +5,9 @@ from .i18n import tr
 
 REPLY_ACTION_KEYS = {
     "home": "navigation.today",
-    "activities": "navigation.activities",
-    "practice": "navigation.practice",
-    "tools": "navigation.tools",
+    "learn": "navigation.learn",
+    "assistant": "navigation.assistant",
+    "profile": "navigation.profile",
 }
 
 
@@ -46,11 +46,11 @@ def reply_navigation(language: str) -> list[list[str]]:
     return [
         [
             tr(language, REPLY_ACTION_KEYS["home"]),
-            tr(language, REPLY_ACTION_KEYS["activities"]),
+            tr(language, REPLY_ACTION_KEYS["learn"]),
         ],
         [
-            tr(language, REPLY_ACTION_KEYS["practice"]),
-            tr(language, REPLY_ACTION_KEYS["tools"]),
+            tr(language, REPLY_ACTION_KEYS["assistant"]),
+            tr(language, REPLY_ACTION_KEYS["profile"]),
         ],
     ]
 

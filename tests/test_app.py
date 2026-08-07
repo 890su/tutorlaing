@@ -452,8 +452,8 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                ["Сегодня", "Мои занятия"],
-                ["Практика", "🧰 Инструменты"],
+                ["Сегодня", "📚 Учиться"],
+                ["💬 Помощник", "👤 Профиль"],
             ],
             self.telegram.reply_keyboards[-1],
         )
@@ -470,8 +470,8 @@ class AppFlowTests(unittest.TestCase):
         self.storage.set_language(chat_id, "instruction_language", "pl")
         self.bot.menu.refresh_navigation(chat_id)
         self.assertEqual(2, len(self.telegram.reply_keyboards))
-        self.assertEqual(["Dzisiaj", "Moje zajęcia"], self.telegram.reply_keyboards[-1][0])
-        self.assertEqual(["Ćwiczenia", "🧰 Narzędzia"], self.telegram.reply_keyboards[-1][1])
+        self.assertEqual(["Dzisiaj", "📚 Ucz się"], self.telegram.reply_keyboards[-1][0])
+        self.assertEqual(["💬 Pomocnik", "👤 Profil"], self.telegram.reply_keyboards[-1][1])
 
     def test_bottom_navigation_opens_tools_and_cancels_phrase_input(self) -> None:
         chat_id = 36
@@ -479,10 +479,10 @@ class AppFlowTests(unittest.TestCase):
         self.storage.accept_consent(chat_id, CONSENT_VERSION)
         self.storage.set_user_state(chat_id, toolkit_input_mode="to_target")
 
-        self.bot.handle_text(chat_id, "Learner", "🧰 Инструменты")
+        self.bot.handle_text(chat_id, "Learner", "💬 Помощник")
 
         self.assertIsNone(self.storage.get_user(chat_id)["toolkit_input_mode"])
-        self.assertIn("МАСТЕРСКАЯ", self.telegram.messages[-1]["text"])
+        self.assertIn("ПОМОЩНИК С ФРАЗОЙ", self.telegram.messages[-1]["text"])
         labels = [
             button["text"]
             for row in self.telegram.messages[-1]["keyboard"]
@@ -1378,23 +1378,23 @@ class AppFlowTests(unittest.TestCase):
         self.bot.home(chat_id)
         old_workspace = int(self.storage.get_user(chat_id)["workspace_message_id"])
 
-        self.bot.handle_text(chat_id, "Learner", "Мои занятия", message_id=991)
+        self.bot.handle_text(chat_id, "Learner", "📚 Учиться", message_id=991)
 
         new_workspace = int(self.storage.get_user(chat_id)["workspace_message_id"])
         self.assertNotEqual(old_workspace, new_workspace)
         self.assertIn((chat_id, 991), self.telegram.deleted)
-        self.assertIn("МОИ ЗАНЯТИЯ", self.telegram.messages[-1]["text"])
-        self.assertEqual(["Сегодня", "Мои занятия"], self.telegram.reply_keyboards[-1][0])
+        self.assertIn("УЧИТЬСЯ", self.telegram.messages[-1]["text"])
+        self.assertEqual(["Сегодня", "📚 Учиться"], self.telegram.reply_keyboards[-1][0])
 
     def test_practice_hub_exposes_each_learning_mode_once(self) -> None:
         chat_id = 283
         self.storage.ensure_user(chat_id, "Learner")
         self.storage.accept_consent(chat_id, CONSENT_VERSION)
 
-        self.bot.handle_text(chat_id, "Learner", "Практика")
+        self.bot.handle_text(chat_id, "Learner", "📚 Учиться")
 
         message = self.telegram.messages[-1]
-        self.assertIn("ПРАКТИКА", message["text"])
+        self.assertIn("УЧИТЬСЯ", message["text"])
         callbacks = [
             button["callback_data"]
             for row in message["keyboard"]
@@ -1402,8 +1402,7 @@ class AppFlowTests(unittest.TestCase):
         ]
         self.assertEqual(
             [
-                "scenarios:list",
-                "quests:list",
+                "learn:conversation",
                 "background:menu:practice",
                 "reviews:list",
                 "drill:start",
@@ -1422,6 +1421,25 @@ class AppFlowTests(unittest.TestCase):
             "practice",
             self.telegram.messages[-1]["keyboard"][-1][0]["callback_data"],
         )
+
+    def test_conversation_depth_is_chosen_after_the_user_goal(self) -> None:
+        chat_id = 285
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.handle_text(chat_id, "Learner", "📚 Учиться")
+        self.bot.handle_callback(
+            chat_id, "Learner", "conversation", "learn:conversation"
+        )
+
+        message = self.telegram.messages[-1]
+        self.assertIn("ПОДГОТОВКА К РАЗГОВОРУ", message["text"])
+        callbacks = [
+            button["callback_data"]
+            for row in message["keyboard"]
+            for button in row
+        ]
+        self.assertEqual(["scenarios:list", "quests:list", "practice"], callbacks)
 
     def test_unknown_slash_command_never_becomes_a_task_answer(self) -> None:
         chat_id = 284

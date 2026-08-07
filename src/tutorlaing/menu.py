@@ -25,7 +25,7 @@ LANGUAGE_LABELS = {
     "pl": "Polski",
 }
 REMINDER_MODES = ("off", "gentle", "normal", "intensive", "aggressive")
-REPLY_KEYBOARD_VERSION = "navigation-v5"
+REPLY_KEYBOARD_VERSION = "navigation-v6"
 
 
 class LearnerMenu:
@@ -106,19 +106,14 @@ class LearnerMenu:
             )
         keyboard.extend(
             [
-                [
-                    {
-                        "text": tr(language, "navigation.practice"),
-                        "callback_data": "practice",
-                    }
-                ],
+                [{"text": tr(language, "navigation.learn"), "callback_data": "practice"}],
                 [
                     {
                         "text": tr(language, "action.progress"),
                         "callback_data": "progress",
                     },
                     {
-                        "text": tr(language, "navigation.settings"),
+                        "text": tr(language, "navigation.profile"),
                         "callback_data": "settings",
                     },
                 ],
@@ -390,6 +385,11 @@ class LearnerMenu:
         )
 
     def show_practice_hub(self, chat_id: int) -> None:
+        """Compatibility entry point for /practice and existing callbacks."""
+
+        self.show_learning_hub(chat_id)
+
+    def show_learning_hub(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
         language = str(user["instruction_language"])
         due_count = len(self.store.pending_reviews(chat_id))
@@ -413,24 +413,20 @@ class LearnerMenu:
             [
                 [
                     {
-                        "text": tr(language, "action.scenarios"),
-                        "callback_data": "scenarios:list",
-                    },
-                    {
-                        "text": tr(language, "practice.missions"),
-                        "callback_data": "quests:list",
-                    },
+                        "text": tr(language, "learn.prepare_conversation"),
+                        "callback_data": "learn:conversation",
+                    }
                 ],
                 [
                     {
-                        "text": tr(language, "background.open"),
+                        "text": tr(language, "learn.quick_practice"),
                         "callback_data": "background:menu:practice",
                     }
                 ],
                 [
                     {"text": review_label, "callback_data": "reviews:list"},
                     {
-                        "text": tr(language, "practice.focus"),
+                        "text": tr(language, "learn.work_on_weaknesses"),
                         "callback_data": "drill:start",
                     },
                 ],
@@ -440,11 +436,39 @@ class LearnerMenu:
         self.workspace.show(
             chat_id,
             card(
-                tr(language, "practice.title"),
-                tr(language, "practice.summary"),
+                tr(language, "learn.title"),
+                tr(language, "learn.summary"),
             ),
             keyboard,
-            surface="practice_hub",
+            surface="learning_hub",
+        )
+
+    def show_conversation_choices(self, chat_id: int) -> None:
+        """Choose the depth of a real-life preparation after its goal is clear."""
+
+        language = self._language(chat_id)
+        self.workspace.show(
+            chat_id,
+            card(
+                tr(language, "learn.conversation_title"),
+                tr(language, "learn.conversation_summary"),
+            ),
+            [
+                [
+                    {
+                        "text": tr(language, "learn.short_rehearsal"),
+                        "callback_data": "scenarios:list",
+                    }
+                ],
+                [
+                    {
+                        "text": tr(language, "learn.variable_conversation"),
+                        "callback_data": "quests:list",
+                    }
+                ],
+                back_row(language, "practice", "practice"),
+            ],
+            surface="conversation_choices",
         )
 
     def show_help(self, chat_id: int) -> None:

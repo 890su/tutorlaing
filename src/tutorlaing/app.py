@@ -2992,12 +2992,12 @@ class TutorlaingBot:
             self.menu.refresh_navigation(chat_id)
             if navigation_action == "home":
                 self.home(chat_id)
-            elif navigation_action == "activities":
-                self.show_activities(chat_id)
-            elif navigation_action == "practice":
+            elif navigation_action == "learn":
                 self.show_practice_hub(chat_id)
-            elif navigation_action == "tools":
+            elif navigation_action == "assistant":
                 self.toolkit.show_menu(chat_id)
+            elif navigation_action == "profile":
+                self.show_settings(chat_id)
             return
         if command == "/activities":
             self.show_activities(chat_id)
@@ -3122,6 +3122,8 @@ class TutorlaingBot:
             self.home(chat_id)
         elif data == "practice":
             self.show_practice_hub(chat_id)
+        elif data == "learn:conversation":
+            self.menu.show_conversation_choices(chat_id)
         elif data == "help":
             self.show_help(chat_id)
         elif data == "toolkit":
