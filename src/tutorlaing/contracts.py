@@ -110,12 +110,19 @@ class MenuStore(WorkspaceStore, ProgressStore, Protocol):
         self, chat_id: int, mode: str, next_at: datetime | None
     ) -> None: ...
 
+    def snooze_reminders(self, chat_id: int, until: datetime) -> None: ...
+
 
 class ReminderStore(Protocol):
     def due_reminder_users(self, now: datetime) -> list[Any]: ...
 
     def reserve_next_reminder(
-        self, chat_id: int, expected_at: str, sent_at: datetime, next_at: datetime
+        self,
+        chat_id: int,
+        expected_at: str,
+        sent_at: datetime,
+        next_at: datetime,
+        pending_until: datetime,
     ) -> bool: ...
 
     def schedule_next_reminder(

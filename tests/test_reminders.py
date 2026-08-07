@@ -112,6 +112,25 @@ class ReminderTests(unittest.TestCase):
             self.assertEqual(1, scheduler.tick(now))
             self.assertEqual([(55, "gentle")], bot.sent)
             self.assertGreater(storage.get_user(55)["reminder_next_at"], now.isoformat())
+            self.assertIsNotNone(storage.get_user(55)["reminder_pending_until"])
+            storage.close()
+
+    def test_unanswered_proactive_reminder_waits_until_tomorrow(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage = Storage(Path(temp) / "test.sqlite3")
+            storage.ensure_user(54, "Learner")
+            storage.accept_consent(54, CONSENT_VERSION)
+            now = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
+            storage.set_reminder_mode(54, "aggressive", now - timedelta(minutes=1))
+            bot = FakeReminderBot()
+            scheduler = ReminderScheduler(bot, storage, interval=60)
+
+            self.assertEqual(1, scheduler.tick(now))
+            user = storage.get_user(54)
+            storage.schedule_next_reminder(54, now + timedelta(hours=3))
+            self.assertEqual(0, scheduler.tick(now + timedelta(hours=3)))
+            self.assertEqual([(54, "aggressive")], bot.sent)
+            self.assertIsNotNone(user["reminder_pending_until"])
             storage.close()
 
     def test_scheduler_delivers_while_drill_waits_for_continuation(self) -> None:
@@ -209,8 +228,9 @@ class ReminderTests(unittest.TestCase):
             first.set_reminder_mode(58, "normal", due_at)
             stale_value = str(second.due_reminder_users(now)[0]["reminder_next_at"])
 
-            self.assertTrue(first.reserve_next_reminder(58, stale_value, now, next_at))
-            self.assertFalse(second.reserve_next_reminder(58, stale_value, now, next_at))
+            pending_until = now + timedelta(days=1)
+            self.assertTrue(first.reserve_next_reminder(58, stale_value, now, next_at, pending_until))
+            self.assertFalse(second.reserve_next_reminder(58, stale_value, now, next_at, pending_until))
             first.close()
             second.close()
 

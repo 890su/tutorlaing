@@ -138,7 +138,11 @@ class ReminderScheduler:
                 self.storage.schedule_next_reminder(chat_id, next_at)
                 continue
             if not self.storage.reserve_next_reminder(
-                chat_id, str(user["reminder_next_at"]), current, next_at
+                chat_id,
+                str(user["reminder_next_at"]),
+                current,
+                next_at,
+                pause_until_tomorrow(current, str(user["timezone"])),
             ):
                 continue
             inactive_days = reengagement_inactive_days(user, current)

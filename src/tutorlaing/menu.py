@@ -523,7 +523,10 @@ class LearnerMenu:
         )
         if mode != "off":
             keyboard.append(
-                [{"text": tr(language, "action.pause"), "callback_data": "reminder:pause"}]
+                [
+                    {"text": tr(language, "action.snooze"), "callback_data": "reminder:snooze:2h"},
+                    {"text": tr(language, "action.pause"), "callback_data": "reminder:pause"},
+                ]
             )
         keyboard.append(back_row(language, "settings", "settings"))
         self.workspace.show(
@@ -537,6 +540,26 @@ class LearnerMenu:
             ),
             keyboard,
             surface="reminders",
+        )
+
+    def show_reminder_preview(self, chat_id: int) -> None:
+        """Show the selected plan without delivering or changing learner state."""
+
+        user = self.store.get_user(chat_id)
+        language = str(user["instruction_language"])
+        mode = str(user["reminder_mode"])
+        self.workspace.show(
+            chat_id,
+            card(
+                tr(language, "reminders.preview_title"),
+                tr(
+                    language,
+                    "reminders.preview_summary",
+                    mode=tr(language, f"reminder.{mode}"),
+                ),
+            ),
+            [back_row(language, "reminders", "settings")],
+            surface="reminder_preview",
         )
 
     def set_reminder_mode(self, chat_id: int, mode: str) -> None:

@@ -62,6 +62,8 @@ class Storage:
             reminder_next_at TEXT,
             reminder_paused_until TEXT,
             last_reminder_at TEXT,
+            reminder_cooldown_until TEXT,
+            reminder_pending_until TEXT,
             last_interaction_at TEXT,
             last_reengagement_at TEXT,
             timezone TEXT NOT NULL DEFAULT 'Europe/Warsaw',
@@ -432,6 +434,8 @@ class Storage:
             self._ensure_column("users", "reminder_next_at", "TEXT")
             self._ensure_column("users", "reminder_paused_until", "TEXT")
             self._ensure_column("users", "last_reminder_at", "TEXT")
+            self._ensure_column("users", "reminder_cooldown_until", "TEXT")
+            self._ensure_column("users", "reminder_pending_until", "TEXT")
             self._ensure_column("users", "last_interaction_at", "TEXT")
             self._ensure_column("users", "last_reengagement_at", "TEXT")
             self._ensure_column(
@@ -2063,7 +2067,11 @@ class Storage:
         timestamp = (occurred_at or datetime.now(timezone.utc)).isoformat()
         with self._lock, self._connection:
             self._connection.execute(
-                "UPDATE users SET last_interaction_at = ? WHERE chat_id = ?",
+                """
+                UPDATE users
+                SET last_interaction_at = ?, reminder_pending_until = NULL
+                WHERE chat_id = ?
+                """,
                 (timestamp, chat_id),
             )
 
@@ -2074,6 +2082,19 @@ class Storage:
                 (until.isoformat(), utc_now(), chat_id),
             )
         self.event(chat_id, "reminders_paused", {"until": until.isoformat()})
+
+    def snooze_reminders(self, chat_id: int, until: datetime) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE users
+                SET reminder_paused_until = ?, reminder_next_at = ?,
+                    reminder_pending_until = NULL, updated_at = ?
+                WHERE chat_id = ? AND reminder_mode != 'off'
+                """,
+                (until.isoformat(), until.isoformat(), utc_now(), chat_id),
+            )
+        self.event(chat_id, "reminders_snoozed", {"until": until.isoformat()})
 
     def due_reminder_users(self, now: datetime) -> list[sqlite3.Row]:
         current = now.isoformat()
@@ -2087,6 +2108,8 @@ class Storage:
                       AND reminder_next_at IS NOT NULL
                       AND reminder_next_at <= ?
                       AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
+                      AND (reminder_cooldown_until IS NULL OR reminder_cooldown_until <= ?)
+                      AND (reminder_pending_until IS NULL OR reminder_pending_until <= ?)
                       AND toolkit_input_mode IS NULL
                       AND coach_session_id IS NULL
                       AND background_card_id IS NULL
@@ -2096,20 +2119,34 @@ class Storage:
                       )
                     ORDER BY reminder_next_at ASC
                     """,
-                    (CONSENT_VERSION, current, current),
+                    (CONSENT_VERSION, current, current, current, current),
                 ).fetchall()
             )
 
     def reserve_next_reminder(
-        self, chat_id: int, expected_at: str, sent_at: datetime, next_at: datetime
+        self,
+        chat_id: int,
+        expected_at: str,
+        sent_at: datetime,
+        next_at: datetime,
+        pending_until: datetime,
     ) -> bool:
+        cooldown_until = sent_at + timedelta(hours=2)
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """
-                UPDATE users SET last_reminder_at = ?, reminder_next_at = ?
+                UPDATE users SET last_reminder_at = ?, reminder_next_at = ?,
+                    reminder_cooldown_until = ?, reminder_pending_until = ?
                 WHERE chat_id = ? AND reminder_next_at = ?
                 """,
-                (sent_at.isoformat(), next_at.isoformat(), chat_id, expected_at),
+                (
+                    sent_at.isoformat(),
+                    next_at.isoformat(),
+                    cooldown_until.isoformat(),
+                    pending_until.isoformat(),
+                    chat_id,
+                    expected_at,
+                ),
             )
         return cursor.rowcount == 1
 
@@ -2128,7 +2165,8 @@ class Storage:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """
-                UPDATE users SET reminder_next_at = ?, updated_at = ?
+                UPDATE users SET reminder_next_at = ?, reminder_cooldown_until = NULL,
+                    reminder_pending_until = NULL, updated_at = ?
                 WHERE chat_id = ? AND reminder_next_at = ?
                 """,
                 (

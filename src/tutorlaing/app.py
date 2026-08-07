@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .ai import (
@@ -3203,14 +3204,7 @@ class TutorlaingBot:
         elif data.startswith("reminder:set:"):
             self.set_reminder_mode(chat_id, data.rsplit(":", 1)[1])
         elif data == "reminder:test":
-            user = self.storage.get_user(chat_id)
-            mode = str(user["reminder_mode"])
-            self.send_scheduled_reminder(
-                chat_id, mode if mode != "off" else "gentle"
-            )
-            self.storage.record_reminder_delivery(
-                chat_id, "manual_test", mode
-            )
+            self.menu.show_reminder_preview(chat_id)
         elif data == "reengagement:continue":
             current = self.storage.get_user(chat_id)
             mode = str(current["reminder_mode"])
@@ -3226,6 +3220,19 @@ class TutorlaingBot:
                 card("Пауза включена", "До завтра новых напоминаний не будет."),
                 [home_row(self._language(chat_id))],
                 surface="reminder_pause",
+            )
+        elif data == "reminder:snooze:2h":
+            current = self.storage.get_user(chat_id)
+            until = datetime.now(timezone.utc) + timedelta(hours=2)
+            self.storage.snooze_reminders(chat_id, until)
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "reminders.snoozed_title"),
+                    self._t(chat_id, "reminders.snoozed_summary"),
+                ),
+                [home_row(self._language(chat_id))],
+                surface="reminder_snooze",
             )
         elif data == "drill:start":
             self.start_drill(chat_id)

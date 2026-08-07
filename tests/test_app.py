@@ -424,6 +424,31 @@ class AppFlowTests(unittest.TestCase):
         ]
         self.assertIn("reminder:test", callbacks)
 
+    def test_reminder_preview_does_not_create_or_advance_an_assignment(self) -> None:
+        chat_id = 245
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        before = dict(self.storage.get_user(chat_id))
+
+        self.bot.handle_callback(chat_id, "Learner", "preview", "reminder:test")
+
+        after = self.storage.get_user(chat_id)
+        self.assertIn("ПРЕДПРОСМОТР НАПОМИНАНИЙ", self.telegram.messages[-1]["text"])
+        self.assertEqual(before["stage"], after["stage"])
+        self.assertEqual(before["pending_assignment"], after["pending_assignment"])
+
+    def test_reminder_can_be_snoozed_for_two_hours(self) -> None:
+        chat_id = 246
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.set_reminder_mode(chat_id, "normal")
+
+        self.bot.handle_callback(chat_id, "Learner", "snooze", "reminder:snooze:2h")
+
+        user = self.storage.get_user(chat_id)
+        self.assertIsNotNone(user["reminder_paused_until"])
+        self.assertIn("НАПОМИНАНИЕ ОТЛОЖЕНО", self.telegram.messages[-1]["text"])
+
     def test_reengagement_card_starts_one_task_only_after_user_action(self) -> None:
         chat_id = 403
         self.storage.ensure_user(chat_id, "Learner")
