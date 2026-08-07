@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any
 
+from .learning_cards import LearningCardSeed
+
 
 @dataclass(frozen=True)
 class ScenarioStep:
@@ -16,6 +18,7 @@ class ScenarioStep:
     target_chunk: str
     bottleneck_ru: str
     task_blocking: bool
+    learning_cards: tuple[LearningCardSeed, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,10 @@ def _step_from_dict(data: dict[str, Any]) -> ScenarioStep:
         target_chunk=data["target_chunk"],
         bottleneck_ru=data["bottleneck_ru"],
         task_blocking=bool(data.get("task_blocking", False)),
+        learning_cards=tuple(
+            LearningCardSeed.from_dict(item)
+            for item in data.get("learning_cards", [])
+        ),
     )
 
 

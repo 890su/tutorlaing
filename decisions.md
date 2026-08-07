@@ -472,6 +472,22 @@ Selector реализует 60/25/15 как дефицит целевой дол
 остаётся только для `intensive` и `aggressive`; расширение на gentle/normal
 требует проверки opt-out и return-to-task.
 
+## 2026-08-07 — Semantic material отделён от фонового selector
+
+`LearningCardSeed` является DTO между linguistic authoring и доставкой. Content
+или будущий AI-adapter задаёт тип, условие, правильный ответ, допустимые свободные
+варианты и объяснение; `BackgroundLearningService` не придумывает отношения
+синонимии, антонимии или грамматические формы эвристиками. Поддерживаемые типы:
+synonym, antonym, definition→word, meaning-in-context, grammar transform и
+перевод в обе стороны. Неизвестный тип, пустой материал и cue, содержащий полный
+ответ, отклоняются на границе. Все semantic cards остаются active recall без
+вариантов выбора и чередуются с recall/cloze/word-order/paraphrase.
+
+Curated JSON загружается строго и останавливает startup при невалидном seed;
+runtime parser для будущего AI output пропускает только конкретный плохой seed,
+не ломая foreground activity. Новый польский материал нельзя считать beta-ready
+до ручной языковой проверки.
+
 ## 2026-08-07 — Доступ к VM хранится как secret reference
 
 Tutorlaing хранит только `server_id`, адреса, SSH user, fingerprint и ссылку

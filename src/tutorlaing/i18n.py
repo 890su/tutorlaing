@@ -370,6 +370,48 @@ CATALOG.update(
             "en": "Express the same meaning in different words.",
             "pl": "Wyraź ten sam sens innymi słowami.",
         },
+        "background.prompt.synonym": {
+            "ru": "Замените слово или выражение близким по смыслу.",
+            "uk": "Замініть слово або вираз близьким за змістом.",
+            "en": "Replace the word or expression with a close synonym.",
+            "pl": "Zastąp słowo lub wyrażenie bliskoznacznym.",
+        },
+        "background.prompt.antonym": {
+            "ru": "Напишите подходящее противоположное по смыслу слово.",
+            "uk": "Напишіть відповідне протилежне за змістом слово.",
+            "en": "Write a suitable word with the opposite meaning.",
+            "pl": "Napisz pasujące słowo o przeciwnym znaczeniu.",
+        },
+        "background.prompt.definition_to_word": {
+            "ru": "Назовите слово по определению.",
+            "uk": "Назвіть слово за визначенням.",
+            "en": "Name the word from its definition.",
+            "pl": "Podaj słowo na podstawie definicji.",
+        },
+        "background.prompt.meaning_in_context": {
+            "ru": "Объясните значение слова или фразы именно в этом контексте.",
+            "uk": "Поясніть значення слова або фрази саме в цьому контексті.",
+            "en": "Explain what the word or phrase means in this context.",
+            "pl": "Wyjaśnij znaczenie słowa lub zwrotu w tym kontekście.",
+        },
+        "background.prompt.grammar_transform": {
+            "ru": "Измените форму по условию.",
+            "uk": "Змініть форму за умовою.",
+            "en": "Change the form as requested.",
+            "pl": "Zmień formę zgodnie z poleceniem.",
+        },
+        "background.prompt.translation_to_target": {
+            "ru": "Переведите на изучаемый язык.",
+            "uk": "Перекладіть мовою, яку вивчаєте.",
+            "en": "Translate into the language you are learning.",
+            "pl": "Przetłumacz na język, którego się uczysz.",
+        },
+        "background.prompt.translation_from_target": {
+            "ru": "Переведите с изучаемого языка.",
+            "uk": "Перекладіть з мови, яку вивчаєте.",
+            "en": "Translate from the language you are learning.",
+            "pl": "Przetłumacz z języka, którego się uczysz.",
+        },
         "background.write": {
             "ru": "Напишите ответ свободно — вариантов выбора нет.",
             "uk": "Напишіть відповідь вільно — варіантів вибору немає.",
@@ -395,10 +437,10 @@ CATALOG.update(
             "pl": "SPRAWDŹMY TO",
         },
         "background.feedback": {
-            "ru": "Подходящий вариант: {answer}\n\nОпорная фраза занятия: {source}",
-            "uk": "Вдалий варіант: {answer}\n\nОпорна фраза заняття: {source}",
-            "en": "A suitable version: {answer}\n\nReference phrase from the activity: {source}",
-            "pl": "Pasująca wersja: {answer}\n\nFraza wzorcowa z zajęcia: {source}",
+            "ru": "Подходящий вариант: {answer}\n\nПояснение: {source}",
+            "uk": "Вдалий варіант: {answer}\n\nПояснення: {source}",
+            "en": "A suitable version: {answer}\n\nExplanation: {source}",
+            "pl": "Pasująca wersja: {answer}\n\nWyjaśnienie: {source}",
         },
         "background.revealed": {
             "ru": "ОПОРА",

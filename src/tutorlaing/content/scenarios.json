@@ -47,7 +47,23 @@
           "expected_groups": [["boli mnie gardło", "boli mnie gardlo", "ból gardła", "bol gardla"], ["szukam", "potrzebuję", "potrzebuje", "proszę", "prosze"]],
           "target_chunk": "Boli mnie gardło. Szukam czegoś na ból.",
           "bottleneck_ru": "ясно назвать симптом и цель визита",
-          "task_blocking": true
+          "task_blocking": true,
+          "learning_cards": [
+            {
+              "kind": "synonym",
+              "cue": "Jak inaczej powiedzieć: „boli mnie gardło”?",
+              "answer": "mam ból gardła",
+              "accepted_answers": ["odczuwam ból gardła"],
+              "explanation": "„Mam ból gardła” i „boli mnie gardło” opisują ten sam objaw."
+            },
+            {
+              "kind": "grammar_transform",
+              "cue": "Powiedz w czasie przeszłym: „Dziś boli mnie gardło”.",
+              "answer": "Wczoraj bolało mnie gardło.",
+              "accepted_answers": ["Bolało mnie gardło."],
+              "explanation": "Bezosobowa forma czasu przeszłego od „boli” to „bolało”."
+            }
+          ]
         },
         {
           "id": "symptom-duration",
@@ -57,7 +73,16 @@
           "expected_groups": [["od dwóch dni", "od dwoch dni", "dwa dni"], ["nie mam gorączki", "nie mam goraczki", "bez gorączki", "bez goraczki"]],
           "target_chunk": "Od dwóch dni. Nie mam gorączki.",
           "bottleneck_ru": "понять вопросы «od kiedy» и «czy ma pan/pani...»",
-          "task_blocking": true
+          "task_blocking": true,
+          "learning_cards": [
+            {
+              "kind": "definition_to_word",
+              "cue": "Jak nazywa się podwyższona temperatura ciała?",
+              "answer": "gorączka",
+              "accepted_answers": ["gorączka"],
+              "explanation": "Gorączka to podwyższona temperatura ciała."
+            }
+          ]
         }
       ]
     },
@@ -87,7 +112,16 @@
           "expected_groups": [["piątek", "piatek", "w piątek", "w piatek"], ["czternastej", "14", "14:00"], ["pasuje", "może być", "moze byc"]],
           "target_chunk": "Piątek o czternastej mi pasuje.",
           "bottleneck_ru": "понять два предложенных времени и однозначно выбрать одно",
-          "task_blocking": true
+          "task_blocking": true,
+          "learning_cards": [
+            {
+              "kind": "meaning_in_context",
+              "cue": "Co znaczy „pasuje” w rozmowie o terminie wizyty?",
+              "answer": "termin jest dla mnie odpowiedni",
+              "accepted_answers": ["ten termin mi odpowiada", "zgadzam się na ten termin"],
+              "explanation": "W tym kontekście „pasuje” oznacza, że akceptujemy zaproponowany termin."
+            }
+          ]
         }
       ]
     },
@@ -197,7 +231,23 @@
           "expected_groups": [["chciałbym", "chcialbym", "chciałabym", "chcialabym", "chcę", "chce"], ["zwrócić", "zwrocic", "zwrot"], ["nie pasuje", "za mały", "za maly", "za duży", "za duzy"]],
           "target_chunk": "Chciałbym/Chciałabym zwrócić ten produkt, bo mi nie pasuje.",
           "bottleneck_ru": "ясно сформулировать просьбу о возврате и причину",
-          "task_blocking": true
+          "task_blocking": true,
+          "learning_cards": [
+            {
+              "kind": "synonym",
+              "cue": "Jak inaczej powiedzieć „zwrócić produkt” w sklepie?",
+              "answer": "oddać produkt",
+              "accepted_answers": ["dokonać zwrotu produktu"],
+              "explanation": "W rozmowie sklepowej „oddać produkt” może znaczyć „zwrócić produkt”."
+            },
+            {
+              "kind": "meaning_in_context",
+              "cue": "Co znaczy „produkt mi nie pasuje”, gdy mówimy o rozmiarze?",
+              "answer": "ma niewłaściwy rozmiar",
+              "accepted_answers": ["jest za mały lub za duży", "nie jest dla mnie odpowiedni"],
+              "explanation": "Przy ubraniu lub innym dopasowanym przedmiocie „nie pasuje” często dotyczy rozmiaru."
+            }
+          ]
         },
         {
           "id": "receipt",
@@ -227,7 +277,16 @@
           "expected_groups": [["jak dojść", "jak dojsc", "gdzie jest"], ["najbliższego", "najblizszego", "najbliższy", "najblizszy"], ["przystanku", "przystanek"]],
           "target_chunk": "Jak dojść do najbliższego przystanku autobusowego?",
           "bottleneck_ru": "сформулировать полный вопрос о нужном месте",
-          "task_blocking": true
+          "task_blocking": true,
+          "learning_cards": [
+            {
+              "kind": "antonym",
+              "cue": "Podaj przeciwieństwo słowa „najbliższego” w tym samym przypadku.",
+              "answer": "najdalszego",
+              "accepted_answers": ["najbardziej oddalonego"],
+              "explanation": "„Najbliższego” i „najdalszego” mają tu formę dopełniacza."
+            }
+          ]
         },
         {
           "id": "confirm-turn",

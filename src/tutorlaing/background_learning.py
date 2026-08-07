@@ -11,6 +11,7 @@ from typing import Any
 from .ai import AIClient, AIError, DrillItem
 from .contracts import BackgroundLearningStore
 from .engine import normalize
+from .learning_cards import LearningCardSeed, learning_card_seeds
 
 
 CARD_TYPES = ("recall", "cloze", "word_order", "paraphrase")
@@ -56,14 +57,26 @@ class BackgroundLearningService:
         if not reference:
             return None
         recent = self.store.recent_background_card_types(chat_id, activity_id, 3)
-        card_type = self._next_type(recent, reference)
-        rendered_context, correct = self._material(
-            card_type,
-            reference,
-            activity_id,
-            len(recent),
-            str(selected.get("task") or selected.get("interlocutor") or ""),
+        semantic_cards = learning_card_seeds(selected.get("learning_cards"))
+        card_type = self._next_type(
+            recent, reference, tuple(card.kind for card in semantic_cards)
         )
+        semantic = self._semantic_material(card_type, semantic_cards, len(recent))
+        if semantic is None:
+            rendered_context, correct = self._material(
+                card_type,
+                reference,
+                activity_id,
+                len(recent),
+                str(selected.get("task") or selected.get("interlocutor") or ""),
+            )
+            accepted = (correct,)
+            explanation = reference
+        else:
+            rendered_context = semantic.cue
+            correct = semantic.answer
+            accepted = semantic.accepted_answers
+            explanation = semantic.explanation
         return BackgroundCardDraft(
             activity_kind=activity_kind,
             activity_id=activity_id,
@@ -71,8 +84,8 @@ class BackgroundLearningService:
             card_type=card_type,
             context=rendered_context,
             correct_answer=correct,
-            accepted_answers=(correct,),
-            explanation=reference,
+            accepted_answers=accepted,
+            explanation=explanation,
             source_step=str(
                 selected["step"]
                 if "step" in selected
@@ -137,6 +150,13 @@ class BackgroundLearningService:
             "cloze": "reconstruction",
             "word_order": "word_order",
             "paraphrase": "constrained_paraphrase",
+            "synonym": "constrained_paraphrase",
+            "antonym": "free_recall",
+            "definition_to_word": "free_recall",
+            "meaning_in_context": "free_recall",
+            "grammar_transform": "transform",
+            "translation_to_target": "free_recall",
+            "translation_from_target": "free_recall",
         }.get(str(row["card_type"]), "free_recall")
         item = DrillItem(
             type=item_type,
@@ -166,13 +186,31 @@ class BackgroundLearningService:
         return values if isinstance(values, list) else []
 
     @staticmethod
-    def _next_type(recent: list[str], reference: str) -> str:
-        allowed = list(CARD_TYPES)
+    def _next_type(
+        recent: list[str], reference: str, semantic_kinds: tuple[str, ...] = ()
+    ) -> str:
+        base = list(CARD_TYPES)
         if len(re.findall(r"\w+", reference, flags=re.UNICODE)) < 2:
-            allowed = ["recall", "paraphrase"]
+            base = ["recall", "paraphrase"]
+        unique_semantic = list(dict.fromkeys(semantic_kinds))
+        allowed: list[str] = []
+        for index, card_type in enumerate(base):
+            allowed.append(card_type)
+            if index < len(unique_semantic):
+                allowed.append(unique_semantic[index])
+        allowed.extend(unique_semantic[len(base) :])
         if not recent or recent[0] not in allowed:
             return allowed[0]
         return allowed[(allowed.index(recent[0]) + 1) % len(allowed)]
+
+    @staticmethod
+    def _semantic_material(
+        card_type: str,
+        cards: tuple[LearningCardSeed, ...],
+        salt: int,
+    ) -> LearningCardSeed | None:
+        matching = [card for card in cards if card.kind == card_type]
+        return matching[salt % len(matching)] if matching else None
 
     @staticmethod
     def _material(

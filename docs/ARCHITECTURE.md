@@ -75,6 +75,7 @@ flowchart LR
 | `learner_profile.py` | Добровольный жизненный контекст и настройка адаптивности | `LearnerProfileStore` | Валидированный immutable `LearnerProfile` |
 | `activities.py` | Единая session-only модель незавершённой работы | `ActivityStore` | `LearningActivity[]`; foreground отделён от paused, позиция хранится в session table |
 | `coach.py` | Боковая консультация по текущему заданию | `CoachStore`, `AIClient` | `CoachResponse`; основной activity state неизменен |
+| `learning_cards.py` | Валидация semantic material независимо от доставки | content/AI mapping | Immutable `LearningCardSeed`; неизвестный тип или cue с ответом отклоняется |
 | `background_learning.py` | Связанная с занятием микро-практика | `BackgroundLearningStore`, необязательный `AIClient` | `BackgroundCardDraft`; foreground state неизменен |
 | `menu.py` | Home/settings/progress/reminder/privacy presentation | `MenuStore` и специализированные сервисы | Telegram cards без изменения учебной state machine |
 | `navigation.py` | Единые локализованные переходы Home/Back | instruction language + callback destination | Типовая строка кнопок без скрытой семантики `Назад` |

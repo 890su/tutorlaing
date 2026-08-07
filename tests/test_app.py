@@ -687,6 +687,9 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertEqual("related_activity", second["reason"])
         self.assertEqual("1", second["source_step"])
+        self.assertEqual("definition_to_word", second["card_type"])
+        self.assertEqual("gorączka", second["correct_answer"])
+        self.assertNotIn(str(second["correct_answer"]), str(second["context"]))
         self.assertEqual(session_id, second["activity_id"])
         self.assertEqual(session_id, self.storage.get_user(chat_id)["current_session"])
 

@@ -134,6 +134,33 @@ class BackgroundLearningTests(unittest.TestCase):
 
         self.assertEqual("current_activity", draft.reason)
 
+    def test_semantic_card_is_interleaved_and_does_not_reveal_answer(self) -> None:
+        service = BackgroundLearningService(FakeStore(["recall"]))
+
+        draft = service.build(
+            42,
+            "scenario",
+            "session-1",
+            {
+                "reference": "Piątek o czternastej mi pasuje.",
+                "task": "Potwierdź termin.",
+                "learning_cards": [
+                    {
+                        "kind": "meaning_in_context",
+                        "cue": "Co znaczy «pasuje» w rozmowie o terminie wizyty?",
+                        "answer": "termin jest dla mnie odpowiedni",
+                        "accepted_answers": ["ten termin mi odpowiada"],
+                        "explanation": "Tu chodzi o akceptację terminu.",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual("meaning_in_context", draft.card_type)
+        self.assertEqual("termin jest dla mnie odpowiedni", draft.correct_answer)
+        self.assertNotIn(draft.correct_answer, draft.context)
+        self.assertIn("ten termin mi odpowiada", draft.accepted_answers)
+
 
 if __name__ == "__main__":
     unittest.main()

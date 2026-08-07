@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any
 
+from .learning_cards import LearningCardSeed
+
 
 @dataclass(frozen=True)
 class QuestChoice:
@@ -36,6 +38,7 @@ class QuestNode:
     retry_effects: dict[str, str] | None = None
     ending: str = ""
     summary_ru: str = ""
+    learning_cards: tuple[LearningCardSeed, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,10 @@ def _node(raw: dict[str, Any]) -> QuestNode:
         retry_effects=retry_effects,
         ending=str(raw.get("ending", "")),
         summary_ru=str(raw.get("summary_ru", "")),
+        learning_cards=tuple(
+            LearningCardSeed.from_dict(item)
+            for item in raw.get("learning_cards", [])
+        ),
     )
 
 

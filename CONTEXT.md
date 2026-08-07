@@ -90,9 +90,11 @@ Telegram-first адаптивный тренер практического яз
   SQLite скрыт за узкими Protocol-портами. Архитектура описана в
   docs/ARCHITECTURE.md и защищена regression test.
 - OpenAI smoke: русско-польский перевод с alternatives и анализ польского ответа
-  ранее были успешны. Локально проходят 159 тестов, включая hybrid UI, level-aware tasks,
+  ранее были успешны. Локально проходят 165 тестов, включая hybrid UI, level-aware tasks,
   learner profile, resumable activity projection, teacher side-channel,
-  activity-linked background selector 60/25/15, history-aware cards и reminder retry.
+  activity-linked background selector 60/25/15, валидируемые semantic cards,
+  history-aware cards и reminder retry. Первые польские synonym/antonym/
+  definition/meaning/grammar seeds требуют ручной языковой проверки до beta.
 - Маршруты `srv-150`, SSH user, secret reference и безопасный ACL-wrapper
   зафиксированы в `deploy/ACCESS.md`. Private key остаётся вне Tutorlaing в
   secret-source проекта Brainless. На 2026-08-07 public health отвечает HTTP

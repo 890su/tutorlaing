@@ -353,6 +353,9 @@ class TutorlaingBot:
                     "task": step.context_ru,
                     "hint": step.hint_ru,
                     "reference": step.target_chunk,
+                    "learning_cards": [
+                        item.to_dict() for item in step.learning_cards
+                    ],
                     "step": step_index,
                 },
             )
@@ -373,6 +376,9 @@ class TutorlaingBot:
                     "task": node.task_ru,
                     "hint": node.hint_ru,
                     "reference": node.reference_answer or node.message,
+                    "learning_cards": [
+                        item.to_dict() for item in node.learning_cards
+                    ],
                     "node": node.id,
                     "facts": self._quest_facts(json.loads(str(session["state_json"]))),
                 },
@@ -406,6 +412,9 @@ class TutorlaingBot:
                     "task": step.context_ru,
                     "hint": step.hint_ru,
                     "reference": step.target_chunk,
+                    "learning_cards": [
+                        item.to_dict() for item in step.learning_cards
+                    ],
                 },
             )
         raise KeyError("No coachable foreground activity")
@@ -458,6 +467,9 @@ class TutorlaingBot:
                             "task": step.context_ru,
                             "interlocutor": step.interlocutor_pl,
                             "reference": step.target_chunk,
+                            "learning_cards": [
+                                item.to_dict() for item in step.learning_cards
+                            ],
                             "step": index,
                         }
                     )
@@ -477,6 +489,9 @@ class TutorlaingBot:
                         "task": node.task_ru,
                         "interlocutor": node.message,
                         "reference": node.reference_answer,
+                        "learning_cards": [
+                            item.to_dict() for item in node.learning_cards
+                        ],
                         "node": node.id,
                     }
                 )
@@ -499,6 +514,9 @@ class TutorlaingBot:
                     "task": step.context_ru,
                     "interlocutor": step.interlocutor_pl,
                     "reference": step.target_chunk,
+                    "learning_cards": [
+                        item.to_dict() for item in step.learning_cards
+                    ],
                     "step": step_index,
                 }
             )
@@ -593,7 +611,7 @@ class TutorlaingBot:
             chat_id,
             card(
                 self._t(chat_id, "background.revealed"),
-                self._t(chat_id, "background.reference", answer=row["explanation"]),
+                self._t(chat_id, "background.reference", answer=row["correct_answer"]),
             ),
             [[{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]],
             surface="background_feedback",
