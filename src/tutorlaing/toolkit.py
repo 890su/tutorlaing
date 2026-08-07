@@ -318,7 +318,6 @@ class PracticeToolkit:
                 chat_id, "ai_fallback_used", {"operation": f"toolkit_{mode}"}
             )
 
-        self.store.suspend_activity(chat_id)
         drill_id = self.store.start_drill(
             chat_id,
             None,

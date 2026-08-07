@@ -1,5 +1,6 @@
 import json
 import unittest
+from dataclasses import replace
 
 from tutorlaing.ai import AIError, DrillPack, FailoverAIClient, GeminiClient, OpenAIClient
 from tutorlaing.content import load_scenarios
@@ -65,6 +66,45 @@ class GeminiClientTests(unittest.TestCase):
         )
         self.assertEqual("B2", prompt["learner_level"])
         self.assertIn("natural register", prompt["level_policy"])
+
+    def test_standalone_phrase_requests_neutral_formal_and_friendly_rewrites(self) -> None:
+        result = {
+            "task_achieved": True,
+            "score": 0.9,
+            "confidence": 0.9,
+            "positive_feedback": "Понятно.",
+            "meaning_gaps": [],
+            "critical_corrections": [],
+            "optional_improvements": [],
+            "natural_response": "Czy możesz mi pomóc?",
+            "alternatives": [
+                {"text": "Czy możesz mi pomóc?", "register": "neutral", "nuance": ""},
+                {"text": "Czy mógłby mi pan pomóc?", "register": "formal", "nuance": ""},
+                {"text": "Pomożesz mi, proszę?", "register": "friendly", "nuance": ""},
+            ],
+            "grammar_chunks": [],
+            "pragmatic_note": "",
+            "explanation": "",
+        }
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(request)
+            return FakeHTTPResponse(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps(result)}]}}]}
+            )
+
+        client = GeminiClient("test-key", opener=opener)
+        step = replace(load_scenarios()["pharmacy"].steps[0], id="standalone-phrase")
+
+        analysis = client.analyze_response(step, "Pomóż mi", "ru", "pl", 0.5)
+
+        self.assertEqual("friendly", analysis.alternatives[2].register)
+        payload = json.loads(requests[0].data.decode("utf-8"))
+        prompt = json.loads(payload["contents"][0]["parts"][0]["text"])
+        requirements = " ".join(prompt["requirements"])
+        self.assertIn("exactly three", requirements)
+        self.assertIn("friendly", requirements)
 
     def test_drill_pack_requires_variety_and_active_recall(self) -> None:
         base = {

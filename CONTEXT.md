@@ -48,13 +48,18 @@ Telegram-first адаптивный тренер практического яз
   ближайшие ситуации; это не официальный CEFR.
 - Уровень также управляет видимой опорой scenario, ожидаемой самостоятельностью
   ответа, AI evaluation/drill prompts и сложностью локального topic fallback.
-- Постоянная нижняя клавиатура содержит только `Учиться`, `Инструменты`,
-  `Прогресс`, `Настройки`. Контекстные действия и A/B/C/D остаются inline.
+- Постоянная нижняя клавиатура v5 содержит только `Сегодня`, `Мои занятия`,
+  `Практика`, `Инструменты`. Контекстные действия и A/B/C/D остаются inline.
   Полные варианты находятся в тексте сообщения, потому что Telegram не
   переносит длинный текст inline-кнопок.
-- Reply-keyboard устанавливается через удаляемое служебное сообщение; короткие
+- Reply-keyboard устанавливается через version-gated carrier, который нельзя
+  удалять без риска скрыть клавиатуру в Telegram-клиенте; короткие
   stale-state notices удаляются автоматически. Неудачная правка workspace
   удаляет устаревшую карточку перед созданием замены.
+- Каноническое командное меню локализовано на ru/uk/en/pl: `/start`,
+  `/activities`, `/practice`, `/tools`, `/progress`, `/settings`, `/help`,
+  `/grammar`, `/privacy`, `/delete_me`. Неизвестная slash-команда и устаревший
+  callback не маршрутизируются как ответ заданию.
 - `/tools` открывает интерактивную мастерскую: наборы по 10 карточек по курируемым chunks
   с четырьмя вариантами и `Не помню`, перевод собственной фразы
   translation↔target с natural/formal/informal вариантами и тематический
@@ -64,31 +69,33 @@ Telegram-first адаптивный тренер практического яз
   очередь берут проблемные фразы из истории scenario/drill, остальные
   выбирают случайно; правильные варианты программно перемешиваются.
 - Phrase translation является stateless overlay и не заменяет `stage`.
-  Карточки, тематический pack и `Мои ошибки` сохраняют основную активность в
-  `suspended_activity_json`, работают как временный drill и атомарно
-  восстанавливают scenario/review/waiting/drill после complete или stop.
+  Карточки, тематический pack и `Мои ошибки` создают обычный сохраняемый drill,
+  не скрывают другую session и после complete/stop предлагают `Мои занятия`.
+  Только явно выбранный foreground принимает следующий свободный ответ.
   Scheduler не доставляет напоминание, пока ожидается фраза для перевода.
 - SQLite для пользователей, попыток, повторений, drill sessions, outcomes и событий.
 - Health endpoint на порту 8080.
 - Docker image публикуется в ghcr.io/890su/tutorlaing.
-- Целевой runtime: srv-150, ~/services/tutorlaing.
-- Production bot: @brnai_bot.
-- Telegram webhook: https://brain.sekond.pl/telegram/webhook.
-- Public health: https://brain.sekond.pl/health.
-- Production OpenAI и Gemini keys хранятся только в защищённом server-side
+- Подготовленный server runtime: srv-150, ~/services/tutorlaing; текущая ветка
+  разработки не является production-релизом и не развёртывается автоматически.
+- Ранее использованные технические endpoints: @brnai_bot,
+  https://brain.sekond.pl/telegram/webhook и https://brain.sekond.pl/health.
+- При серверном запуске OpenAI и Gemini keys хранятся только в защищённом server-side
   `.env` с mode 600. OpenAI route `gpt-5.6-sol` с `reasoning.effort=low`
-  включён, реальный translation smoke пройден; consent v3 сообщает об обоих
-  processors.
+  включён, реальный translation smoke пройден; consent v4 сообщает об обоих
+  processors, добровольном learner context и истории вопросов преподавателю.
 - Application разбит на контрактные модули: catalog, workspace, menu,
   language support, progress, response evaluation, AI feedback, reminder и
   Telegram update dispatch. Composition/state orchestration остаётся в app;
   SQLite скрыт за узкими Protocol-портами. Архитектура описана в
   docs/ARCHITECTURE.md и защищена regression test.
 - OpenAI smoke: русско-польский перевод с alternatives и анализ польского ответа
-  успешны. Локально проходят 87 тестов, включая hybrid UI, level-aware tasks,
-  history-aware cards и reminder retry.
-- На VM сохранён Brainless MCP как management bridge, потому что прямой SSH с
-  операторской машины нестабилен.
+  ранее были успешны. Локально проходят 159 тестов, включая hybrid UI, level-aware tasks,
+  learner profile, resumable activity projection, teacher side-channel,
+  activity-linked background selector 60/25/15, history-aware cards и reminder retry.
+- На VM сохранён Brainless MCP как management bridge. На 2026-08-06 публичный
+  health отвечает HTTP 200, но alias `srv-150` отсутствует в SSH-конфигурации
+  текущей операторской машины и не резолвится; прямой SSH-доступ не подтверждён.
 
 ## Sources of truth
 

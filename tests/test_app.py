@@ -6,6 +6,7 @@ from typing import Any
 from tutorlaing.ai import (
     AIError,
     Alternative,
+    CoachResponse,
     DrillEvaluation,
     DrillItem,
     DrillPack,
@@ -116,6 +117,18 @@ class FakeAI:
 
     def translate(self, text: str, *_args, **_kwargs) -> dict[str, str]:
         return {"translation": f"TRANSLATED: {text}", "note": ""}
+
+    def coach(self, _context, question: str, operation: str) -> CoachResponse:
+        return CoachResponse(
+            answer=f"Разбираем: {question}",
+            suggested_phrases=(
+                Alternative("Czy może pan powtórzyć?", "neutral", "Вежливая просьба."),
+            )
+            if operation == "say"
+            else (),
+            translation="proszę" if operation == "translate" else "",
+            disclosed_help_level=3 if operation == "say" else 1,
+        )
 
     def explain_grammar(self, *_args, **_kwargs) -> dict[str, str]:
         return {
@@ -439,9 +452,8 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertEqual(
             [
-                ["⌂ Главное меню"],
-                ["▶ Учиться", "🧰 Инструменты"],
-                ["📍 Прогресс", "⚙ Настройки"],
+                ["Сегодня", "Мои занятия"],
+                ["Практика", "🧰 Инструменты"],
             ],
             self.telegram.reply_keyboards[-1],
         )
@@ -458,7 +470,8 @@ class AppFlowTests(unittest.TestCase):
         self.storage.set_language(chat_id, "instruction_language", "pl")
         self.bot.menu.refresh_navigation(chat_id)
         self.assertEqual(2, len(self.telegram.reply_keyboards))
-        self.assertEqual(["⌂ Menu główne"], self.telegram.reply_keyboards[-1][0])
+        self.assertEqual(["Dzisiaj", "Moje zajęcia"], self.telegram.reply_keyboards[-1][0])
+        self.assertEqual(["Ćwiczenia", "🧰 Narzędzia"], self.telegram.reply_keyboards[-1][1])
 
     def test_bottom_navigation_opens_tools_and_cancels_phrase_input(self) -> None:
         chat_id = 36
@@ -491,7 +504,8 @@ class AppFlowTests(unittest.TestCase):
             if message["chat_id"] == advanced
         )
         self.assertIn("Уровень: A1", beginner_text)
-        self.assertIn("Опора:", beginner_text)
+        self.assertIn("Назовите цель", beginner_text)
+        self.assertNotIn("Boli mnie gardło", beginner_text)
         self.assertIn("Уровень: B2", advanced_text)
         self.assertIn("без готовой опоры", advanced_text)
         self.assertNotEqual(beginner_text, advanced_text)
@@ -613,6 +627,68 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual(before + 1, len(self.telegram.messages))
         self.assertIn("1/2", self.telegram.messages[-1]["text"])
         self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+
+    def test_intensive_reminder_sends_linked_card_and_preserves_activity(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 41
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        before = self.storage.get_user(chat_id)
+        session_id = str(before["current_session"])
+
+        bot.send_scheduled_reminder(chat_id, "intensive")
+
+        during = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", during["stage"])
+        self.assertEqual(session_id, during["current_session"])
+        self.assertEqual(0, during["current_step"])
+        self.assertIsNotNone(during["background_card_id"])
+        card_id = int(during["background_card_id"])
+        background = self.storage.background_card(chat_id, card_id)
+        self.assertEqual(session_id, background["activity_id"])
+        self.assertNotIn(
+            str(background["correct_answer"]), str(background["context"])
+        )
+
+        bot.handle_text(
+            chat_id, "Learner", str(background["correct_answer"])
+        )
+
+        after_answer = self.storage.get_user(chat_id)
+        self.assertIsNone(after_answer["background_card_id"])
+        self.assertEqual("scenario", after_answer["stage"])
+        self.assertEqual(session_id, after_answer["current_session"])
+
+        bot.handle_callback(chat_id, "Learner", "cb2", "background:return")
+
+        resumed = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", resumed["stage"])
+        self.assertEqual(session_id, resumed["current_session"])
+        self.assertIn("1/2", self.telegram.messages[-1]["text"])
+
+    def test_background_selector_broadens_the_current_scenario(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 42
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "cb1", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        session_id = str(self.storage.get_user(chat_id)["current_session"])
+
+        self.assertTrue(bot.send_background_card(chat_id))
+        first_id = int(self.storage.get_user(chat_id)["background_card_id"])
+        first = self.storage.background_card(chat_id, first_id)
+        self.assertEqual("current_activity", first["reason"])
+        self.storage.answer_background_card(chat_id, first_id, "ok", 1.0)
+
+        self.assertTrue(bot.send_background_card(chat_id))
+        second_id = int(self.storage.get_user(chat_id)["background_card_id"])
+        second = self.storage.background_card(chat_id, second_id)
+
+        self.assertEqual("related_activity", second["reason"])
+        self.assertEqual("1", second["source_step"])
+        self.assertEqual(session_id, second["activity_id"])
+        self.assertEqual(session_id, self.storage.get_user(chat_id)["current_session"])
 
     def test_immediate_learning_flow_edits_one_workspace_message(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
@@ -837,7 +913,7 @@ class AppFlowTests(unittest.TestCase):
         ]
         self.assertIn("task:resume", callbacks)
 
-    def test_toolkit_cards_restore_an_active_scenario_after_completion(self) -> None:
+    def test_toolkit_cards_leave_the_previous_scenario_in_my_activities(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
         chat_id = 29
         bot.start(chat_id, "Learner")
@@ -849,7 +925,6 @@ class AppFlowTests(unittest.TestCase):
 
         overlay = self.storage.get_user(chat_id)
         self.assertEqual("drill", overlay["stage"])
-        self.assertIsNotNone(overlay["suspended_activity_json"])
         self.assertEqual("active", self.storage.session(scenario_session)["status"])
 
         drill_id = str(overlay["current_drill"])
@@ -863,22 +938,28 @@ class AppFlowTests(unittest.TestCase):
                 chat_id, "Learner", "next", f"drill:next:{drill_id}"
             )
 
-        restored = self.storage.get_user(chat_id)
-        self.assertEqual("scenario", restored["stage"])
-        self.assertEqual(scenario_session, restored["current_session"])
-        self.assertIsNone(restored["suspended_activity_json"])
+        completed = self.storage.get_user(chat_id)
+        self.assertEqual("idle", completed["stage"])
         self.assertEqual("active", self.storage.session(scenario_session)["status"])
-        self.assertEqual(
-            "task:resume", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
-        )
         completion_callbacks = [
             button["callback_data"]
             for row in self.telegram.messages[-1]["keyboard"]
             for button in row
         ]
+        self.assertIn("activities:list", completion_callbacks)
         self.assertIn("toolkit:start:cards", completion_callbacks)
 
-    def test_toolkit_drill_can_temporarily_overlay_another_drill(self) -> None:
+        bot.handle_callback(chat_id, "Learner", "activities", "activities:list")
+        resume = next(
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+            if button["callback_data"].startswith("activity:resume:scenario:")
+        )
+        bot.handle_callback(chat_id, "Learner", "resume", resume)
+        self.assertEqual(scenario_session, self.storage.get_user(chat_id)["current_session"])
+
+    def test_toolkit_drill_keeps_another_drill_resumable(self) -> None:
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
         chat_id = 30
         bot.start(chat_id, "Learner")
@@ -901,12 +982,12 @@ class AppFlowTests(unittest.TestCase):
 
         bot.handle_callback(chat_id, "Learner", "stop", "drill:stop")
 
-        restored = self.storage.get_user(chat_id)
-        self.assertEqual("drill", restored["stage"])
-        self.assertEqual(original_drill, restored["current_drill"])
-        self.assertEqual(original_drill, self.storage.active_drill(chat_id)["id"])
+        stopped = self.storage.get_user(chat_id)
+        self.assertEqual("idle", stopped["stage"])
+        self.assertIsNone(stopped["current_drill"])
+        self.assertEqual("active", self.storage.drill_session(original_drill)["status"])
         self.assertEqual(
-            "drill:resume", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
+            "activities:list", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
         )
 
     def test_home_has_one_recommended_action_without_duplicate_reviews(self) -> None:
@@ -922,7 +1003,8 @@ class AppFlowTests(unittest.TestCase):
             for button in row
         ]
         self.assertTrue(callbacks[0].startswith("scenario:"))
-        self.assertEqual(1, callbacks.count("reviews:list"))
+        self.assertEqual(1, callbacks.count("practice"))
+        self.assertEqual(0, callbacks.count("reviews:list"))
 
     def test_home_resumes_active_task_as_the_primary_action(self) -> None:
         chat_id = 24
@@ -943,7 +1025,14 @@ class AppFlowTests(unittest.TestCase):
         self.bot.show_settings(chat_id)
         callbacks = [row[0]["callback_data"] for row in self.telegram.messages[-1]["keyboard"]]
         self.assertEqual(
-            ["settings:languages", "reminders", "privacy:settings", "home"],
+            [
+                "settings:languages",
+                "settings:profile",
+                "reminders",
+                "help",
+                "privacy:settings",
+                "home",
+            ],
             callbacks,
         )
 
@@ -955,6 +1044,48 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual(
             "settings", self.telegram.messages[-1]["keyboard"][-1][0]["callback_data"]
         )
+
+    def test_profile_context_is_collected_progressively(self) -> None:
+        chat_id = 251
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.handle_callback(chat_id, "Learner", "profile", "settings:profile")
+        self.bot.handle_callback(chat_id, "Learner", "age", "profile:set:age:25_34")
+        self.bot.handle_callback(chat_id, "Learner", "goal", "profile:input:goal")
+        self.bot.handle_text(chat_id, "Learner", "Поговорить с учителем ребёнка")
+
+        profile = self.storage.learner_profile(chat_id)
+        self.assertEqual("25_34", profile["age_band"])
+        self.assertEqual("Поговорить с учителем ребёнка", profile["current_goal"])
+        self.assertIsNone(self.storage.get_user(chat_id)["profile_input_mode"])
+
+    def test_teacher_dialogue_keeps_main_scenario_unchanged(self) -> None:
+        chat_id = 252
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        bot.begin_scenario(chat_id, "pharmacy")
+        before = self.storage.get_user(chat_id)
+        scenario_session = str(before["current_session"])
+
+        bot.handle_callback(chat_id, "Learner", "coach", "coach:open")
+        bot.handle_callback(chat_id, "Learner", "say", "coach:input:say")
+        bot.handle_text(chat_id, "Learner", "Попросить говорить медленнее")
+
+        during = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", during["stage"])
+        self.assertEqual(scenario_session, during["current_session"])
+        self.assertIsNotNone(during["coach_session_id"])
+        self.assertIn("Czy może pan powtórzyć?", self.telegram.messages[-1]["text"])
+
+        bot.handle_text(chat_id, "Learner", "Почему здесь вежливая форма?")
+        self.assertIn("Почему здесь вежливая форма?", self.telegram.messages[-1]["text"])
+
+        bot.handle_callback(chat_id, "Learner", "return", "coach:return")
+        after = self.storage.get_user(chat_id)
+        self.assertEqual(scenario_session, after["current_session"])
+        self.assertIsNone(after["coach_session_id"])
 
     def test_difficulty_proposal_requires_callback_and_preserves_profile(self) -> None:
         chat_id = 250
@@ -1006,6 +1137,150 @@ class AppFlowTests(unittest.TestCase):
         self.bot.handle_callback(chat_id, "Learner", "confirm", "cancel")
         self.assertEqual("idle", self.storage.get_user(chat_id)["stage"])
 
+    def test_new_scenario_keeps_the_previous_scenario_available(self) -> None:
+        chat_id = 261
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        first = str(self.storage.get_user(chat_id)["current_session"])
+
+        self.bot.handle_callback(chat_id, "Learner", "other", "scenario:directions")
+
+        self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+        self.assertEqual("active", self.storage.session(first)["status"])
+        switched = self.storage.get_user(chat_id)
+        self.assertEqual("directions", switched["current_scenario"])
+        self.assertEqual(2, len(self.storage.active_scenario_sessions(chat_id)))
+        self.assertEqual("active", self.storage.session(first)["status"])
+
+    def test_saved_scenario_resumes_the_next_unanswered_step(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 264
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        scenario_session = str(self.storage.get_user(chat_id)["current_session"])
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        bot.begin_quest(chat_id, "urzad_documents")
+
+        bot.resume_saved_scenario(chat_id, scenario_session)
+
+        resumed = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", resumed["stage"])
+        self.assertEqual(1, resumed["current_step"])
+        self.assertEqual(scenario_session, resumed["current_session"])
+        self.assertIn("2/2", self.telegram.messages[-1]["text"])
+
+    def test_saved_scenario_resumes_bottleneck_practice_after_dialogue(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 265
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        scenario_session = str(self.storage.get_user(chat_id)["current_session"])
+        bot.handle_text(chat_id, "Learner", "Boli mnie gardło.")
+        bot.handle_callback(chat_id, "Learner", "next1", "assignment:next")
+        bot.handle_text(chat_id, "Learner", "Od dwóch dni.")
+        bot.handle_callback(chat_id, "Learner", "next2", "assignment:next")
+        self.assertEqual("practice", self.storage.get_user(chat_id)["stage"])
+        bot.begin_quest(chat_id, "urzad_documents")
+
+        bot.resume_saved_scenario(chat_id, scenario_session)
+
+        resumed = self.storage.get_user(chat_id)
+        self.assertEqual("practice", resumed["stage"])
+        self.assertEqual(scenario_session, resumed["current_session"])
+        self.assertIn("ФРАЗА", self.telegram.messages[-1]["text"])
+
+    def test_explicit_activity_resume_keeps_the_other_drill_resumable(self) -> None:
+        bot = TutorlaingBot(self.settings, self.storage, self.telegram, ai=FakeAI())
+        chat_id = 266
+        bot.start(chat_id, "Learner")
+        bot.handle_callback(chat_id, "Learner", "consent", "consent:accept")
+        bot.begin_scenario(chat_id, "pharmacy")
+        scenario_session = str(self.storage.get_user(chat_id)["current_session"])
+        bot.handle_callback(chat_id, "Learner", "cards", "toolkit:start:cards")
+        drill_id = str(self.storage.get_user(chat_id)["current_drill"])
+
+        bot.resume_saved_scenario(chat_id, scenario_session)
+
+        resumed = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", resumed["stage"])
+        self.assertEqual("active", self.storage.drill_session(drill_id)["status"])
+
+    def test_target_language_change_requires_explicit_confirmation(self) -> None:
+        chat_id = 262
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+
+        self.bot.handle_callback(
+            chat_id, "Learner", "language", "settings:set:target:en"
+        )
+
+        self.assertEqual("pl", self.storage.get_user(chat_id)["target_language"])
+        self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("settings:target:confirm:en", callbacks)
+
+        self.bot.handle_callback(
+            chat_id, "Learner", "confirm", "settings:target:confirm:en"
+        )
+        changed = self.storage.get_user(chat_id)
+        self.assertEqual("en", changed["target_language"])
+        self.assertEqual("idle", changed["stage"])
+
+    def test_target_language_change_closes_all_saved_activities(self) -> None:
+        chat_id = 267
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        self.bot.begin_scenario(chat_id, "directions")
+        self.bot.begin_quest(chat_id, "urzad_documents")
+        self.assertEqual(3, self.storage.open_activity_count(chat_id))
+
+        self.bot.handle_callback(
+            chat_id, "Learner", "confirm", "settings:target:confirm:en"
+        )
+
+        self.assertEqual(0, self.storage.open_activity_count(chat_id))
+        changed = self.storage.get_user(chat_id)
+        self.assertEqual("en", changed["target_language"])
+        self.assertEqual("idle", changed["stage"])
+
+    def test_real_world_outcome_is_not_requested_on_session_completion(self) -> None:
+        chat_id = 263
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        session_id = str(self.storage.get_user(chat_id)["current_session"])
+        scenario = self.bot.catalog.for_user(self.storage.get_user(chat_id))["pharmacy"]
+
+        self.bot.finish_session(chat_id, scenario, session_id, 0, 1.0)
+
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertFalse(any(callback.startswith("outcome:") for callback in callbacks))
+
+        self.bot.show_outcomes(chat_id)
+        selected = self.telegram.messages[-1]["keyboard"][0][0]["callback_data"]
+        self.assertEqual(f"outcome:select:{session_id}", selected)
+        self.bot.handle_callback(chat_id, "Learner", "select", selected)
+        self.bot.handle_callback(
+            chat_id,
+            "Learner",
+            "report",
+            f"outcome:report:{session_id}:success",
+        )
+        self.assertEqual([], self.storage.pending_outcome_sessions(chat_id, "pl"))
+
     def test_empty_review_screen_always_offers_home(self) -> None:
         chat_id = 27
         self.storage.ensure_user(chat_id, "Learner")
@@ -1027,13 +1302,78 @@ class AppFlowTests(unittest.TestCase):
         self.bot.home(chat_id)
         old_workspace = int(self.storage.get_user(chat_id)["workspace_message_id"])
 
-        self.bot.handle_text(chat_id, "Learner", "📍 Прогресс", message_id=991)
+        self.bot.handle_text(chat_id, "Learner", "Мои занятия", message_id=991)
 
         new_workspace = int(self.storage.get_user(chat_id)["workspace_message_id"])
         self.assertNotEqual(old_workspace, new_workspace)
         self.assertIn((chat_id, 991), self.telegram.deleted)
-        self.assertIn("ПРОГРЕСС", self.telegram.messages[-1]["text"])
-        self.assertEqual(["⌂ Главное меню"], self.telegram.reply_keyboards[-1][0])
+        self.assertIn("МОИ ЗАНЯТИЯ", self.telegram.messages[-1]["text"])
+        self.assertEqual(["Сегодня", "Мои занятия"], self.telegram.reply_keyboards[-1][0])
+
+    def test_practice_hub_exposes_each_learning_mode_once(self) -> None:
+        chat_id = 283
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.handle_text(chat_id, "Learner", "Практика")
+
+        message = self.telegram.messages[-1]
+        self.assertIn("ПРАКТИКА", message["text"])
+        callbacks = [
+            button["callback_data"]
+            for row in message["keyboard"]
+            for button in row
+        ]
+        self.assertEqual(
+            ["scenarios:list", "quests:list", "reviews:list", "drill:start", "home"],
+            callbacks,
+        )
+
+    def test_unknown_slash_command_never_becomes_a_task_answer(self) -> None:
+        chat_id = 284
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        session_id = str(self.storage.get_user(chat_id)["current_session"])
+
+        self.bot.handle_text(chat_id, "Learner", "/old_command")
+
+        self.assertEqual(0, self.storage.response_count(session_id, "scenario"))
+        self.assertEqual("scenario", self.storage.get_user(chat_id)["stage"])
+        self.assertIn("КАК УСТРОЕНО УПРАВЛЕНИЕ", self.telegram.messages[-1]["text"])
+
+    def test_grammar_command_with_bot_suffix_passes_only_the_fragment(self) -> None:
+        chat_id = 286
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        received: list[tuple[int, str]] = []
+        self.bot.feedback.explain_custom_grammar = (  # type: ignore[method-assign]
+            lambda requested_chat_id, fragment: received.append(
+                (requested_chat_id, fragment)
+            )
+        )
+
+        self.bot.handle_text(
+            chat_id,
+            "Learner",
+            "/grammar@TutorlaingBot od dwóch dni",
+        )
+
+        self.assertEqual([(chat_id, "od dwóch dni")], received)
+
+    def test_stale_inline_callback_returns_to_today_without_losing_activity(self) -> None:
+        chat_id = 285
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        session_id = str(self.storage.get_user(chat_id)["current_session"])
+
+        self.bot.handle_callback(chat_id, "Learner", "stale", "removed:action")
+
+        user = self.storage.get_user(chat_id)
+        self.assertEqual("scenario", user["stage"])
+        self.assertEqual(session_id, user["current_session"])
+        self.assertEqual("task:resume", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"])
 
     def test_inline_callback_edits_the_card_that_was_clicked(self) -> None:
         chat_id = 281
@@ -1070,6 +1410,9 @@ class AppFlowTests(unittest.TestCase):
             for button in row
         ]
         check_callback = next(value for value in callbacks if value.startswith("text:check:"))
+        rephrase_callback = next(
+            value for value in callbacks if value.startswith("text:rephrase:")
+        )
         self.assertTrue(any(value.endswith(":to_target") for value in callbacks))
         self.assertTrue(any(value.endswith(":from_target") for value in callbacks))
 
@@ -1084,6 +1427,15 @@ class AppFlowTests(unittest.TestCase):
         analysis = self.storage.latest_ai_analysis(chat_id, "pl")
         self.assertEqual("standalone_phrase", analysis["operation"])
         self.assertIn("Естественнее", self.telegram.edits[-1]["text"])
+
+        bot.handle_callback(
+            chat_id,
+            "Learner",
+            "rephrase",
+            rephrase_callback,
+            message_id=int(message["message_id"]),
+        )
+        self.assertIn("Нейтрально", self.telegram.edits[-1]["text"])
 
 
 if __name__ == "__main__":

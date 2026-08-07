@@ -14,8 +14,8 @@ CATALOG: dict[str, dict[str, str]] = {
     "navigation.placeholder": {"ru": "Выберите раздел или напишите фразу", "uk": "Оберіть розділ або напишіть фразу", "en": "Choose a section or write a phrase", "pl": "Wybierz sekcję albo napisz zwrot"},
     "navigation.ready": {"ru": "⌨️ Нижнее меню включено.", "uk": "⌨️ Нижнє меню ввімкнено.", "en": "⌨️ Bottom menu enabled.", "pl": "⌨️ Dolne menu jest włączone."},
     "task.level_label": {"ru": "Уровень: {level}", "uk": "Рівень: {level}", "en": "Level: {level}", "pl": "Poziom: {level}"},
-    "task.level.A0": {"ru": "Опора: {chunk}\nМожно ответить 2–5 словами.", "uk": "Опора: {chunk}\nМожна відповісти 2–5 словами.", "en": "Model: {chunk}\nA 2–5 word reply is enough.", "pl": "Wzór: {chunk}\nWystarczy odpowiedź z 2–5 słów."},
-    "task.level.A1": {"ru": "Опора: {chunk}\nОтветьте одним коротким предложением.", "uk": "Опора: {chunk}\nДайте відповідь одним коротким реченням.", "en": "Starter: {chunk}\nReply with one short sentence.", "pl": "Podpowiedź: {chunk}\nOdpowiedz jednym krótkim zdaniem."},
+    "task.level.A0": {"ru": "Назовите цель или ключевой объект. Достаточно 2–5 слов.", "uk": "Назвіть мету або ключовий об’єкт. Достатньо 2–5 слів.", "en": "Name the goal or key object. A 2–5 word reply is enough.", "pl": "Nazwij cel lub kluczowy obiekt. Wystarczy odpowiedź z 2–5 słów."},
+    "task.level.A1": {"ru": "Назовите цель и одну важную деталь. Ответьте одним коротким предложением.", "uk": "Назвіть мету й одну важливу деталь. Дайте відповідь одним коротким реченням.", "en": "Name the goal and one important detail. Reply with one short sentence.", "pl": "Nazwij cel i jeden ważny szczegół. Odpowiedz jednym krótkim zdaniem."},
     "task.level.A2": {"ru": "Ответьте самостоятельно одной фразой; форму можно изменить под ситуацию.", "uk": "Дайте самостійну відповідь однією фразою; форму можна змінити до ситуації.", "en": "Reply independently with one phrase; adapt the form to the situation.", "pl": "Odpowiedz samodzielnie jednym zwrotem; dopasuj formę do sytuacji."},
     "task.level.B1": {"ru": "Ответьте 1–2 фразами и добавьте одну уместную деталь.", "uk": "Дайте відповідь 1–2 фразами й додайте одну доречну деталь.", "en": "Reply in 1–2 sentences and add one relevant detail.", "pl": "Odpowiedz w 1–2 zdaniach i dodaj jeden istotny szczegół."},
     "task.level.B2": {"ru": "Ответьте естественно без готовой опоры; уточните условие, причину или просьбу.", "uk": "Дайте природну відповідь без готової опори; уточніть умову, причину або прохання.", "en": "Reply naturally without a model phrase; clarify a condition, reason, or request.", "pl": "Odpowiedz naturalnie bez gotowego wzoru; doprecyzuj warunek, powód lub prośbę."},
@@ -39,7 +39,8 @@ CATALOG: dict[str, dict[str, str]] = {
     "action.progress": {"ru": "📍 Прогресс и план", "uk": "📍 Прогрес і план", "en": "📍 Progress and plan", "pl": "📍 Postęp i plan"},
     "action.reminders": {"ru": "🔔 Напоминания", "uk": "🔔 Нагадування", "en": "🔔 Reminders", "pl": "🔔 Przypomnienia"},
     "action.toolkit": {"ru": "🧰 Тренажёры", "uk": "🧰 Тренажери", "en": "🧰 Practice tools", "pl": "🧰 Narzędzia"},
-    "action.quests": {"ru": "🧭 Квесты", "uk": "🧭 Квести", "en": "🧭 Quests", "pl": "🧭 Misje"},
+    "action.quests": {"ru": "🧭 Миссии", "uk": "🧭 Місії", "en": "🧭 Missions", "pl": "🧭 Misje"},
+    "action.activities": {"ru": "📚 Мои занятия", "uk": "📚 Мої заняття", "en": "📚 My practice", "pl": "📚 Moje zajęcia"},
     "action.next": {"ru": "Следующее задание →", "uk": "Наступне завдання →", "en": "Next task →", "pl": "Następne zadanie →"},
     "action.hint": {"ru": "Подсказка", "uk": "Підказка", "en": "Hint", "pl": "Podpowiedź"},
     "action.skip": {"ru": "Пропустить →", "uk": "Пропустити →", "en": "Skip →", "pl": "Pomiń →"},
@@ -62,6 +63,7 @@ CATALOG: dict[str, dict[str, str]] = {
     "text_action.summary": {"ru": "Вы отправили текст вне задания. Выберите действие — исходная фраза сохранится для этого меню.\n\n«{text}»", "uk": "Ви надіслали текст поза завданням. Оберіть дію — початкова фраза збережеться для цього меню.\n\n«{text}»", "en": "You sent text outside a task. Choose an action; the original phrase will remain attached to this menu.\n\n“{text}”", "pl": "Tekst został wysłany poza zadaniem. Wybierz działanie — oryginalny zwrot pozostanie przypisany do tego menu.\n\n„{text}”"},
     "text_action.translate_to": {"ru": "🌐 Перевести → {name}", "uk": "🌐 Перекласти → {name}", "en": "🌐 Translate → {name}", "pl": "🌐 Przetłumacz → {name}"},
     "text_action.check": {"ru": "✓ Проверить на ошибки и естественность", "uk": "✓ Перевірити помилки й природність", "en": "✓ Check correctness and naturalness", "pl": "✓ Sprawdź poprawność i naturalność"},
+    "text_action.rephrase": {"ru": "✦ Перефразировать: нейтрально, официально, дружелюбно", "uk": "✦ Перефразувати: нейтрально, офіційно, дружньо", "en": "✦ Rephrase: neutral, formal, friendly", "pl": "✦ Przeformułuj: neutralnie, formalnie, przyjaźnie"},
     "text_action.correct": {"ru": "✓ Фраза понятна и в целом корректна.", "uk": "✓ Фраза зрозуміла й загалом правильна.", "en": "✓ The phrase is clear and generally correct.", "pl": "✓ Zwrot jest zrozumiały i zasadniczo poprawny."},
     "text_action.needs_work": {"ru": "Фразу стоит исправить.", "uk": "Фразу варто виправити.", "en": "The phrase needs correction.", "pl": "Zwrot wymaga poprawy."},
     "text_action.grammar": {"ru": "📚 Объяснить грамматику", "uk": "📚 Пояснити граматику", "en": "📚 Explain the grammar", "pl": "📚 Wyjaśnij gramatykę"},
@@ -126,13 +128,13 @@ CATALOG: dict[str, dict[str, str]] = {
     "reengagement.week": {"ru": "Ваш прогресс сохранён. Не нужно наверстывать всё сразу — достаточно одной короткой практики сегодня.", "uk": "Ваш прогрес збережено. Не потрібно надолужувати все одразу — сьогодні достатньо однієї короткої практики.", "en": "Your progress is saved. There is no need to catch up all at once—one short practice today is enough.", "pl": "Twój postęp jest zapisany. Nie musisz nadrabiać wszystkiego naraz — dziś wystarczy jedno krótkie ćwiczenie."},
     "reengagement.long": {"ru": "Начнём заново без перегрузки: бот подберёт один доступный шаг по вашему текущему материалу.", "uk": "Почнімо знову без перевантаження: бот підбере один доступний крок за вашим поточним матеріалом.", "en": "Restart without overload: the bot will choose one manageable step from your current material.", "pl": "Wróć bez przeciążenia: bot wybierze jeden przystępny krok z Twojego aktualnego materiału."},
     "reengagement.action": {"ru": "▶ Одно короткое задание", "uk": "▶ Одне коротке завдання", "en": "▶ One short task", "pl": "▶ Jedno krótkie zadanie"},
-    "quest.list_title": {"ru": "Квесты из реальной жизни", "uk": "Квести з реального життя", "en": "Real-life quests", "pl": "Misje z życia codziennego"},
+    "quest.list_title": {"ru": "Миссии из реальной жизни", "uk": "Місії з реального життя", "en": "Real-life missions", "pl": "Misje z życia codziennego"},
     "quest.list_summary": {"ru": "Практическая миссия из связанных решений. Ошибка меняет ход разговора, но не обязательно завершает его.", "uk": "Практична місія з пов’язаних рішень. Помилка змінює перебіг розмови, але не обов’язково завершує її.", "en": "A practical mission built from connected decisions. A mistake changes the conversation but does not necessarily end it.", "pl": "Praktyczna misja złożona z powiązanych decyzji. Błąd zmienia rozmowę, ale nie musi jej kończyć."},
-    "quest.unavailable": {"ru": "В первой версии квесты доступны для польского курса. Английские ветки требуют отдельной ручной проверки контента.", "uk": "У першій версії квести доступні для курсу польської. Англійські гілки потребують окремої ручної перевірки контенту.", "en": "The first quest set is available for the Polish course. English branches require a separate manual content review.", "pl": "Pierwszy zestaw misji jest dostępny w kursie języka polskiego. Wersja angielska wymaga osobnej weryfikacji treści."},
-    "quest.start": {"ru": "Начать квест", "uk": "Почати квест", "en": "Start quest", "pl": "Rozpocznij misję"},
-    "quest.continue": {"ru": "Продолжить квест", "uk": "Продовжити квест", "en": "Continue quest", "pl": "Kontynuuj misję"},
+    "quest.unavailable": {"ru": "В первой версии миссии доступны для польского курса. Английские ветки требуют отдельной ручной проверки контента.", "uk": "У першій версії місії доступні для курсу польської. Англійські гілки потребують окремої ручної перевірки контенту.", "en": "The first mission set is available for the Polish course. English branches require a separate manual content review.", "pl": "Pierwszy zestaw misji jest dostępny w kursie języka polskiego. Wersja angielska wymaga osobnej weryfikacji treści."},
+    "quest.start": {"ru": "Начать миссию", "uk": "Почати місію", "en": "Start mission", "pl": "Rozpocznij misję"},
+    "quest.continue": {"ru": "Продолжить миссию", "uk": "Продовжити місію", "en": "Continue mission", "pl": "Kontynuuj misję"},
     "quest.conflict_title": {"ru": "Сначала завершите текущее занятие", "uk": "Спочатку завершіть поточне заняття", "en": "Finish the current activity first", "pl": "Najpierw zakończ bieżące ćwiczenie"},
-    "quest.conflict_summary": {"ru": "Квест — отдельная связная история. Текущее занятие сохранено и не будет заменено.", "uk": "Квест — окрема зв’язна історія. Поточне заняття збережено й не буде замінено.", "en": "A quest is a connected story. Your current activity is preserved and will not be replaced.", "pl": "Misja jest spójną historią. Bieżące ćwiczenie pozostaje zapisane i nie zostanie zastąpione."},
+    "quest.conflict_summary": {"ru": "Миссия — отдельная связная история. Текущее занятие сохранено и не будет заменено.", "uk": "Місія — окрема зв’язна історія. Поточне заняття збережено й не буде замінено.", "en": "A mission is a connected story. Your current activity is preserved and will not be replaced.", "pl": "Misja jest spójną historią. Bieżące ćwiczenie pozostaje zapisane i nie zostanie zastąpione."},
     "quest.briefing": {"ru": "Досье миссии", "uk": "Досьє місії", "en": "Mission briefing", "pl": "Odprawa przed misją"},
     "quest.mission": {"ru": "МИССИЯ", "uk": "МІСІЯ", "en": "MISSION", "pl": "MISJA"},
     "quest.step": {"ru": "ШАГ {step}", "uk": "КРОК {step}", "en": "STEP {step}", "pl": "KROK {step}"},
@@ -149,7 +151,7 @@ CATALOG: dict[str, dict[str, str]] = {
     "quest.ending.failure": {"ru": "Миссию нужно повторить", "uk": "Місію треба повторити", "en": "Mission needs another attempt", "pl": "Misję trzeba powtórzyć"},
     "quest.score": {"ru": "Качество решений: {score}% · шагов: {steps}", "uk": "Якість рішень: {score}% · кроків: {steps}", "en": "Decision quality: {score}% · steps: {steps}", "pl": "Jakość decyzji: {score}% · kroki: {steps}"},
     "quest.try_again": {"ru": "↻ Пройти другим путём", "uk": "↻ Пройти іншим шляхом", "en": "↻ Try another path", "pl": "↻ Spróbuj inną drogą"},
-    "quest.stop_title": {"ru": "Закончить квест?", "uk": "Завершити квест?", "en": "End this quest?", "pl": "Zakończyć misję?"},
+    "quest.stop_title": {"ru": "Закончить миссию?", "uk": "Завершити місію?", "en": "End this mission?", "pl": "Zakończyć misję?"},
     "quest.stop_summary": {"ru": "Текущая ветка закроется, но принятые решения останутся в истории.", "uk": "Поточна гілка закриється, але прийняті рішення залишаться в історії.", "en": "The current branch will close, but completed decisions remain in history.", "pl": "Bieżąca ścieżka zostanie zamknięta, ale podjęte decyzje pozostaną w historii."},
     "quest.completed_mark": {"ru": "выполнен", "uk": "виконано", "en": "completed", "pl": "wykonano"},
     "reminder.off": {"ru": "выключены", "uk": "вимкнені", "en": "off", "pl": "wyłączone"},
@@ -174,7 +176,8 @@ CATALOG: dict[str, dict[str, str]] = {
     "tab.grammar": {"ru": "Грамматика", "uk": "Граматика", "en": "Grammar", "pl": "Gramatyka"},
     "tab.translation": {"ru": "Перевод", "uk": "Переклад", "en": "Translation", "pl": "Tłumaczenie"},
     "variant.neutral": {"ru": "Нейтрально", "uk": "Нейтрально", "en": "Neutral", "pl": "Neutralnie"},
-    "variant.formal": {"ru": "Формально", "uk": "Формально", "en": "Formal", "pl": "Formalnie"},
+    "variant.formal": {"ru": "Официально", "uk": "Офіційно", "en": "Formal", "pl": "Formalnie"},
+    "variant.friendly": {"ru": "Дружелюбно", "uk": "Дружньо", "en": "Friendly", "pl": "Przyjaźnie"},
     "variant.informal": {"ru": "Разговорно", "uk": "Розмовно", "en": "Informal", "pl": "Potocznie"},
     "grammar.whole": {"ru": "Всё предложение", "uk": "Усе речення", "en": "Whole sentence", "pl": "Całe zdanie"},
     "grammar.custom": {"ru": "Ввести свой фрагмент", "uk": "Ввести свій фрагмент", "en": "Enter a fragment", "pl": "Wpisz własny fragment"},
@@ -223,6 +226,291 @@ CATALOG: dict[str, dict[str, str]] = {
     "navigation.finish_summary": {"ru": "Текущий шаг закроется. Уже сохранённые ответы останутся в истории.", "uk": "Поточний крок закриється. Уже збережені відповіді залишаться в історії.", "en": "The current step will close. Answers already saved will remain in your history.", "pl": "Bieżący krok zostanie zamknięty. Zapisane odpowiedzi pozostaną w historii."},
 }
 
+CATALOG.update(
+    {
+        "navigation.today": {
+            "ru": "Сегодня",
+            "uk": "Сьогодні",
+            "en": "Today",
+            "pl": "Dzisiaj",
+        },
+        "navigation.practice": {
+            "ru": "Практика",
+            "uk": "Практика",
+            "en": "Practice",
+            "pl": "Ćwiczenia",
+        },
+        "navigation.activities": {
+            "ru": "Мои занятия",
+            "uk": "Мої заняття",
+            "en": "My activities",
+            "pl": "Moje zajęcia",
+        },
+    }
+)
+
+CATALOG.update(
+    {
+        "coach.open": {"ru": "Спросить преподавателя", "uk": "Запитати викладача", "en": "Ask the teacher", "pl": "Zapytaj nauczyciela"},
+        "coach.title": {"ru": "ПРЕПОДАВАТЕЛЬ · {activity}", "uk": "ВИКЛАДАЧ · {activity}", "en": "TEACHER · {activity}", "pl": "NAUCZYCIEL · {activity}"},
+        "coach.summary": {"ru": "Этот разговор не меняет ход ситуации. Разберём смысл или найдём нужные слова, затем вы сами ответите собеседнику.", "uk": "Ця розмова не змінює перебіг ситуації. Розберемо зміст або знайдемо потрібні слова, а потім ви самі відповісте співрозмовнику.", "en": "This conversation does not change the situation. We can clarify the meaning or find the words, then you answer the interlocutor yourself.", "pl": "Ta rozmowa nie zmienia przebiegu sytuacji. Wyjaśnimy sens lub znajdziemy słowa, a potem samodzielnie odpowiesz rozmówcy."},
+        "coach.hint": {"ru": "Намёк без готового ответа", "uk": "Натяк без готової відповіді", "en": "Hint without the answer", "pl": "Wskazówka bez gotowej odpowiedzi"},
+        "coach.say": {"ru": "Как сказать мою мысль", "uk": "Як висловити мою думку", "en": "How to say what I mean", "pl": "Jak powiedzieć to, co mam na myśli"},
+        "coach.translate": {"ru": "Перевести слово или фразу", "uk": "Перекласти слово або фразу", "en": "Translate a word or phrase", "pl": "Przetłumacz słowo lub zwrot"},
+        "coach.explain": {"ru": "Объяснить реплику собеседника", "uk": "Пояснити репліку співрозмовника", "en": "Explain the interlocutor’s reply", "pl": "Wyjaśnij odpowiedź rozmówcy"},
+        "coach.question": {"ru": "Задать свой вопрос", "uk": "Поставити своє запитання", "en": "Ask my own question", "pl": "Zadaj własne pytanie"},
+        "coach.return": {"ru": "← Вернуться к разговору", "uk": "← Повернутися до розмови", "en": "← Return to the conversation", "pl": "← Wróć do rozmowy"},
+        "coach.back": {"ru": "← К преподавателю", "uk": "← До викладача", "en": "← Back to the teacher", "pl": "← Wróć do nauczyciela"},
+        "coach.input.say.title": {"ru": "КАК СКАЗАТЬ МЫСЛЬ", "uk": "ЯК ВИСЛОВИТИ ДУМКУ", "en": "HOW TO SAY IT", "pl": "JAK TO POWIEDZIEĆ"},
+        "coach.input.say.prompt": {"ru": "Напишите своими словами, что хотите сообщить собеседнику. Я предложу до трёх уместных вариантов, но не отправлю их в основной разговор.", "uk": "Напишіть своїми словами, що хочете сказати співрозмовнику. Я запропоную до трьох доречних варіантів, але не надішлю їх в основну розмову.", "en": "Write what you want to tell the interlocutor. I will suggest up to three suitable versions, but will not send them into the main conversation.", "pl": "Napisz, co chcesz powiedzieć rozmówcy. Zaproponuję do trzech odpowiednich wersji, ale nie wyślę ich do głównej rozmowy."},
+        "coach.input.translate.title": {"ru": "ПЕРЕВОД В КОНТЕКСТЕ", "uk": "ПЕРЕКЛАД У КОНТЕКСТІ", "en": "CONTEXTUAL TRANSLATION", "pl": "TŁUMACZENIE W KONTEKŚCIE"},
+        "coach.input.translate.prompt": {"ru": "Отправьте слово или короткую фразу. Перевод будет учитывать текущую ситуацию и возможный оттенок смысла.", "uk": "Надішліть слово або коротку фразу. Переклад врахує поточну ситуацію й можливий відтінок значення.", "en": "Send a word or short phrase. The translation will account for the current situation and nuance.", "pl": "Wyślij słowo lub krótki zwrot. Tłumaczenie uwzględni obecną sytuację i odcień znaczenia."},
+        "coach.input.question.title": {"ru": "ВОПРОС ПРЕПОДАВАТЕЛЮ", "uk": "ЗАПИТАННЯ ВИКЛАДАЧУ", "en": "QUESTION FOR THE TEACHER", "pl": "PYTANIE DO NAUCZYCIELA"},
+        "coach.input.question.prompt": {"ru": "Спросите о слове, грамматике, регистре, реакции собеседника или о том, почему реплика может не сработать.", "uk": "Запитайте про слово, граматику, регістр, реакцію співрозмовника або чому репліка може не спрацювати.", "en": "Ask about a word, grammar, register, the interlocutor’s reaction, or why a reply may not work.", "pl": "Zapytaj o słowo, gramatykę, rejestr, reakcję rozmówcy albo dlaczego odpowiedź może nie zadziałać."},
+        "coach.answer_title": {"ru": "РАЗБОР ПРЕПОДАВАТЕЛЯ", "uk": "ПОЯСНЕННЯ ВИКЛАДАЧА", "en": "TEACHER’S EXPLANATION", "pl": "WYJAŚNIENIE NAUCZYCIELA"},
+        "coach.translation_result": {"ru": "Перевод: {text}", "uk": "Переклад: {text}", "en": "Translation: {text}", "pl": "Tłumaczenie: {text}"},
+        "coach.variants": {"ru": "Варианты для вашей мысли:", "uk": "Варіанти для вашої думки:", "en": "Ways to express your meaning:", "pl": "Sposoby wyrażenia tej myśli:"},
+        "coach.full_example_note": {"ru": "Показан полный пример. Для основной попытки сформулируйте ответ самостоятельно.", "uk": "Показано повний приклад. Для основної спроби сформулюйте відповідь самостійно.", "en": "A full example was shown. Formulate the main attempt in your own words.", "pl": "Pokazano pełny przykład. W głównej próbie sformułuj odpowiedź samodzielnie."},
+        "coach.ask_more": {"ru": "Ещё вопрос", "uk": "Ще запитання", "en": "Ask another question", "pl": "Kolejne pytanie"},
+        "coach.no_activity": {"ru": "Сначала откройте конкретное задание или миссию.", "uk": "Спочатку відкрийте конкретне завдання або місію.", "en": "Open a specific task or mission first.", "pl": "Najpierw otwórz konkretne zadanie lub misję."},
+    }
+)
+
+CATALOG.update(
+    {
+        "action.cancel": {"ru": "Отмена", "uk": "Скасувати", "en": "Cancel", "pl": "Anuluj"},
+        "activities.title": {"ru": "МОИ ЗАНЯТИЯ", "uk": "МОЇ ЗАНЯТТЯ", "en": "MY ACTIVITIES", "pl": "MOJE ZAJĘCIA"},
+        "activities.empty": {"ru": "Незавершённых занятий пока нет. Начните ситуацию или миссию.", "uk": "Незавершених занять поки немає. Почніть ситуацію або місію.", "en": "No unfinished activities yet. Start a situation or mission.", "pl": "Nie masz jeszcze niedokończonych zajęć. Zacznij sytuację lub misję."},
+        "activities.current": {"ru": "▶ Сейчас", "uk": "▶ Зараз", "en": "▶ Current", "pl": "▶ Teraz"},
+        "activities.paused": {"ru": "Ⅱ На паузе", "uk": "Ⅱ На паузі", "en": "Ⅱ Paused", "pl": "Ⅱ Wstrzymane"},
+        "activities.kind.scenario": {"ru": "ситуация", "uk": "ситуація", "en": "situation", "pl": "sytuacja"},
+        "activities.kind.quest": {"ru": "миссия", "uk": "місія", "en": "mission", "pl": "misja"},
+        "activities.kind.drill": {"ru": "тренировка", "uk": "тренування", "en": "practice", "pl": "trening"},
+        "activities.quest_steps": {"ru": "решений: {count}", "uk": "рішень: {count}", "en": "decisions: {count}", "pl": "decyzje: {count}"},
+        "activities.resume": {"ru": "Продолжить · {title}", "uk": "Продовжити · {title}", "en": "Continue · {title}", "pl": "Kontynuuj · {title}"},
+        "profile.settings": {"ru": "О себе и цели", "uk": "Про себе й цілі", "en": "About me and goals", "pl": "O mnie i cele"},
+        "profile.title": {"ru": "О СЕБЕ И ЦЕЛИ", "uk": "ПРО СЕБЕ Й ЦІЛІ", "en": "ABOUT ME AND GOALS", "pl": "O MNIE I CELE"},
+        "profile.summary": {"ru": "Возраст: {age}\nЗанятость: {role}\nЗа неделю: {weekly}\nБлижайшая цель: {goal}\nРабочая сложность: {adaptive}", "uk": "Вік: {age}\nЗайнятість: {role}\nПротягом тижня: {weekly}\nНайближча ціль: {goal}\nРобоча складність: {adaptive}", "en": "Age: {age}\nRoutine: {role}\nTypical week: {weekly}\nCurrent goal: {goal}\nWorking difficulty: {adaptive}", "pl": "Wiek: {age}\nZajęcie: {role}\nTypowy tydzień: {weekly}\nNajbliższy cel: {goal}\nPoziom roboczy: {adaptive}"},
+        "profile.not_set": {"ru": "не указано", "uk": "не вказано", "en": "not set", "pl": "nie ustawiono"},
+        "profile.age": {"ru": "Возрастная группа", "uk": "Вікова група", "en": "Age group", "pl": "Grupa wiekowa"},
+        "profile.role": {"ru": "Учёба и работа", "uk": "Навчання й робота", "en": "Study and work", "pl": "Nauka i praca"},
+        "profile.weekly": {"ru": "С чем сталкиваюсь за неделю", "uk": "З чим стикаюся протягом тижня", "en": "What comes up each week", "pl": "Co zdarza się w tygodniu"},
+        "profile.goal": {"ru": "Ближайшая практическая цель", "uk": "Найближча практична ціль", "en": "Current practical goal", "pl": "Najbliższy praktyczny cel"},
+        "profile.adaptive": {"ru": "Адаптивная сложность · {value}", "uk": "Адаптивна складність · {value}", "en": "Adaptive difficulty · {value}", "pl": "Trudność adaptacyjna · {value}"},
+        "profile.adaptive.on": {"ru": "включена", "uk": "увімкнена", "en": "on", "pl": "włączona"},
+        "profile.adaptive.off": {"ru": "выключена", "uk": "вимкнена", "en": "off", "pl": "wyłączona"},
+        "profile.choose_age": {"ru": "Выберите возрастную группу. Точная дата рождения не нужна.", "uk": "Оберіть вікову групу. Точна дата народження не потрібна.", "en": "Choose an age group. Your exact date of birth is not needed.", "pl": "Wybierz grupę wiekową. Dokładna data urodzenia nie jest potrzebna."},
+        "profile.choose_role": {"ru": "Что лучше описывает вашу обычную неделю?", "uk": "Що найкраще описує ваш звичайний тиждень?", "en": "What best describes your usual week?", "pl": "Co najlepiej opisuje Twój zwykły tydzień?"},
+        "profile.input.weekly.title": {"ru": "ТИПИЧНАЯ НЕДЕЛЯ", "uk": "ТИПОВИЙ ТИЖДЕНЬ", "en": "TYPICAL WEEK", "pl": "TYPOWY TYDZIEŃ"},
+        "profile.input.weekly.prompt": {"ru": "Одним сообщением опишите ситуации, в которых нужен язык: работа, магазин, школа ребёнка, учреждения, соседи.", "uk": "Одним повідомленням опишіть ситуації, де потрібна мова: робота, магазин, школа дитини, установи, сусіди.", "en": "In one message, describe where you need the language: work, shops, a child’s school, public offices, neighbours.", "pl": "W jednej wiadomości opisz sytuacje, w których potrzebujesz języka: praca, sklep, szkoła dziecka, urzędy, sąsiedzi."},
+        "profile.input.goal.title": {"ru": "БЛИЖАЙШАЯ ЦЕЛЬ", "uk": "НАЙБЛИЖЧА ЦІЛЬ", "en": "CURRENT GOAL", "pl": "NAJBLIŻSZY CEL"},
+        "profile.input.goal.prompt": {"ru": "Что должно получиться в ближайшие дни? Например: вернуть испорченный товар или поговорить с учителем.", "uk": "Що має вдатися найближчими днями? Наприклад: повернути зіпсований товар або поговорити з учителем.", "en": "What needs to go well in the next few days? For example, return a spoiled product or speak to a teacher.", "pl": "Co ma się udać w najbliższych dniach? Na przykład zwrot zepsutego produktu albo rozmowa z nauczycielem."},
+        "profile.input.invalid": {"ru": "Напишите хотя бы несколько слов.", "uk": "Напишіть хоча б кілька слів.", "en": "Write at least a few words.", "pl": "Napisz przynajmniej kilka słów."},
+        "profile.age.unset": {"ru": "не указана", "uk": "не вказано", "en": "not set", "pl": "nie ustawiono"},
+        "profile.age.under_18": {"ru": "до 18", "uk": "до 18", "en": "under 18", "pl": "poniżej 18"},
+        "profile.age.18_24": {"ru": "18–24", "uk": "18–24", "en": "18–24", "pl": "18–24"},
+        "profile.age.25_34": {"ru": "25–34", "uk": "25–34", "en": "25–34", "pl": "25–34"},
+        "profile.age.35_49": {"ru": "35–49", "uk": "35–49", "en": "35–49", "pl": "35–49"},
+        "profile.age.50_plus": {"ru": "50+", "uk": "50+", "en": "50+", "pl": "50+"},
+        "profile.role.unset": {"ru": "не указана", "uk": "не вказано", "en": "not set", "pl": "nie ustawiono"},
+        "profile.role.studying": {"ru": "учусь", "uk": "навчаюся", "en": "studying", "pl": "uczę się"},
+        "profile.role.working": {"ru": "работаю", "uk": "працюю", "en": "working", "pl": "pracuję"},
+        "profile.role.both": {"ru": "работаю и учусь", "uk": "працюю й навчаюся", "en": "working and studying", "pl": "pracuję i uczę się"},
+        "profile.role.other": {"ru": "другое", "uk": "інше", "en": "other", "pl": "inne"},
+    }
+)
+
+CATALOG.update(
+    {
+        "background.title": {
+            "ru": "МИКРОПРАКТИКА · {topic}",
+            "uk": "МІКРОПРАКТИКА · {topic}",
+            "en": "MICRO PRACTICE · {topic}",
+            "pl": "MIKROĆWICZENIE · {topic}",
+        },
+        "background.reason.current_activity": {
+            "ru": "Из текущего шага — закрепляем главную мысль.",
+            "uk": "З поточного кроку — закріплюємо головну думку.",
+            "en": "From your current step — reinforcing its main idea.",
+            "pl": "Z bieżącego kroku — utrwalamy jego główną myśl.",
+        },
+        "background.reason.related_activity": {
+            "ru": "Связано с этой же целью — прорабатываем ситуацию шире.",
+            "uk": "Пов’язано з тією самою метою — опрацьовуємо ситуацію ширше.",
+            "en": "Linked to the same goal so you can practise the situation more broadly.",
+            "pl": "Powiązane z tym samym celem — ćwiczymy sytuację szerzej.",
+        },
+        "background.reason.older_due": {
+            "ru": "Короткое возвращение к старому материалу, который пора вспомнить.",
+            "uk": "Коротке повернення до старого матеріалу, який час пригадати.",
+            "en": "A short return to older material that is due for recall.",
+            "pl": "Krótki powrót do starszego materiału, który warto już przypomnieć.",
+        },
+        "background.prompt.recall": {
+            "ru": "Вспомните подходящую фразу на изучаемом языке.",
+            "uk": "Пригадайте відповідну фразу мовою, яку вивчаєте.",
+            "en": "Recall a suitable phrase in the language you are learning.",
+            "pl": "Przypomnij sobie pasujące wyrażenie w języku, którego się uczysz.",
+        },
+        "background.prompt.cloze": {
+            "ru": "Восстановите пропущенное слово.",
+            "uk": "Відновіть пропущене слово.",
+            "en": "Restore the missing word.",
+            "pl": "Uzupełnij brakujące słowo.",
+        },
+        "background.prompt.word_order": {
+            "ru": "Соберите естественную фразу из слов.",
+            "uk": "Складіть природну фразу зі слів.",
+            "en": "Put the words into a natural phrase.",
+            "pl": "Ułóż ze słów naturalne wyrażenie.",
+        },
+        "background.prompt.paraphrase": {
+            "ru": "Передайте тот же смысл другими словами.",
+            "uk": "Передайте той самий зміст іншими словами.",
+            "en": "Express the same meaning in different words.",
+            "pl": "Wyraź ten sam sens innymi słowami.",
+        },
+        "background.write": {
+            "ru": "Напишите ответ свободно — вариантов выбора нет.",
+            "uk": "Напишіть відповідь вільно — варіантів вибору немає.",
+            "en": "Write your answer freely — there are no answer choices.",
+            "pl": "Napisz odpowiedź samodzielnie — bez wariantów do wyboru.",
+        },
+        "background.return": {
+            "ru": "← Вернуться к занятию",
+            "uk": "← Повернутися до заняття",
+            "en": "← Return to the activity",
+            "pl": "← Wróć do zajęcia",
+        },
+        "background.correct": {
+            "ru": "ПОЛУЧИЛОСЬ",
+            "uk": "ВДАЛОСЯ",
+            "en": "THAT WORKS",
+            "pl": "DOBRZE",
+        },
+        "background.retry": {
+            "ru": "РАЗБЕРЁМ ВАРИАНТ",
+            "uk": "РОЗБЕРІМО ВАРІАНТ",
+            "en": "LET’S REVIEW IT",
+            "pl": "SPRAWDŹMY TO",
+        },
+        "background.feedback": {
+            "ru": "Подходящий вариант: {answer}\n\nОпорная фраза занятия: {source}",
+            "uk": "Вдалий варіант: {answer}\n\nОпорна фраза заняття: {source}",
+            "en": "A suitable version: {answer}\n\nReference phrase from the activity: {source}",
+            "pl": "Pasująca wersja: {answer}\n\nFraza wzorcowa z zajęcia: {source}",
+        },
+        "background.revealed": {
+            "ru": "ОПОРА",
+            "uk": "ОПОРА",
+            "en": "REFERENCE",
+            "pl": "PODPOWIEDŹ",
+        },
+        "background.reference": {
+            "ru": "Возможный ответ: {answer}",
+            "uk": "Можлива відповідь: {answer}",
+            "en": "One possible answer: {answer}",
+            "pl": "Możliwa odpowiedź: {answer}",
+        },
+    }
+)
+
+
+CATALOG.update(
+    {
+        "navigation.help": {
+            "ru": "Как пользоваться",
+            "uk": "Як користуватися",
+            "en": "How to use the bot",
+            "pl": "Jak korzystać",
+        },
+        "navigation.expired": {
+            "ru": "Эта кнопка больше не относится к открытому экрану.",
+            "uk": "Ця кнопка більше не стосується відкритого екрана.",
+            "en": "That button no longer belongs to the open screen.",
+            "pl": "Ten przycisk nie dotyczy już otwartego ekranu.",
+        },
+        "practice.title": {
+            "ru": "ПРАКТИКА",
+            "uk": "ПРАКТИКА",
+            "en": "PRACTICE",
+            "pl": "ĆWICZENIA",
+        },
+        "practice.summary": {
+            "ru": "Выберите цель. Ситуации — короткая репетиция. Миссии — разговор с меняющимися обстоятельствами. Повторы возвращают пройденное, а закрепление тренирует слабые места.",
+            "uk": "Оберіть мету. Ситуації — коротка репетиція. Місії — розмова зі змінними обставинами. Повторення повертають пройдене, а закріплення тренує слабкі місця.",
+            "en": "Choose a goal. Situations are short rehearsals. Missions are conversations with changing circumstances. Reviews revisit learned material, while focused practice targets weak points.",
+            "pl": "Wybierz cel. Sytuacje to krótkie próby. Misje są rozmowami ze zmiennymi okolicznościami. Powtórki utrwalają materiał, a trening skupia się na słabszych miejscach.",
+        },
+        "practice.missions": {
+            "ru": "Миссии",
+            "uk": "Місії",
+            "en": "Missions",
+            "pl": "Misje",
+        },
+        "practice.focus": {
+            "ru": "Закрепление",
+            "uk": "Закріплення",
+            "en": "Focused practice",
+            "pl": "Utrwalenie",
+        },
+        "progress.outcomes": {
+            "ru": "Результаты в жизни",
+            "uk": "Результати в житті",
+            "en": "Real-life outcomes",
+            "pl": "Rezultaty w życiu",
+        },
+        "help.title": {
+            "ru": "КАК УСТРОЕНО УПРАВЛЕНИЕ",
+            "uk": "ЯК ВЛАШТОВАНЕ КЕРУВАННЯ",
+            "en": "HOW NAVIGATION WORKS",
+            "pl": "JAK DZIAŁA NAWIGACJA",
+        },
+        "help.summary": {
+            "ru": "Кнопки под полем ввода — четыре постоянных раздела: Сегодня, Мои занятия, Практика и Инструменты.\n\nInline-кнопки под карточкой относятся только к открытому экрану. Во время задания обычный текст считается вашим ответом. Вне задания бот предложит проверить, перевести или перефразировать текст.\n\nSlash-команды дублируют только верхний уровень. Основные: /activities, /practice, /tools, /progress и /settings. Команда /grammar принимает фрагмент после пробела.",
+            "uk": "Кнопки під полем введення — чотири постійні розділи: Сьогодні, Мої заняття, Практика та Інструменти.\n\nInline-кнопки під карткою стосуються лише відкритого екрана. Під час завдання звичайний текст вважається вашою відповіддю. Поза завданням бот запропонує перевірити, перекласти або перефразувати текст.\n\nSlash-команди дублюють лише верхній рівень. Основні: /activities, /practice, /tools, /progress і /settings. Команда /grammar приймає фрагмент після пробілу.",
+            "en": "The buttons below the input field are the four permanent sections: Today, My activities, Practice and Tools.\n\nInline buttons under a card apply only to that screen. During a task, normal text is treated as your answer. Outside a task, the bot offers to check, translate or rephrase it.\n\nSlash commands mirror only the top level. The main ones are /activities, /practice, /tools, /progress and /settings. Put a phrase after /grammar to explain it.",
+            "pl": "Przyciski pod polem wpisywania to cztery stałe sekcje: Dzisiaj, Moje zajęcia, Ćwiczenia i Narzędzia.\n\nPrzyciski inline pod kartą dotyczą tylko otwartego ekranu. Podczas zadania zwykły tekst jest traktowany jako odpowiedź. Poza zadaniem bot zaproponuje sprawdzenie, tłumaczenie lub parafrazę.\n\nPolecenia slash powtarzają tylko najwyższy poziom. Najważniejsze to /activities, /practice, /tools, /progress i /settings. Po /grammar wpisz fragment do wyjaśnienia.",
+        },
+        "help.unknown_command": {
+            "ru": "Такой команды нет. Открываю актуальную схему управления.",
+            "uk": "Такої команди немає. Відкриваю актуальну схему керування.",
+            "en": "That command is not available. Opening the current navigation guide.",
+            "pl": "To polecenie nie jest dostępne. Otwieram aktualny przewodnik po nawigacji.",
+        },
+        "grammar.usage": {
+            "ru": "После /grammar добавьте слово или фрагмент фразы.",
+            "uk": "Після /grammar додайте слово або фрагмент фрази.",
+            "en": "Add a word or phrase fragment after /grammar.",
+            "pl": "Po /grammar wpisz słowo albo fragment wypowiedzi.",
+        },
+        "delete.confirm": {
+            "ru": "Удалить профиль, ответы, AI-разборы и расписание? Это действие нельзя отменить.",
+            "uk": "Видалити профіль, відповіді, AI-розбори та розклад? Цю дію не можна скасувати.",
+            "en": "Delete your profile, answers, AI analyses and schedule? This cannot be undone.",
+            "pl": "Usunąć profil, odpowiedzi, analizy AI i harmonogram? Tej operacji nie można cofnąć.",
+        },
+        "delete.action": {
+            "ru": "Удалить все данные",
+            "uk": "Видалити всі дані",
+            "en": "Delete all data",
+            "pl": "Usuń wszystkie dane",
+        },
+        "delete.done": {
+            "ru": "Профиль, ответы и AI-разборы, связанные с Telegram ID, удалены.",
+            "uk": "Профіль, відповіді та AI-розбори, пов’язані з Telegram ID, видалено.",
+            "en": "The profile, answers and AI analyses linked to your Telegram ID were deleted.",
+            "pl": "Profil, odpowiedzi i analizy AI powiązane z identyfikatorem Telegram zostały usunięte.",
+        },
+        "privacy.summary": {
+            "ru": "Alpha хранит Telegram ID, имя, тексты учебных ответов, оценки, расписание повторений, добровольные сведения профиля и вопросы преподавателю. Для персональной проверки текст текущего ответа и минимальный контекст задания отправляются OpenAI или Google Gemini. Имя, Telegram ID и история других занятий в AI не передаются. Голос и контакты не собираются.\n\nУдалить все данные можно командой /delete_me.",
+            "uk": "Alpha зберігає Telegram ID, ім’я, тексти навчальних відповідей, оцінки, розклад повторень, добровільні відомості профілю та запитання викладачеві. Для персональної перевірки текст поточної відповіді й мінімальний контекст завдання надсилаються OpenAI або Google Gemini. Ім’я, Telegram ID та історія інших занять до AI не передаються. Голос і контакти не збираються.\n\nВидалити всі дані можна командою /delete_me.",
+            "en": "The alpha stores your Telegram ID, name, learning answers, scores, review schedule, optional profile details and teacher questions. For personalised checking, the current answer and minimal task context are sent to OpenAI or Google Gemini. Your name, Telegram ID and other activity history are not sent to the AI. Voice and contacts are not collected.\n\nUse /delete_me to delete all data.",
+            "pl": "Wersja alpha przechowuje identyfikator Telegram, imię, odpowiedzi, oceny, harmonogram powtórek, dobrowolne dane profilu i pytania do nauczyciela. Do spersonalizowanej oceny bieżąca odpowiedź i minimalny kontekst zadania są wysyłane do OpenAI lub Google Gemini. Imię, identyfikator Telegram i historia innych zajęć nie są wysyłane do AI. Głos i kontakty nie są zbierane.\n\nAby usunąć wszystkie dane, użyj /delete_me.",
+        },
+    }
+)
+
 
 def tr(language: str, key: str, **values: Any) -> str:
     translations = CATALOG.get(key)
@@ -230,3 +518,77 @@ def tr(language: str, key: str, **values: Any) -> str:
         raise KeyError(f"Unknown UI key: {key}")
     template = translations.get(language) or translations["ru"]
     return template.format(**values)
+
+
+# Short system messages must remain available when an AI provider is disabled or
+# slow.  Longer scenario and quest translations stay in their curated content
+# packs and are deliberately kept separate from this UI copy.
+STATIC_COPY = {
+    "feedback.no_variants": {
+        "ru": "Для этого ответа дополнительных вариантов нет.",
+        "uk": "Для цієї відповіді немає додаткових варіантів.",
+        "en": "There are no additional variants for this answer.",
+        "pl": "Dla tej odpowiedzi nie ma dodatkowych wariantów.",
+    },
+    "feedback.grammar_custom_help": {
+        "ru": "Ответьте командой /grammar и укажите фрагмент, например:\n/grammar od dwóch dni",
+        "uk": "Відповідайте командою /grammar і вкажіть фрагмент, наприклад:\n/grammar od dwóch dni",
+        "en": "Reply with /grammar and the fragment, for example:\n/grammar od dwóch dni",
+        "pl": "Odpowiedz poleceniem /grammar i podaj fragment, na przykład:\n/grammar od dwóch dni",
+    },
+    "feedback.fragment_unavailable": {
+        "ru": "Этот фрагмент больше недоступен.",
+        "uk": "Цей фрагмент більше недоступний.",
+        "en": "This fragment is no longer available.",
+        "pl": "Ten fragment nie jest już dostępny.",
+    },
+    "feedback.no_analysis": {
+        "ru": "Сначала напишите ответ в учебном сценарии.",
+        "uk": "Спочатку напишіть відповідь у навчальному сценарії.",
+        "en": "First write an answer in a learning scenario.",
+        "pl": "Najpierw napisz odpowiedź w scenariuszu ćwiczeniowym.",
+    },
+    "feedback.translation_unavailable": {
+        "ru": "Перевод сейчас недоступен.",
+        "uk": "Переклад зараз недоступний.",
+        "en": "Translation is unavailable right now.",
+        "pl": "Tłumaczenie jest teraz niedostępne.",
+    },
+    "feedback.ai_unavailable": {
+        "ru": "AI-разбор сейчас недоступен.",
+        "uk": "AI-розбір зараз недоступний.",
+        "en": "AI explanation is unavailable right now.",
+        "pl": "Wyjaśnienie AI jest teraz niedostępne.",
+    },
+    "feedback.grammar_error": {
+        "ru": "Не удалось получить разбор. Попробуйте позже.",
+        "uk": "Не вдалося отримати розбір. Спробуйте пізніше.",
+        "en": "The explanation could not be retrieved. Try again later.",
+        "pl": "Nie udało się pobrać wyjaśnienia. Spróbuj później.",
+    },
+    "practice.label": {
+        "ru": "Полезный блок:",
+        "uk": "Корисний блок:",
+        "en": "Useful chunk:",
+        "pl": "Przydatny fragment:",
+    },
+    "practice.retry": {
+        "ru": "Пока не хватает части смысла. Попробуйте ещё раз:",
+        "uk": "Поки бракує частини змісту. Спробуйте ще раз:",
+        "en": "Part of the meaning is still missing. Try again:",
+        "pl": "Wciąż brakuje części znaczenia. Spróbuj jeszcze raz:",
+    },
+    "practice.fallback": {
+        "ru": "Зафиксируем образец и вернёмся к нему позже:",
+        "uk": "Зафіксуємо зразок і повернемося до нього пізніше:",
+        "en": "Let’s save a model answer and return to it later:",
+        "pl": "Zapiszmy wzorzec i wróćmy do niego później:",
+    },
+}
+
+
+def ui_copy(language: str, key: str, **values: Any) -> str:
+    translations = STATIC_COPY.get(key)
+    if translations is None:
+        raise KeyError(f"Unknown static UI key: {key}")
+    return (translations.get(language) or translations["ru"]).format(**values)

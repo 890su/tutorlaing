@@ -16,7 +16,7 @@ stores runtime data in a named Docker volume.
 
 Create ~/services/tutorlaing/.env on the VM using .env.example as the schema.
 Required values are `TELEGRAM_BOT_TOKEN`, `AI_PROVIDER`, the selected provider
-key/model and, for a closed alpha, `TELEGRAM_ALLOWED_CHAT_IDS`. Production uses
+key/model and, for a closed alpha, `TELEGRAM_ALLOWED_CHAT_IDS`. The prepared server profile uses
 `AI_PROVIDER=openai`, `AI_FALLBACK_PROVIDER=gemini`, `OPENAI_MODEL=gpt-5.6-sol`
 and `OPENAI_REASONING_EFFORT=low`.
 Production compose sets TELEGRAM_WEBHOOK_URL. The random
@@ -85,7 +85,13 @@ Do not remove:
 Before deleting old containers or volumes, inventory them and verify that no
 Tutorlaing volume is included.
 
-## Current production state
+## Last observed technical server state
+
+Tutorlaing is not treated as a production product. The endpoints below describe
+the previously prepared alpha runtime and are not evidence that the current
+working tree has been deployed. On 2026-08-06 the public health endpoint returned
+HTTP 200. Direct SSH alias `srv-150` was not configured/resolvable on the current
+operator workstation, so container state was not changed or revalidated over SSH.
 
 - Bot: @brnai_bot
 - Public health: https://brain.sekond.pl/health
@@ -94,10 +100,12 @@ Tutorlaing volume is included.
 - Persistent app volume: tutorlaing_tutorlaing-data
 - AI runtime: OpenAI GPT-5.6 Sol primary + Gemini 3.5 Flash failover; both
   credentials are stored only in the mode-600 server `.env`; real OpenAI
-  translation smoke passed; consent v3 required
+  translation smoke passed; current working tree requires consent v4
 - Adaptive drills: 8 items / at least 4 types; A0–C1 level policy controls scaffolding and AI prompts
 - Interactive toolkit: 10 history-aware flashcards, bidirectional phrase variants and level-aware topic drills
-- Telegram UI: persistent four-action bottom navigation; full options in message, compact A/B/C/D callbacks
+- Telegram UI on the last deployed image may lag behind the working tree. The
+  working tree uses reply navigation v5 (`Today`, `My activities`, `Practice`,
+  `Tools`) and a localized canonical command catalog.
 - Reminder scheduler: active in all learning stages with five-minute retry; user mode defaults to off, Europe/Warsaw quiet hours
 - Re-engagement: after 5/3/2/1 inactive days by reminder mode, one normal slot becomes a localized motivational card; other slots are suppressed until cooldown
 - Old n8n, Google MCP and Twenty CRM containers/volumes: removed

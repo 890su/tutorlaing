@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .engine import normalize
-from .quest_content import QuestChoice, QuestNode
+from .quest_content import QuestNode
 
 
 @dataclass(frozen=True)
@@ -17,19 +17,13 @@ class QuestTransition:
     reference_answer: str = ""
 
 
-def choose(
-    node: QuestNode, choice_id: str, current_state: dict[str, Any]
-) -> QuestTransition:
-    if node.mode != "choice":
-        raise ValueError(f"Quest node does not accept a choice: {node.id}")
-    choice = next((item for item in node.choices if item.id == choice_id), None)
-    if choice is None:
-        raise KeyError(f"Quest choice unavailable: {choice_id}")
-    return _choice_transition(choice, current_state)
-
-
 def answer_free(
-    node: QuestNode, response: str, current_state: dict[str, Any]
+    node: QuestNode,
+    response: str,
+    current_state: dict[str, Any],
+    *,
+    score: float | None = None,
+    successful: bool | None = None,
 ) -> QuestTransition:
     if node.mode != "free":
         raise ValueError(f"Quest node does not accept text: {node.id}")
@@ -38,9 +32,12 @@ def answer_free(
     for group in node.expected_groups:
         if any(f" {normalize(variant)} " in answer for variant in group):
             matched += 1
-    score = matched / len(node.expected_groups)
-    successful = score >= 0.6
+    rule_score = matched / len(node.expected_groups)
+    score = rule_score if score is None else max(0.0, min(1.0, score))
+    successful = score >= 0.6 if successful is None else successful
     state = {str(key): str(value) for key, value in current_state.items()}
+    effects = node.success_effects if successful else node.retry_effects
+    state.update({str(key): str(value) for key, value in (effects or {}).items()})
     state[f"answer:{node.id}"] = response.strip()[:500]
     return QuestTransition(
         next_node=node.success_next if successful else node.retry_next,
@@ -51,18 +48,4 @@ def answer_free(
         points=round(score, 3),
         state=state,
         reference_answer="" if successful else node.reference_answer,
-    )
-
-
-def _choice_transition(
-    choice: QuestChoice, current_state: dict[str, Any]
-) -> QuestTransition:
-    state = {str(key): str(value) for key, value in current_state.items()}
-    state.update(choice.effects)
-    return QuestTransition(
-        next_node=choice.next_node,
-        outcome=choice.outcome,
-        feedback_ru=choice.feedback_ru,
-        points=choice.points,
-        state=state,
     )

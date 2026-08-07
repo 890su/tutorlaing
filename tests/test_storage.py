@@ -76,6 +76,43 @@ class StorageTests(unittest.TestCase):
         self.assertEqual("abandoned", self.storage.session(first)["status"])
         self.assertEqual("active", self.storage.session(second)["status"])
 
+    def test_abandon_all_activities_closes_every_open_session(self) -> None:
+        chat_id = 91
+        self.storage.ensure_user(chat_id, "Learner")
+        first = self.storage.start_session(chat_id, "pharmacy")
+        second = self.storage.start_session(
+            chat_id, "directions", preserve_active=True
+        )
+        quest = self.storage.start_quest(
+            chat_id, "ticket_control", "start", preserve_active=True
+        )
+        item = {
+            "type": "free_recall",
+            "skill": "meaning",
+            "prompt": "Reply",
+            "context": "Context",
+            "options": [],
+            "correct_answer": "Answer",
+            "accepted_answers": ["Answer"],
+            "explanation": "Why",
+            "hint": "Hint",
+            "difficulty": 1,
+        }
+        drill = self.storage.start_drill(
+            chat_id, None, "Cards", "Meaning", [item], replace_active=False
+        )
+
+        closed = self.storage.abandon_all_activities(chat_id)
+
+        self.assertEqual(4, closed)
+        self.assertEqual("abandoned", self.storage.session(first)["status"])
+        self.assertEqual("abandoned", self.storage.session(second)["status"])
+        self.assertEqual("abandoned", self.storage.quest_session(quest, chat_id)["status"])
+        self.assertEqual("abandoned", self.storage.drill_session(drill)["status"])
+        self.assertEqual(0, self.storage.open_activity_count(chat_id))
+        user = self.storage.get_user(chat_id)
+        self.assertEqual("idle", user["stage"])
+
     def test_language_settings_and_ai_data_are_deleted_with_user(self) -> None:
         self.storage.ensure_user(77, "Learner")
         self.storage.accept_consent(77, 2)
@@ -175,7 +212,6 @@ class StorageTests(unittest.TestCase):
         self.storage.close()
         connection = sqlite3.connect(path)
         connection.execute("ALTER TABLE users DROP COLUMN toolkit_input_mode")
-        connection.execute("ALTER TABLE users DROP COLUMN suspended_activity_json")
         connection.execute("ALTER TABLE drill_sessions DROP COLUMN mode")
         connection.commit()
         connection.close()
@@ -193,7 +229,7 @@ class StorageTests(unittest.TestCase):
             )
         }
         self.assertIn("toolkit_input_mode", user_columns)
-        self.assertIn("suspended_activity_json", user_columns)
+        self.assertNotIn("suspended_activity_json", user_columns)
         self.assertIn("reply_keyboard_version", user_columns)
         self.assertIn("mode", drill_columns)
 

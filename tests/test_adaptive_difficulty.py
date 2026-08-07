@@ -15,12 +15,14 @@ class FakeDifficultyStore:
         self.pending: dict[str, Any] | None = None
         self.cooldown: str | None = None
         self.states: list[dict[str, Any]] = []
+        self.adaptive_enabled = True
 
     def difficulty_evidence(self, _chat_id: int, limit: int = 40) -> dict[str, Any]:
         return {
             "profile_level": self.level,
             "practice_offset": self.offset,
             "target_language": "pl",
+            "adaptive_level_enabled": self.adaptive_enabled,
             "attempts": self.attempts[-limit:],
         }
 
@@ -122,6 +124,13 @@ class AdaptiveDifficultyTests(unittest.TestCase):
         store = FakeDifficultyStore(evidence(12, 1.0), level="C1")
         self.assertIsNone(AdaptiveDifficultyService(store).assess(1))
         self.assertEqual("C1", shifted_level("C1", 1))
+
+    def test_learner_can_disable_adaptive_working_level(self) -> None:
+        store = FakeDifficultyStore(evidence(12, 1.0))
+        store.adaptive_enabled = False
+
+        self.assertIsNone(AdaptiveDifficultyService(store).assess(1))
+        self.assertIsNone(store.pending)
 
 
 if __name__ == "__main__":

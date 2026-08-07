@@ -16,18 +16,6 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-ACTIVITY_FIELDS = (
-    "stage",
-    "current_scenario",
-    "current_step",
-    "current_session",
-    "current_review",
-    "current_drill",
-    "current_quest",
-    "pending_assignment",
-)
-
-
 class Storage:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -57,7 +45,10 @@ class Storage:
             current_drill TEXT,
             current_quest TEXT,
             toolkit_input_mode TEXT,
-            suspended_activity_json TEXT,
+            profile_input_mode TEXT,
+            coach_session_id TEXT,
+            coach_input_mode TEXT,
+            background_card_id INTEGER,
             pending_assignment TEXT,
             workspace_message_id INTEGER,
             reply_keyboard_version TEXT,
@@ -83,6 +74,60 @@ class Storage:
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
             text TEXT NOT NULL,
             created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS learner_profiles (
+            chat_id INTEGER PRIMARY KEY REFERENCES users(chat_id) ON DELETE CASCADE,
+            age_band TEXT NOT NULL DEFAULT 'unset',
+            life_role TEXT NOT NULL DEFAULT 'unset',
+            weekly_context TEXT NOT NULL DEFAULT '',
+            current_goal TEXT NOT NULL DEFAULT '',
+            adaptive_level_enabled INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS coach_sessions (
+            id TEXT PRIMARY KEY,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            activity_kind TEXT NOT NULL,
+            activity_id TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            started_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            closed_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS coach_exchanges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            coach_session_id TEXT NOT NULL REFERENCES coach_sessions(id) ON DELETE CASCADE,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            operation TEXT NOT NULL,
+            question TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS background_cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            activity_kind TEXT NOT NULL,
+            activity_id TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            source_step TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            card_type TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            context TEXT NOT NULL,
+            correct_answer TEXT NOT NULL,
+            accepted_answers_json TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            user_answer TEXT,
+            score REAL,
+            created_at TEXT NOT NULL,
+            answered_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS sessions (
@@ -333,6 +378,12 @@ class Storage:
             ON quest_attempts(quest_session_id, id);
         CREATE INDEX IF NOT EXISTS idx_text_inbox_chat
             ON text_inbox(chat_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_coach_sessions_chat
+            ON coach_sessions(chat_id, status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_coach_exchanges_session
+            ON coach_exchanges(coach_session_id, id);
+        CREATE INDEX IF NOT EXISTS idx_background_cards_activity
+            ON background_cards(chat_id, activity_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
             ON ai_analyses(chat_id, id DESC);
         CREATE INDEX IF NOT EXISTS idx_drill_sessions_chat
@@ -362,7 +413,10 @@ class Storage:
             self._ensure_column("users", "current_drill", "TEXT")
             self._ensure_column("users", "current_quest", "TEXT")
             self._ensure_column("users", "toolkit_input_mode", "TEXT")
-            self._ensure_column("users", "suspended_activity_json", "TEXT")
+            self._ensure_column("users", "profile_input_mode", "TEXT")
+            self._ensure_column("users", "coach_session_id", "TEXT")
+            self._ensure_column("users", "coach_input_mode", "TEXT")
+            self._ensure_column("users", "background_card_id", "INTEGER")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column("users", "reply_keyboard_version", "TEXT")
@@ -421,6 +475,12 @@ class Storage:
                 "sessions", "target_language", "TEXT NOT NULL DEFAULT 'pl'"
             )
             self._connection.execute(
+                """
+                INSERT OR IGNORE INTO learner_profiles(chat_id, updated_at)
+                SELECT chat_id, updated_at FROM users
+                """
+            )
+            self._connection.execute(
                 "UPDATE users SET stage = 'idle' WHERE stage = 'toolkit_input'"
             )
             self._connection.execute(
@@ -450,6 +510,13 @@ class Storage:
                     updated_at = excluded.updated_at
                 """,
                 (chat_id, first_name, now, now),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO learner_profiles(chat_id, updated_at) VALUES (?, ?)
+                ON CONFLICT(chat_id) DO NOTHING
+                """,
+                (chat_id, now),
             )
         return self.get_user(chat_id)
 
@@ -506,6 +573,308 @@ class Storage:
             )
         self.event(chat_id, "learner_level_changed", {"level": level})
 
+    def learner_profile(self, chat_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM learner_profiles WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Learner profile not found: {chat_id}")
+        return row
+
+    def update_learner_profile(self, chat_id: int, **values: Any) -> sqlite3.Row:
+        allowed = {
+            "age_band",
+            "life_role",
+            "weekly_context",
+            "current_goal",
+            "adaptive_level_enabled",
+        }
+        invalid = set(values) - allowed
+        if invalid or not values:
+            raise ValueError(f"Unsupported learner profile fields: {sorted(invalid)}")
+        assignments = ", ".join(f"{field} = ?" for field in values)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                f"UPDATE learner_profiles SET {assignments}, updated_at = ? WHERE chat_id = ?",
+                (*values.values(), utc_now(), chat_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Learner profile not found: {chat_id}")
+        return self.learner_profile(chat_id)
+
+    def open_coach_session(
+        self,
+        chat_id: int,
+        activity_kind: str,
+        activity_id: str,
+        context: dict[str, Any],
+    ) -> str:
+        session_id = str(uuid.uuid4())
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE coach_sessions SET status = 'closed', closed_at = ?, updated_at = ?
+                WHERE chat_id = ? AND status = 'active'
+                """,
+                (now, now, chat_id),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO coach_sessions(
+                    id, chat_id, activity_kind, activity_id, context_json,
+                    status, started_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    session_id,
+                    chat_id,
+                    activity_kind,
+                    activity_id,
+                    json.dumps(context, ensure_ascii=False, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                """
+                UPDATE users SET coach_session_id = ?, coach_input_mode = NULL,
+                    updated_at = ? WHERE chat_id = ?
+                """,
+                (session_id, now, chat_id),
+            )
+        self.event(
+            chat_id,
+            "coach_opened",
+            {"activity_kind": activity_kind, "activity_id": activity_id},
+        )
+        return session_id
+
+    def coach_session(self, chat_id: int, session_id: str) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT * FROM coach_sessions
+                WHERE id = ? AND chat_id = ? AND status = 'active'
+                """,
+                (session_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Active coach session not found: {session_id}")
+        return row
+
+    def add_coach_exchange(
+        self,
+        chat_id: int,
+        session_id: str,
+        operation: str,
+        question: str,
+        response: dict[str, Any],
+        provider: str,
+    ) -> int:
+        self.coach_session(chat_id, session_id)
+        now = utc_now()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO coach_exchanges(
+                    coach_session_id, chat_id, operation, question,
+                    response_json, provider, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    chat_id,
+                    operation,
+                    question[:4000],
+                    json.dumps(response, ensure_ascii=False, sort_keys=True),
+                    provider,
+                    now,
+                ),
+            )
+            self._connection.execute(
+                "UPDATE coach_sessions SET updated_at = ? WHERE id = ?",
+                (now, session_id),
+            )
+        return int(cursor.lastrowid)
+
+    def close_coach_session(self, chat_id: int) -> None:
+        now = utc_now()
+        with self._lock, self._connection:
+            user = self._connection.execute(
+                "SELECT coach_session_id FROM users WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            if user is None:
+                raise KeyError(f"Unknown user: {chat_id}")
+            if user["coach_session_id"]:
+                self._connection.execute(
+                    """
+                    UPDATE coach_sessions SET status = 'closed', closed_at = ?, updated_at = ?
+                    WHERE id = ? AND chat_id = ? AND status = 'active'
+                    """,
+                    (now, now, user["coach_session_id"], chat_id),
+                )
+            self._connection.execute(
+                """
+                UPDATE users SET coach_session_id = NULL, coach_input_mode = NULL,
+                    updated_at = ? WHERE chat_id = ?
+                """,
+                (now, chat_id),
+            )
+        self.event(chat_id, "coach_closed", {})
+
+    def recent_background_card_types(
+        self, chat_id: int, activity_id: str, limit: int = 3
+    ) -> list[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT card_type FROM background_cards
+                WHERE chat_id = ? AND activity_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (chat_id, activity_id, max(1, min(20, limit))),
+            ).fetchall()
+        return [str(row["card_type"]) for row in rows]
+
+    def recent_background_card_reasons(
+        self, chat_id: int, limit: int = 20
+    ) -> list[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT reason FROM background_cards
+                WHERE chat_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (chat_id, max(1, min(100, limit))),
+            ).fetchall()
+        return [str(row["reason"]) for row in rows]
+
+    def create_background_card(self, chat_id: int, **values: Any) -> int:
+        required = {
+            "activity_kind",
+            "activity_id",
+            "topic",
+            "source_step",
+            "reason",
+            "card_type",
+            "prompt",
+            "context",
+            "correct_answer",
+            "accepted_answers",
+            "explanation",
+        }
+        if set(values) != required:
+            raise ValueError("Background card fields do not match the contract")
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE background_cards SET status = 'skipped', answered_at = ?
+                WHERE chat_id = ? AND status = 'pending'
+                """,
+                (now, chat_id),
+            )
+            cursor = self._connection.execute(
+                """
+                INSERT INTO background_cards(
+                    chat_id, activity_kind, activity_id, topic, source_step,
+                    reason, card_type, prompt, context, correct_answer,
+                    accepted_answers_json, explanation, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    chat_id,
+                    values["activity_kind"],
+                    values["activity_id"],
+                    values["topic"],
+                    values["source_step"],
+                    values["reason"],
+                    values["card_type"],
+                    values["prompt"],
+                    values["context"],
+                    values["correct_answer"],
+                    json.dumps(values["accepted_answers"], ensure_ascii=False),
+                    values["explanation"],
+                    now,
+                ),
+            )
+            card_id = int(cursor.lastrowid)
+            self._connection.execute(
+                "UPDATE users SET background_card_id = ?, updated_at = ? WHERE chat_id = ?",
+                (card_id, now, chat_id),
+            )
+        self.event(
+            chat_id,
+            "background_card_created",
+            {
+                "card_id": card_id,
+                "activity_kind": values["activity_kind"],
+                "card_type": values["card_type"],
+                "reason": values["reason"],
+            },
+        )
+        return card_id
+
+    def background_card(self, chat_id: int, card_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM background_cards WHERE id = ? AND chat_id = ?",
+                (card_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Background card not found: {card_id}")
+        return row
+
+    def answer_background_card(
+        self, chat_id: int, card_id: int, answer: str, score: float
+    ) -> None:
+        now = utc_now()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE background_cards SET status = 'answered', user_answer = ?,
+                    score = ?, answered_at = ?
+                WHERE id = ? AND chat_id = ? AND status = 'pending'
+                """,
+                (answer[:4000], max(0.0, min(1.0, score)), now, card_id, chat_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Pending background card not found: {card_id}")
+            self._connection.execute(
+                """
+                UPDATE users SET background_card_id = NULL, updated_at = ?
+                WHERE chat_id = ? AND background_card_id = ?
+                """,
+                (now, chat_id, card_id),
+            )
+        self.event(
+            chat_id, "background_card_answered", {"card_id": card_id, "score": score}
+        )
+
+    def dismiss_background_card(self, chat_id: int) -> None:
+        now = utc_now()
+        with self._lock, self._connection:
+            user = self._connection.execute(
+                "SELECT background_card_id FROM users WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            if user is None:
+                raise KeyError(f"Unknown user: {chat_id}")
+            if user["background_card_id"]:
+                self._connection.execute(
+                    """
+                    UPDATE background_cards SET status = 'skipped', answered_at = ?
+                    WHERE id = ? AND chat_id = ? AND status = 'pending'
+                    """,
+                    (now, user["background_card_id"], chat_id),
+                )
+            self._connection.execute(
+                "UPDATE users SET background_card_id = NULL, updated_at = ? WHERE chat_id = ?",
+                (now, chat_id),
+            )
+
     def set_user_state(self, chat_id: int, **values: Any) -> None:
         allowed = {
             "stage",
@@ -516,7 +885,10 @@ class Storage:
             "current_drill",
             "current_quest",
             "toolkit_input_mode",
-            "suspended_activity_json",
+            "profile_input_mode",
+            "coach_session_id",
+            "coach_input_mode",
+            "background_card_id",
             "pending_assignment",
             "workspace_message_id",
             "reply_keyboard_version",
@@ -563,76 +935,22 @@ class Storage:
             raise KeyError(f"Text inbox item not found: {inbox_id}")
         return row
 
-    def suspend_activity(self, chat_id: int) -> bool:
-        """Move the current learning activity aside for a temporary tool drill."""
-        with self._lock, self._connection:
-            user = self._connection.execute(
-                "SELECT * FROM users WHERE chat_id = ?", (chat_id,)
-            ).fetchone()
-            if user is None:
-                raise KeyError(f"Unknown user: {chat_id}")
-            if user["suspended_activity_json"] or user["stage"] in {"idle", "new"}:
-                return False
-            snapshot = {field: user[field] for field in ACTIVITY_FIELDS}
-            self._connection.execute(
-                """
-                UPDATE users
-                SET stage = 'idle', current_scenario = NULL, current_step = 0,
-                    current_session = NULL, current_review = NULL,
-                    current_drill = NULL, current_quest = NULL,
-                    pending_assignment = NULL,
-                    toolkit_input_mode = NULL, suspended_activity_json = ?,
-                    updated_at = ?
-                WHERE chat_id = ?
-                """,
-                (json.dumps(snapshot, ensure_ascii=False), utc_now(), chat_id),
-            )
-        self.event(chat_id, "activity_suspended", {"stage": snapshot["stage"]})
-        return True
-
-    def restore_suspended_activity(self, chat_id: int) -> bool:
-        """Restore an activity after a temporary tool drill completes or stops."""
-        with self._lock, self._connection:
-            stage = self._restore_suspended_activity_locked(chat_id)
-            if stage is None:
-                return False
-        self.event(chat_id, "activity_restored", {"stage": stage})
-        return True
-
-    def _restore_suspended_activity_locked(self, chat_id: int) -> str | None:
-        user = self._connection.execute(
-            "SELECT suspended_activity_json FROM users WHERE chat_id = ?",
-            (chat_id,),
-        ).fetchone()
-        if user is None:
-            raise KeyError(f"Unknown user: {chat_id}")
-        if not user["suspended_activity_json"]:
-            return None
-        snapshot = json.loads(str(user["suspended_activity_json"]))
-        values = [snapshot.get(field) for field in ACTIVITY_FIELDS]
-        assignments = ", ".join(f"{field} = ?" for field in ACTIVITY_FIELDS)
-        self._connection.execute(
-            f"""
-            UPDATE users SET {assignments}, suspended_activity_json = NULL,
-                updated_at = ? WHERE chat_id = ?
-            """,
-            (*values, utc_now(), chat_id),
-        )
-        return str(snapshot.get("stage") or "idle")
-
-    def start_session(self, chat_id: int, scenario_id: str) -> str:
+    def start_session(
+        self, chat_id: int, scenario_id: str, *, preserve_active: bool = False
+    ) -> str:
         session_id = str(uuid.uuid4())
         now = utc_now()
         target_language = str(self.get_user(chat_id)["target_language"])
         with self._lock, self._connection:
-            self._connection.execute(
-                """
-                UPDATE sessions
-                SET status = 'abandoned', completed_at = ?
-                WHERE chat_id = ? AND status = 'active'
-                """,
-                (now, chat_id),
-            )
+            if not preserve_active:
+                self._connection.execute(
+                    """
+                    UPDATE sessions
+                    SET status = 'abandoned', completed_at = ?
+                    WHERE chat_id = ? AND status = 'active'
+                    """,
+                    (now, chat_id),
+                )
             self._connection.execute(
                 "INSERT INTO sessions(id, chat_id, scenario_id, target_language, status, started_at) VALUES (?, ?, ?, ?, 'active', ?)",
                 (session_id, chat_id, scenario_id, target_language, now),
@@ -644,23 +962,113 @@ class Storage:
             current_step=0,
             current_session=session_id,
             current_review=None,
+            current_drill=None,
+            current_quest=None,
             pending_assignment=None,
         )
         self.event(chat_id, "scenario_started", {"scenario_id": scenario_id})
         return session_id
 
-    def start_quest(self, chat_id: int, quest_id: str, start_node: str) -> str:
+    def active_scenario_sessions(self, chat_id: int) -> list[Any]:
+        """All open situations with a resume position, newest first."""
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT sessions.*, COALESCE(MAX(responses.step_index) + 1, 0) AS current_step
+                    FROM sessions
+                    LEFT JOIN responses ON responses.session_id = sessions.id
+                    WHERE sessions.chat_id = ? AND sessions.status = 'active'
+                    GROUP BY sessions.id
+                    ORDER BY sessions.started_at DESC
+                    """,
+                    (chat_id,),
+                ).fetchall()
+            )
+
+    def open_activity_count(self, chat_id: int) -> int:
+        with self._lock:
+            return sum(
+                int(
+                    self._connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE chat_id = ? AND status = 'active'",
+                        (chat_id,),
+                    ).fetchone()[0]
+                )
+                for table in ("sessions", "quest_sessions", "drill_sessions")
+            )
+
+    def abandon_all_activities(self, chat_id: int) -> int:
+        """Atomically close every open activity before a destructive course change."""
+        now = utc_now()
+        with self._lock, self._connection:
+            user = self._connection.execute(
+                "SELECT chat_id FROM users WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            if user is None:
+                raise KeyError(f"Unknown user: {chat_id}")
+            closed = 0
+            for table in ("sessions", "quest_sessions", "drill_sessions"):
+                cursor = self._connection.execute(
+                    f"""
+                    UPDATE {table} SET status = 'abandoned', completed_at = ?
+                    WHERE chat_id = ? AND status = 'active'
+                    """,
+                    (now, chat_id),
+                )
+                closed += max(0, int(cursor.rowcount))
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'idle', current_scenario = NULL,
+                    current_step = 0, current_session = NULL, current_review = NULL,
+                    current_drill = NULL, current_quest = NULL,
+                    pending_assignment = NULL,
+                    toolkit_input_mode = NULL, updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (now, chat_id),
+            )
+        self.event(chat_id, "all_activities_abandoned", {"count": closed})
+        return closed
+
+    def resume_scenario_session(self, chat_id: int, session_id: str) -> Any:
+        with self._lock, self._connection:
+            session = self._connection.execute(
+                "SELECT * FROM sessions WHERE id = ? AND chat_id = ? AND status = 'active'",
+                (session_id, chat_id),
+            ).fetchone()
+            if session is None:
+                raise KeyError(f"Active scenario session not found: {session_id}")
+            row = self._connection.execute(
+                "SELECT COALESCE(MAX(step_index) + 1, 0) AS current_step FROM responses WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            current_step = int(row["current_step"])
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'scenario', current_scenario = ?, current_step = ?,
+                    current_session = ?, current_review = NULL, current_drill = NULL,
+                    current_quest = NULL, pending_assignment = NULL,
+                    updated_at = ? WHERE chat_id = ?
+                """,
+                (session["scenario_id"], current_step, session_id, utc_now(), chat_id),
+            )
+        self.event(chat_id, "scenario_resumed", {"session_id": session_id})
+        return session
+
+    def start_quest(self, chat_id: int, quest_id: str, start_node: str, *, preserve_active: bool = False) -> str:
         quest_session_id = str(uuid.uuid4())
         now = utc_now()
         user = self.get_user(chat_id)
         with self._lock, self._connection:
-            self._connection.execute(
-                """
-                UPDATE quest_sessions SET status = 'abandoned', completed_at = ?
-                WHERE chat_id = ? AND status = 'active'
-                """,
-                (now, chat_id),
-            )
+            if not preserve_active:
+                self._connection.execute(
+                    """
+                    UPDATE quest_sessions SET status = 'abandoned', completed_at = ?
+                    WHERE chat_id = ? AND status = 'active'
+                    """,
+                    (now, chat_id),
+                )
             self._connection.execute(
                 """
                 INSERT INTO quest_sessions(
@@ -703,6 +1111,44 @@ class Storage:
             ).fetchone()
         if row is None:
             raise KeyError(f"Quest session not found: {quest_session_id}")
+        return row
+
+    def active_quest_sessions(self, chat_id: int) -> list[sqlite3.Row]:
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT * FROM quest_sessions
+                    WHERE chat_id = ? AND status = 'active'
+                    ORDER BY started_at DESC
+                    """,
+                    (chat_id,),
+                ).fetchall()
+            )
+
+    def resume_quest_session(self, chat_id: int, quest_session_id: str) -> sqlite3.Row:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT * FROM quest_sessions
+                WHERE id = ? AND chat_id = ? AND status = 'active'
+                """,
+                (quest_session_id, chat_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Active quest session not found: {quest_session_id}")
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'quest', current_quest = ?,
+                    current_scenario = NULL, current_session = NULL,
+                    current_review = NULL, current_drill = NULL,
+                    pending_assignment = NULL,
+                    updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (quest_session_id, utc_now(), chat_id),
+            )
+        self.event(chat_id, "quest_resumed", {"quest_session_id": quest_session_id})
         return row
 
     def advance_quest(
@@ -1386,14 +1832,6 @@ class Storage:
         now = utc_now()
         target_language = str(self.get_user(chat_id)["target_language"])
         with self._lock, self._connection:
-            if not replace_active:
-                current = self._connection.execute(
-                    "SELECT current_drill FROM users WHERE chat_id = ?", (chat_id,)
-                ).fetchone()
-                if current is None:
-                    raise KeyError(f"Unknown user: {chat_id}")
-                if current["current_drill"]:
-                    return str(current["current_drill"])
             if replace_active:
                 self._connection.execute(
                     "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE chat_id = ? AND status = 'active'",
@@ -1444,7 +1882,10 @@ class Storage:
                     ),
                 )
             self._connection.execute(
-                "UPDATE users SET stage = 'drill', current_drill = ?, updated_at = ? WHERE chat_id = ?",
+                """UPDATE users SET stage = 'drill', current_drill = ?,
+                    current_scenario = NULL, current_session = NULL,
+                    current_review = NULL, current_quest = NULL,
+                    pending_assignment = NULL, updated_at = ? WHERE chat_id = ?""",
                 (drill_id, now, chat_id),
             )
         self.event(
@@ -1477,6 +1918,44 @@ class Storage:
                 """,
                 (chat_id,),
             ).fetchone()
+
+    def active_drill_sessions(self, chat_id: int) -> list[sqlite3.Row]:
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT * FROM drill_sessions
+                    WHERE chat_id = ? AND status = 'active'
+                    ORDER BY started_at DESC
+                    """,
+                    (chat_id,),
+                ).fetchall()
+            )
+
+    def resume_drill_session(self, chat_id: int, drill_id: str) -> sqlite3.Row:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT * FROM drill_sessions
+                WHERE id = ? AND chat_id = ? AND status = 'active'
+                """,
+                (drill_id, chat_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Active drill session not found: {drill_id}")
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'drill', current_drill = ?,
+                    current_scenario = NULL, current_session = NULL,
+                    current_review = NULL, current_quest = NULL,
+                    pending_assignment = NULL,
+                    updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (drill_id, utc_now(), chat_id),
+            )
+        self.event(chat_id, "drill_resumed", {"drill_id": drill_id})
+        return row
 
     def drill_item(self, drill_id: str, position: int) -> sqlite3.Row:
         with self._lock:
@@ -1528,15 +2007,15 @@ class Storage:
                     "UPDATE drill_sessions SET status = 'completed', completed_at = ? WHERE id = ?",
                     (utc_now(), drill_id),
                 )
-                restored_stage = self._restore_suspended_activity_locked(chat_id)
-                if restored_stage is None:
-                    self._connection.execute(
-                        "UPDATE users SET stage = 'idle', current_drill = NULL, updated_at = ? WHERE chat_id = ?",
-                        (utc_now(), chat_id),
-                    )
+                self._connection.execute(
+                    """
+                    UPDATE users SET stage = 'idle', current_drill = NULL,
+                        updated_at = ?
+                    WHERE chat_id = ? AND current_drill = ?
+                    """,
+                    (utc_now(), chat_id, drill_id),
+                )
             self.event(chat_id, "drill_completed", {"drill_id": drill_id})
-            if restored_stage is not None:
-                self.event(chat_id, "activity_restored", {"stage": restored_stage})
             return False
         with self._lock, self._connection:
             self._connection.execute(
@@ -1552,15 +2031,15 @@ class Storage:
                 "UPDATE drill_sessions SET status = 'abandoned', completed_at = ? WHERE id = ? AND status = 'active'",
                 (utc_now(), drill_id),
             )
-            restored_stage = self._restore_suspended_activity_locked(chat_id)
-            if restored_stage is None:
-                self._connection.execute(
-                    "UPDATE users SET stage = 'idle', current_drill = NULL, updated_at = ? WHERE chat_id = ?",
-                    (utc_now(), chat_id),
-                )
+            self._connection.execute(
+                """
+                UPDATE users SET stage = 'idle', current_drill = NULL,
+                    updated_at = ?
+                WHERE chat_id = ? AND current_drill = ?
+                """,
+                (utc_now(), chat_id, drill_id),
+            )
         self.event(chat_id, "drill_abandoned", {"drill_id": drill_id})
-        if restored_stage is not None:
-            self.event(chat_id, "activity_restored", {"stage": restored_stage})
 
     def set_reminder_mode(
         self, chat_id: int, mode: str, next_at: datetime | None
@@ -1609,6 +2088,8 @@ class Storage:
                       AND reminder_next_at <= ?
                       AND (reminder_paused_until IS NULL OR reminder_paused_until <= ?)
                       AND toolkit_input_mode IS NULL
+                      AND coach_session_id IS NULL
+                      AND background_card_id IS NULL
                       AND stage IN (
                           'idle', 'waiting', 'scenario', 'practice', 'review', 'drill',
                           'quest'
@@ -1816,13 +2297,50 @@ class Storage:
                 (score, utc_now(), review_id),
             )
 
-    def add_outcome(self, chat_id: int, session_id: str, result: str) -> None:
-        with self._lock, self._connection:
-            self._connection.execute(
-                "INSERT INTO real_world_outcomes(session_id, chat_id, result, created_at) VALUES (?, ?, ?, ?)",
-                (session_id, chat_id, result, utc_now()),
+    def pending_outcome_sessions(
+        self, chat_id: int, target_language: str, limit: int = 5
+    ) -> list[sqlite3.Row]:
+        """Completed situations that the learner may report after real use."""
+        with self._lock:
+            return list(
+                self._connection.execute(
+                    """
+                    SELECT sessions.* FROM sessions
+                    WHERE sessions.chat_id = ?
+                      AND sessions.target_language = ?
+                      AND sessions.status = 'completed'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM real_world_outcomes
+                          WHERE real_world_outcomes.session_id = sessions.id
+                      )
+                    ORDER BY sessions.completed_at DESC
+                    LIMIT ?
+                    """,
+                    (chat_id, target_language, limit),
+                ).fetchall()
             )
-        self.event(chat_id, "real_world_outcome_reported", {"result": result})
+
+    def add_outcome(self, chat_id: int, session_id: str, result: str) -> bool:
+        if result not in {"success", "partial", "failed"}:
+            raise ValueError(f"Unsupported outcome: {result}")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                INSERT INTO real_world_outcomes(session_id, chat_id, result, created_at)
+                SELECT ?, ?, ?, ?
+                WHERE EXISTS (
+                    SELECT 1 FROM sessions
+                    WHERE id = ? AND chat_id = ? AND status = 'completed'
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM real_world_outcomes WHERE session_id = ?
+                )
+                """,
+                (session_id, chat_id, result, utc_now(), session_id, chat_id, session_id),
+            )
+        saved = cursor.rowcount == 1
+        if saved:
+            self.event(chat_id, "real_world_outcome_reported", {"result": result})
+        return saved
 
     def event(
         self, chat_id: int | None, event_name: str, properties: dict[str, Any] | None = None
@@ -1939,6 +2457,9 @@ class Storage:
             "profile_level": str(user["learner_level"]),
             "practice_offset": int(user["practice_difficulty_offset"] or 0),
             "target_language": target_language,
+            "adaptive_level_enabled": bool(
+                self.learner_profile(chat_id)["adaptive_level_enabled"]
+            ),
             "attempts": attempts[:bounded],
         }
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from .ai import AIClient, AIError, ResponseAnalysis
 from .contracts import FeedbackStore, Keyboard
-from .i18n import tr
+from .i18n import tr, ui_copy
 from .language_support import LanguageSupport
 from .navigation import home_row
 from .workspace import TelegramWorkspace
@@ -138,18 +138,14 @@ class FeedbackPresenter:
         if not analysis.alternatives:
             self.workspace.show(
                 chat_id,
-                self.language_support.instruction_text(
-                    chat_id,
-                    "Для этого ответа дополнительных вариантов нет.",
-                    "feedback-no-variants",
-                ),
+                ui_copy(self._language(chat_id), "feedback.no_variants"),
                 self.tabs(chat_id, analysis_id, "variants"),
                 surface="feedback_variants",
             )
             return
         labels = {
             key: tr(self._language(chat_id), f"variant.{key}")
-            for key in ("neutral", "formal", "informal")
+            for key in ("neutral", "formal", "friendly", "informal")
         }
         blocks = []
         for item in analysis.alternatives:
@@ -220,11 +216,7 @@ class FeedbackPresenter:
         if selection == "custom":
             self.workspace.show(
                 chat_id,
-                self.language_support.instruction_text(
-                    chat_id,
-                    "Ответьте командой /grammar и укажите фрагмент, например:\n/grammar od dwóch dni",
-                    "grammar-custom-help",
-                ),
+                ui_copy(self._language(chat_id), "feedback.grammar_custom_help"),
                 self.tabs(chat_id, analysis_id, "grammar"),
                 surface="feedback_grammar",
             )
@@ -237,11 +229,7 @@ class FeedbackPresenter:
             except (ValueError, IndexError):
                 self.workspace.show(
                     chat_id,
-                    self.language_support.instruction_text(
-                        chat_id,
-                        "Этот фрагмент больше недоступен.",
-                        "grammar-fragment-unavailable",
-                    ),
+                    ui_copy(self._language(chat_id), "feedback.fragment_unavailable"),
                     surface="feedback_grammar",
                 )
                 return
@@ -253,11 +241,7 @@ class FeedbackPresenter:
         if row is None:
             self.workspace.show(
                 chat_id,
-                self.language_support.instruction_text(
-                    chat_id,
-                    "Сначала напишите ответ в учебном сценарии.",
-                    "grammar-no-analysis",
-                ),
+                ui_copy(self._language(chat_id), "feedback.no_analysis"),
                 surface="feedback_grammar",
             )
             return
@@ -291,9 +275,7 @@ class FeedbackPresenter:
         text = (
             f"🌐 {translated}"
             if translated
-            else self.language_support.instruction_text(
-                chat_id, "Перевод сейчас недоступен.", "feedback-translation-error"
-            )
+            else ui_copy(self._language(chat_id), "feedback.translation_unavailable")
         )
         self.workspace.show(
             chat_id,
@@ -315,9 +297,7 @@ class FeedbackPresenter:
         if self.ai is None:
             self.workspace.show(
                 chat_id,
-                self.language_support.instruction_text(
-                    chat_id, "AI-разбор сейчас недоступен.", "grammar-ai-disabled"
-                ),
+                ui_copy(self._language(chat_id), "feedback.ai_unavailable"),
                 surface="feedback_grammar",
             )
             return
@@ -334,11 +314,7 @@ class FeedbackPresenter:
             self.store.event(chat_id, "ai_analysis_failed", {"operation": "grammar"})
             self.workspace.show(
                 chat_id,
-                self.language_support.instruction_text(
-                    chat_id,
-                    "Не удалось получить разбор. Попробуйте позже.",
-                    "grammar-error",
-                ),
+                ui_copy(self._language(chat_id), "feedback.grammar_error"),
                 surface="feedback_grammar",
             )
             return

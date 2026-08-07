@@ -3,10 +3,11 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from tutorlaing.ai import ResponseAnalysis
 from tutorlaing.app import TutorlaingBot
 from tutorlaing.config import Settings
 from tutorlaing.quest_content import load_quests
-from tutorlaing.quest_engine import answer_free, choose
+from tutorlaing.quest_engine import answer_free
 from tutorlaing.storage import Storage
 
 
@@ -74,20 +75,25 @@ class QuestContentTests(unittest.TestCase):
         self.assertEqual("u3_help", retry.next_node)
         self.assertEqual("problem", retry.outcome)
 
-    def test_choice_effects_are_merged_without_mutating_source_state(self) -> None:
+    def test_legacy_choice_node_becomes_free_text_with_preserved_effects(self) -> None:
         node = load_quests()["urzad_documents"].nodes["u1"]
         source = {"existing": "fact"}
-        transition = choose(node, "a", source)
+        self.assertEqual("free", node.mode)
+        transition = answer_free(node, node.reference_answer, source)
         self.assertEqual("u2", transition.next_node)
         self.assertEqual("fact", transition.state["existing"])
+        self.assertEqual("formal", transition.state["register"])
         self.assertNotEqual(source, transition.state)
 
     def test_all_callback_payloads_fit_telegram_limit(self) -> None:
         session_id = "00000000-0000-0000-0000-000000000000"
         for quest in load_quests().values():
             for node in quest.nodes.values():
-                for choice in node.choices:
-                    payload = f"quest:choice:{session_id}:{node.id}:{choice.id}"
+                if node.mode == "ending":
+                    continue
+                self.assertEqual("free", node.mode)
+                for action in ("hint", "next"):
+                    payload = f"quest:{action}:{session_id}:{node.id}"
                     self.assertLessEqual(len(payload.encode("utf-8")), 64, payload)
 
 
@@ -129,9 +135,9 @@ class QuestStorageTests(unittest.TestCase):
         )
         self.assertTrue(advanced)
         self.assertFalse(stale)
-        self.assertTrue(self.storage.suspend_activity(42))
+        self.storage.start_session(42, "pharmacy", preserve_active=True)
         self.assertIsNone(self.storage.get_user(42)["current_quest"])
-        self.assertTrue(self.storage.restore_suspended_activity(42))
+        self.storage.resume_quest_session(42, quest_id)
         user = self.storage.get_user(42)
         self.assertEqual("quest", user["stage"])
         self.assertEqual(quest_id, user["current_quest"])
@@ -166,17 +172,14 @@ class QuestAppTests(unittest.TestCase):
     def test_happy_path_completes_and_records_success(self) -> None:
         self.bot.begin_quest(7, "urzad_documents")
         session_id = str(self.storage.get_user(7)["current_quest"])
-        self.bot.send_quest_node(7, session_id)
-        self.bot.answer_quest_choice(7, session_id, "u1", "a")
-        self.bot.send_quest_node(7, session_id)
-        self.bot.answer_quest_choice(7, session_id, "u2", "a")
-        self.bot.send_quest_node(7, session_id)
-        self.bot.handle_text(7, "Igor", "Do kiedy mogę dostarczyć dokument?")
-        self.bot.send_quest_node(7, session_id)
-        self.bot.answer_quest_choice(7, session_id, "u4", "a")
-        self.bot.send_quest_node(7, session_id)
-        self.bot.handle_text(7, "Igor", "Wyślę dokument. Dziękuję za pomoc.")
-        self.bot.send_quest_node(7, session_id)
+        quest = load_quests()["urzad_documents"]
+        for _ in range(12):
+            session = self.storage.quest_session(session_id, 7)
+            node = quest.nodes[str(session["current_node"])]
+            self.bot.send_quest_node(7, session_id)
+            if node.mode == "ending":
+                break
+            self.bot.handle_text(7, "Igor", node.reference_answer)
 
         session = self.storage.quest_session(session_id, 7)
         self.assertEqual("completed", session["status"])
@@ -184,14 +187,69 @@ class QuestAppTests(unittest.TestCase):
         self.assertEqual("idle", self.storage.get_user(7)["stage"])
         self.assertEqual(1, self.storage.quest_history(7, "pl")[0]["successes"])
 
-    def test_active_quest_is_not_overwritten_by_old_scenario_button(self) -> None:
+    def test_ai_checks_a_natural_free_reply_before_selecting_quest_route(self) -> None:
+        class QuestAI:
+            provider = "test"
+            model = "quest-evaluator"
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def analyze_response(self, *args: Any, **kwargs: Any) -> ResponseAnalysis:
+                self.calls += 1
+                return ResponseAnalysis(
+                    task_achieved=True,
+                    score=0.9,
+                    confidence=0.9,
+                    positive_feedback="Cel rozmowy jest jasny.",
+                    meaning_gaps=(),
+                    critical_corrections=(),
+                    optional_improvements=(),
+                    natural_response="Dzień dobry, chcę złożyć wniosek o zameldowanie.",
+                    alternatives=(),
+                    grammar_chunks=(),
+                    pragmatic_note="",
+                    explanation="",
+                    provider=self.provider,
+                    model=self.model,
+                    prompt_version="test",
+                    latency_ms=1,
+                    usage={},
+                )
+
+        ai = QuestAI()
+        self.bot.ai = ai
+        self.bot.begin_quest(7, "urzad_documents")
+        session_id = str(self.storage.get_user(7)["current_quest"])
+        self.bot.handle_text(7, "Igor", "Dzień dobry, chcę załatwić meldunek.")
+
+        self.assertEqual(1, ai.calls)
+        self.assertEqual("u2", self.storage.quest_session(session_id, 7)["current_node"])
+
+    def test_quest_node_offers_only_hint_and_stop_not_answer_options(self) -> None:
+        self.bot.begin_quest(7, "urzad_documents")
+        session_id = str(self.storage.get_user(7)["current_quest"])
+        self.bot.send_quest_node(7, session_id)
+
+        keyboard = self.telegram.edits[-1]["keyboard"]
+        callbacks = [item["callback_data"] for row in keyboard for item in row]
+        self.assertTrue(any(value.startswith("quest:hint:") for value in callbacks))
+        self.assertIn("quest:stop:confirm", callbacks)
+        self.assertFalse(any(value.startswith("quest:choice:") for value in callbacks))
+
+    def test_scenario_can_be_foreground_while_quest_remains_resumable(self) -> None:
         self.bot.begin_quest(7, "clinic_visit")
         session_id = str(self.storage.get_user(7)["current_quest"])
         self.bot.begin_scenario(7, "pharmacy")
         user = self.storage.get_user(7)
-        self.assertEqual("quest", user["stage"])
-        self.assertEqual(session_id, user["current_quest"])
-        self.assertIsNone(user["current_session"])
+        self.assertEqual("scenario", user["stage"])
+        self.assertIsNone(user["current_quest"])
+        self.assertIsNotNone(user["current_session"])
+        self.assertEqual(
+            "active", self.storage.quest_session(session_id, 7)["status"]
+        )
+        self.bot.resume_saved_quest(7, session_id)
+        self.assertEqual("quest", self.storage.get_user(7)["stage"])
 
     def test_english_course_reports_quest_content_unavailable(self) -> None:
         self.storage.set_language(7, "target_language", "en")

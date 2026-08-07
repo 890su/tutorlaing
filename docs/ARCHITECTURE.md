@@ -72,15 +72,28 @@ flowchart LR
 | `language_support.py` | Перевод по запросу и level-aware сноски | `LanguageStore`, `AIClient` | Текст или безопасный fallback без перевода |
 | `feedback.py` | Вкладки результата, natural variants и grammar drill-down | `FeedbackStore`, workspace, language support, `AIClient` | Одна редактируемая feedback-card |
 | `progress_service.py` | Вывод mastery/focus/plan только из evidence | `ProgressStore` | Неизменяемый `ProgressSnapshot` |
+| `learner_profile.py` | Добровольный жизненный контекст и настройка адаптивности | `LearnerProfileStore` | Валидированный immutable `LearnerProfile` |
+| `activities.py` | Единая session-only модель незавершённой работы | `ActivityStore` | `LearningActivity[]`; foreground отделён от paused, позиция хранится в session table |
+| `coach.py` | Боковая консультация по текущему заданию | `CoachStore`, `AIClient` | `CoachResponse`; основной activity state неизменен |
+| `background_learning.py` | Связанная с занятием микро-практика | `BackgroundLearningStore`, необязательный `AIClient` | `BackgroundCardDraft`; foreground state неизменен |
 | `menu.py` | Home/settings/progress/reminder/privacy presentation | `MenuStore` и специализированные сервисы | Telegram cards без изменения учебной state machine |
 | `navigation.py` | Единые локализованные переходы Home/Back | instruction language + callback destination | Типовая строка кнопок без скрытой семантики `Назад` |
+| `commands.py` | Канонический каталог публичных slash-команд | instruction language или входной token | Локализованный BotCommand payload и нормализованная команда с поддержкой `@bot` |
 | `workspace.py` | Политика одной текущей карточки | `WorkspaceStore`, `TelegramGateway` | edit текущей либо один безопасный send |
 | `update_dispatcher.py` | Dedupe и нормализация Telegram update | `UpdateStore`, `TelegramGateway`, `UpdateTarget` | Один вызов text/callback handler; failed update доступен для retry |
 | `reminders.py` | Расчёт слотов и атомарная доставка | `ReminderStore`, `ReminderDelivery` | Не более одного assignment на зарезервированный slot |
-| `toolkit.py` | Независимый слой карточек, перевода и тематических тренировок | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Stateless-перевод либо временный drill с возвратом основной активности |
+| `toolkit.py` | Независимый слой карточек, перевода и тематических тренировок | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Stateless-перевод либо обычный сохраняемый drill; другие sessions не скрываются |
 | `toolkit_fallback.py` | Детерминированные карточки/topic packs без внешнего AI | Курируемый material + instruction language | Валидный `DrillPack` с теми же invariants |
 | `app.py` | Composition root и orchestration учебной state machine | concrete adapters + application services | Переходы scenario/practice/review/drill |
 | `storage.py` | SQLite schema, migrations и транзакционные операции | вызовы портов | Персистентное состояние и audit events |
+
+Telegram-навигация имеет три непересекающихся слоя. Reply keyboard v5 отвечает
+только за четыре постоянных назначения (`Сегодня`, `Мои занятия`, `Практика`,
+`Инструменты`). Inline callback относится к действию видимой карточки и при
+необходимости несёт identity объекта. `commands.py` открывает те же верхние
+разделы и служебные команды (`help`, `grammar`, privacy, deletion). `app.py`
+отсекает неизвестные slash-команды и устаревшие callback до маршрутизации
+ответа учебному занятию.
 
 Все порты находятся в `contracts.py`:
 
@@ -93,6 +106,11 @@ flowchart LR
 - `ReminderStore` / `ReminderDelivery` — планирование отдельно от materialization;
 - `UpdateStore` / `UpdateTarget` — exactly-once local dispatch отдельно от bot;
 - `ToolkitStore` / `ToolkitDelivery` — генерация инструмента отдельно от общей drill delivery;
+- `LearnerProfileStore` — owner-scoped контекст отдельно от Telegram user state;
+- `ActivityStore` — открытые session projections отдельно от их renderers;
+- `CoachStore` — owner-scoped teacher sessions/exchanges отдельно от mission state;
+- `BackgroundLearningStore` — история типов и source reasons для activity-scoped
+  ротации и selector 60/25/15;
 - `TransportError` — единый recoverable transport failure.
 
 Protocols являются структурными: `Storage` и `TelegramAPI` не наследуют их и
@@ -143,6 +161,29 @@ schemas сейчас повторно используются через нас
 9. Вспомогательный инструмент не уничтожает основной learner state: текстовый
    tool хранит только свой input mode, drill-tool использует один сохраняемый
    snapshot и атомарный restore. Вложенные drill-tools не создаются.
+10. Параллельные занятия могут храниться одновременно, но входящий свободный
+    текст маршрутизируется только в одно foreground-занятие. Переключение
+    foreground не меняет status остальных открытых sessions.
+
+## Переход к Mission Engine и коммерческим capabilities
+
+Следующий учебный движок строится как application module, а не как новый набор
+веток в `app.py`. `MissionEngine` получает versioned definition, состояние и
+реплику ученика; AI может предложить structured transition, но deterministic
+policy проверяет допустимые дельты, риски и завершение. Telegram отвечает только
+за отображение команды и результата.
+
+Монетизация подключается через будущие `EntitlementPolicy` и `UsageMeter`.
+Учебный use case спрашивает capability, например `voice_rehearsal` или
+`mission_variants`, и не импортирует billing SDK, тарифы или цены. Бесплатная
+полезная учебная петля не зависит от наличия платёжного adapter.
+
+`CoachService` является первым потребителем этого направления. Контекст
+фиксируется при открытии преподавателя и содержит только цель, текущую реплику,
+задание, hint, уровень и языковые настройки. Ответ преподавателя никогда не
+применяется как learner turn. Для операции `hint` application policy допускает
+только смысловой ориентир или короткие chunks; попытка AI вернуть полный ответ
+заменяется локальным fallback и пишется в audit events.
 
 ## Следующий технический backlog
 

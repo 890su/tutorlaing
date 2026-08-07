@@ -18,6 +18,8 @@ from .ai import (
 )
 from .config import Settings
 from .catalog import ScenarioCatalog
+from .coach import CoachService
+from .commands import PUBLIC_COMMANDS, command_payload, parse_command
 from .content import Scenario, ScenarioStep
 from .engine import (
     normalize,
@@ -26,19 +28,22 @@ from .engine import (
     select_bottleneck,
 )
 from .adaptive_difficulty import AdaptiveDifficultyService, DifficultyProposal
+from .activities import ActivityService
+from .background_learning import BackgroundLearningService
 from .difficulty import level_policy, practice_level, shifted_level
 from .drill_fallback import build_adaptive_fallback
 from .exercise_bank import ExerciseBank, material_signature
-from .i18n import tr
+from .i18n import tr, ui_copy
 from .feedback import FeedbackPresenter
 from .evaluation_service import ResponseEvaluator
 from .language_support import LanguageSupport
+from .learner_profile import LearnerProfileService
 from .menu import LearnerMenu
 from .navigation import home_row, reply_action
 from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
 from .quest_content import Quest, QuestCatalog, QuestNode
-from .quest_engine import QuestTransition, answer_free, choose
+from .quest_engine import QuestTransition, answer_free
 from .reminders import next_reminder_at, pause_until_tomorrow
 from .storage import Storage
 from .telegram_api import TelegramAPI, TelegramError
@@ -82,6 +87,10 @@ class TutorlaingBot:
         self.workspace = TelegramWorkspace(storage, self.telegram)
         self.language_support = LanguageSupport(storage, self.ai)
         self.progress_service = ProgressService(storage)
+        self.learner_profiles = LearnerProfileService(storage)
+        self.activities = ActivityService(storage)
+        self.coach = CoachService(storage, self.ai)
+        self.background_learning = BackgroundLearningService(storage, self.ai)
         self.adaptive_difficulty = AdaptiveDifficultyService(storage)
         self.feedback = FeedbackPresenter(
             storage, self.workspace, self.language_support, self.ai
@@ -93,6 +102,7 @@ class TutorlaingBot:
             self.catalog,
             self.language_support,
             self.progress_service,
+            self.learner_profiles,
         )
         self.update_dispatcher = TelegramUpdateDispatcher(
             storage, self.telegram, self
@@ -141,6 +151,9 @@ class TutorlaingBot:
     def _t(self, chat_id: int, key: str, **values: Any) -> str:
         return tr(self._language(chat_id), key, **values)
 
+    def _copy(self, chat_id: int, key: str, **values: Any) -> str:
+        return ui_copy(self._language(chat_id), key, **values)
+
     def _workspace(
         self,
         chat_id: int,
@@ -184,6 +197,411 @@ class TutorlaingBot:
 
     def show_learning_settings(self, chat_id: int) -> None:
         self.menu.show_learning_settings(chat_id)
+
+    def show_learner_profile(self, chat_id: int) -> None:
+        self.menu.show_learner_profile(chat_id)
+
+    def show_practice_hub(self, chat_id: int) -> None:
+        self.menu.show_practice_hub(chat_id)
+
+    def show_help(self, chat_id: int) -> None:
+        self.menu.show_help(chat_id)
+
+    def ask_profile_text(self, chat_id: int, field: str) -> None:
+        if field not in {"weekly", "goal"}:
+            self.show_learner_profile(chat_id)
+            return
+        self.storage.set_user_state(chat_id, profile_input_mode=field)
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, f"profile.input.{field}.title"),
+                self._t(chat_id, f"profile.input.{field}.prompt"),
+            ),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "action.cancel"),
+                        "callback_data": "settings:profile",
+                    }
+                ]
+            ],
+            surface="profile_input",
+        )
+
+    def save_profile_text(self, chat_id: int, text: str, field: str) -> None:
+        try:
+            if field == "weekly":
+                self.learner_profiles.set_weekly_context(chat_id, text)
+            elif field == "goal":
+                self.learner_profiles.set_current_goal(chat_id, text)
+            else:
+                raise ValueError("Unknown profile field")
+        except ValueError:
+            self._notice(chat_id, self._t(chat_id, "profile.input.invalid"))
+            return
+        self.storage.set_user_state(chat_id, profile_input_mode=None)
+        self.show_learner_profile(chat_id)
+
+    def open_coach(self, chat_id: int) -> None:
+        try:
+            activity_kind, activity_id, context = self._coach_context(chat_id)
+        except KeyError:
+            self._notice(chat_id, self._t(chat_id, "coach.no_activity"))
+            return
+        session = self.coach.open(chat_id, activity_kind, activity_id, context)
+        self._show_coach_menu(chat_id, session.id)
+
+    def _show_coach_menu(self, chat_id: int, session_id: str) -> None:
+        session = self.coach.get(chat_id, session_id)
+        title = str(session.context.get("title") or session.activity_kind)
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, "coach.title", activity=title),
+                self._t(chat_id, "coach.summary"),
+            ),
+            [
+                [{"text": self._t(chat_id, "coach.hint"), "callback_data": "coach:ask:hint"}],
+                [{"text": self._t(chat_id, "coach.say"), "callback_data": "coach:input:say"}],
+                [{"text": self._t(chat_id, "coach.translate"), "callback_data": "coach:input:translate"}],
+                [{"text": self._t(chat_id, "coach.explain"), "callback_data": "coach:ask:explain"}],
+                [{"text": self._t(chat_id, "coach.question"), "callback_data": "coach:input:question"}],
+                [{"text": self._t(chat_id, "coach.return"), "callback_data": "coach:return"}],
+            ],
+            surface="coach_menu",
+        )
+
+    def ask_coach_input(self, chat_id: int, operation: str) -> None:
+        user = self.storage.get_user(chat_id)
+        if not user["coach_session_id"]:
+            self.open_coach(chat_id)
+            return
+        self.storage.set_user_state(chat_id, coach_input_mode=operation)
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, f"coach.input.{operation}.title"),
+                self._t(chat_id, f"coach.input.{operation}.prompt"),
+            ),
+            [[{"text": self._t(chat_id, "coach.back"), "callback_data": "coach:menu"}]],
+            surface="coach_input",
+        )
+
+    def answer_coach(
+        self, chat_id: int, operation: str, question: str = ""
+    ) -> None:
+        user = self.storage.get_user(chat_id)
+        session_id = str(user["coach_session_id"] or "")
+        if not session_id:
+            self.open_coach(chat_id)
+            return
+        self.telegram.send_chat_action(chat_id)
+        response = self.coach.answer(
+            chat_id, session_id, operation, question or operation
+        )
+        self.storage.set_user_state(chat_id, coach_input_mode=None)
+        body = [response.answer]
+        if response.translation:
+            body.append(self._t(chat_id, "coach.translation_result", text=response.translation))
+        if response.suggested_phrases:
+            body.append(
+                self._t(chat_id, "coach.variants")
+                + "\n"
+                + "\n".join(
+                    f"• {item.text} — {item.nuance}" if item.nuance else f"• {item.text}"
+                    for item in response.suggested_phrases
+                )
+            )
+        if response.disclosed_help_level >= 4:
+            body.append(self._t(chat_id, "coach.full_example_note"))
+        self._workspace(
+            chat_id,
+            card(self._t(chat_id, "coach.answer_title"), "\n\n".join(body)),
+            [
+                [{"text": self._t(chat_id, "coach.ask_more"), "callback_data": "coach:menu"}],
+                [{"text": self._t(chat_id, "coach.return"), "callback_data": "coach:return"}],
+            ],
+            surface="coach_answer",
+        )
+
+    def close_coach(self, chat_id: int) -> None:
+        self.storage.close_coach_session(chat_id)
+        self.resume_activity(chat_id)
+
+    def _coach_context(self, chat_id: int) -> tuple[str, str, dict[str, Any]]:
+        user = self.storage.get_user(chat_id)
+        base = {
+            "instruction_language": str(user["instruction_language"]),
+            "translation_language": str(user["translation_language"]),
+            "target_language": str(user["target_language"]),
+            "learner_level": practice_level(user),
+        }
+        stage = str(user["stage"])
+        if stage in {"scenario", "practice"} and user["current_scenario"]:
+            scenario = self._scenarios_for_user(user)[str(user["current_scenario"])]
+            step_index = min(int(user["current_step"]), len(scenario.steps) - 1)
+            step = scenario.steps[step_index]
+            return (
+                "scenario",
+                str(user["current_session"] or scenario.id),
+                {
+                    **base,
+                    "title": scenario.title_pl,
+                    "goal": scenario.objective_ru,
+                    "interlocutor": step.interlocutor_pl,
+                    "task": step.context_ru,
+                    "hint": step.hint_ru,
+                    "reference": step.target_chunk,
+                    "step": step_index,
+                },
+            )
+        if stage == "quest" and user["current_quest"]:
+            session = self.storage.quest_session(str(user["current_quest"]), chat_id)
+            quest = self.quest_catalog.for_language(str(session["target_language"]))[
+                str(session["quest_id"])
+            ]
+            node = quest.nodes[str(session["current_node"])]
+            return (
+                "quest",
+                str(session["id"]),
+                {
+                    **base,
+                    "title": quest.title_target,
+                    "goal": quest.goal_ru,
+                    "interlocutor": node.message,
+                    "task": node.task_ru,
+                    "hint": node.hint_ru,
+                    "reference": node.reference_answer or node.message,
+                    "node": node.id,
+                    "facts": self._quest_facts(json.loads(str(session["state_json"]))),
+                },
+            )
+        if stage == "drill" and user["current_drill"]:
+            session = self.storage.drill_session(str(user["current_drill"]), chat_id)
+            item = self.storage.drill_item(str(session["id"]), int(session["current_index"]))
+            return (
+                "drill",
+                str(session["id"]),
+                {
+                    **base,
+                    "title": str(session["title"]),
+                    "interlocutor": str(item["context"]),
+                    "task": str(item["prompt"]),
+                    "hint": str(item["hint"]),
+                    "reference": str(item["correct_answer"]),
+                },
+            )
+        if stage == "review" and user["current_review"]:
+            review = self.storage.get_review(int(user["current_review"]), chat_id)
+            scenario = self._scenarios_for_user(user)[str(review["scenario_id"])]
+            step = scenario.steps[int(review["step_index"])]
+            return (
+                "review",
+                str(review["id"]),
+                {
+                    **base,
+                    "title": scenario.title_pl,
+                    "interlocutor": step.interlocutor_pl,
+                    "task": step.context_ru,
+                    "hint": step.hint_ru,
+                    "reference": step.target_chunk,
+                },
+            )
+        raise KeyError("No coachable foreground activity")
+
+    def _background_context(
+        self,
+        chat_id: int,
+        activity_kind: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Add related and due material without coupling the selector to SQLite."""
+
+        user = self.storage.get_user(chat_id)
+        enriched = dict(context)
+        related: list[dict[str, Any]] = []
+        due: list[dict[str, Any]] = []
+        current_scenario_id = ""
+        current_step = context.get("step")
+
+        if activity_kind in {"scenario", "review"}:
+            if activity_kind == "scenario":
+                current_scenario_id = str(user["current_scenario"] or "")
+            elif user["current_review"]:
+                current_review = self.storage.get_review(
+                    int(user["current_review"]), chat_id
+                )
+                current_scenario_id = str(current_review["scenario_id"])
+                current_step = int(current_review["step_index"])
+            scenarios = self._scenarios_for_user(user)
+            scenario = scenarios.get(current_scenario_id)
+            if scenario is not None:
+                evidence = self.storage.problem_history(
+                    chat_id, str(user["target_language"]), limit=20
+                )
+                weak_indices = [
+                    int(item["step_index"])
+                    for item in evidence["scenario_steps"]
+                    if str(item["scenario_id"]) == current_scenario_id
+                ]
+                ordered_indices = weak_indices + list(range(len(scenario.steps)))
+                seen: set[int] = set()
+                for index in ordered_indices:
+                    if index in seen or index == current_step:
+                        continue
+                    seen.add(index)
+                    step = scenario.steps[index]
+                    related.append(
+                        {
+                            "title": scenario.title_pl,
+                            "task": step.context_ru,
+                            "interlocutor": step.interlocutor_pl,
+                            "reference": step.target_chunk,
+                            "step": index,
+                        }
+                    )
+
+        if activity_kind == "quest" and user["current_quest"]:
+            session = self.storage.quest_session(str(user["current_quest"]), chat_id)
+            quest = self.quest_catalog.for_language(str(session["target_language"]))[
+                str(session["quest_id"])
+            ]
+            current_node = str(session["current_node"])
+            for node in quest.nodes.values():
+                if node.id == current_node or not node.reference_answer:
+                    continue
+                related.append(
+                    {
+                        "title": quest.title_target,
+                        "task": node.task_ru,
+                        "interlocutor": node.message,
+                        "reference": node.reference_answer,
+                        "node": node.id,
+                    }
+                )
+
+        scenarios = self._scenarios_for_user(user)
+        for review in self.storage.pending_reviews(chat_id):
+            scenario = scenarios.get(str(review["scenario_id"]))
+            step_index = int(review["step_index"])
+            if scenario is None or not 0 <= step_index < len(scenario.steps):
+                continue
+            if (
+                str(review["scenario_id"]) == current_scenario_id
+                and step_index == current_step
+            ):
+                continue
+            step = scenario.steps[step_index]
+            due.append(
+                {
+                    "title": scenario.title_pl,
+                    "task": step.context_ru,
+                    "interlocutor": step.interlocutor_pl,
+                    "reference": step.target_chunk,
+                    "step": step_index,
+                }
+            )
+
+        enriched["related_candidates"] = related[:8]
+        enriched["due_candidates"] = due[:8]
+        return enriched
+
+    def send_background_card(self, chat_id: int, *, scheduled: bool = False) -> bool:
+        try:
+            activity_kind, activity_id, context = self._coach_context(chat_id)
+        except KeyError:
+            return False
+        if activity_kind == "drill":
+            return False
+        context = self._background_context(chat_id, activity_kind, context)
+        draft = self.background_learning.build(
+            chat_id, activity_kind, activity_id, context
+        )
+        if draft is None:
+            return False
+        prompt = self._t(chat_id, f"background.prompt.{draft.card_type}")
+        card_id = self.storage.create_background_card(
+            chat_id,
+            activity_kind=draft.activity_kind,
+            activity_id=draft.activity_id,
+            topic=draft.topic,
+            source_step=draft.source_step,
+            reason=draft.reason,
+            card_type=draft.card_type,
+            prompt=prompt,
+            context=draft.context,
+            correct_answer=draft.correct_answer,
+            accepted_answers=list(draft.accepted_answers),
+            explanation=draft.explanation,
+        )
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, "background.title", topic=draft.topic),
+                f"{self._t(chat_id, f'background.reason.{draft.reason}')}\n\n"
+                f"{prompt}\n\n{draft.context}\n\n"
+                f"{self._t(chat_id, 'background.write')}",
+            ),
+            [
+                [{"text": self._t(chat_id, "toolkit.forgot"), "callback_data": f"background:reveal:{card_id}"}],
+                [{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}],
+            ],
+            force_new=scheduled,
+            surface="background_card",
+        )
+        return True
+
+    def answer_background_card(self, chat_id: int, card_id: int, response: str) -> None:
+        row = self.storage.background_card(chat_id, card_id)
+        if str(row["status"]) != "pending":
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        user = self.storage.get_user(chat_id)
+        score, corrected = self.background_learning.evaluate(
+            row,
+            response,
+            str(user["instruction_language"]),
+            str(user["target_language"]),
+        )
+        self.storage.answer_background_card(chat_id, card_id, response, score)
+        title = (
+            self._t(chat_id, "background.correct")
+            if score >= 0.6
+            else self._t(chat_id, "background.retry")
+        )
+        body = self._t(
+            chat_id,
+            "background.feedback",
+            answer=corrected,
+            source=str(row["explanation"]),
+        )
+        self._workspace(
+            chat_id,
+            card(title, body),
+            [[{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]],
+            force_new=True,
+            surface="background_feedback",
+        )
+
+    def reveal_background_card(self, chat_id: int, card_id: int) -> None:
+        row = self.storage.background_card(chat_id, card_id)
+        if str(row["status"]) != "pending":
+            return
+        self.storage.answer_background_card(chat_id, card_id, "[revealed]", 0.0)
+        self._workspace(
+            chat_id,
+            card(
+                self._t(chat_id, "background.revealed"),
+                self._t(chat_id, "background.reference", answer=row["explanation"]),
+            ),
+            [[{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]],
+            surface="background_feedback",
+        )
+
+    def close_background_card(self, chat_id: int) -> None:
+        self.storage.dismiss_background_card(chat_id)
+        self.resume_activity(chat_id)
 
     def show_language_choices(self, chat_id: int, kind: str) -> None:
         self.menu.show_language_choices(chat_id, kind)
@@ -282,31 +700,13 @@ class TutorlaingBot:
         if quest is None:
             self.show_quests(chat_id)
             return
-        resume = self.menu.resume_action(user)
-        if resume and str(user["stage"]) != "quest":
-            self._workspace(
-                chat_id,
-                card(
-                    self._t(chat_id, "quest.conflict_title"),
-                    self._t(chat_id, "quest.conflict_summary"),
-                ),
-                [
-                    [
-                        {
-                            "text": self._t(chat_id, "action.return_to_activity"),
-                            "callback_data": resume,
-                        }
-                    ],
-                    home_row(self._language(chat_id)),
-                ],
-                surface="quest_conflict",
-            )
-            return
         if str(user["stage"]) == "quest" and user["current_quest"]:
-            self.resume_quest(chat_id)
-            return
+            current = self.storage.quest_session(str(user["current_quest"]), chat_id)
+            if str(current["quest_id"]) == quest_id:
+                self.resume_quest(chat_id)
+                return
         quest_session_id = self.storage.start_quest(
-            chat_id, quest.id, quest.start_node
+            chat_id, quest.id, quest.start_node, preserve_active=True
         )
         briefing = self._instruction_text(
             chat_id,
@@ -381,34 +781,19 @@ class TutorlaingBot:
             ]
         )
         keyboard: list[list[dict[str, str]]] = []
-        if node.mode == "choice":
-            labels = ("A", "B", "C", "D")
-            body.append(
-                f"{self._t(chat_id, 'quest.options')}:\n"
-                + "\n".join(
-                    f"{labels[index]}. {choice.text}"
-                    for index, choice in enumerate(node.choices)
-                )
-            )
-            keyboard.append(
-                [
-                    {
-                        "text": labels[index],
-                        "callback_data": (
-                            f"quest:choice:{quest_session_id}:{node.id}:{choice.id}"
-                        ),
-                    }
-                    for index, choice in enumerate(node.choices)
-                ]
-            )
-        else:
-            body.append(self._t(chat_id, "quest.write"))
+        body.append(self._t(chat_id, "quest.write"))
         keyboard.extend(
             [
                 [
                     {
                         "text": self._t(chat_id, "action.hint"),
                         "callback_data": f"quest:hint:{quest_session_id}:{node.id}",
+                    }
+                ],
+                [
+                    {
+                        "text": self._t(chat_id, "coach.open"),
+                        "callback_data": "coach:open",
                     }
                 ],
                 [
@@ -439,43 +824,6 @@ class TutorlaingBot:
                 values.append(text)
         return values[-3:]
 
-    def answer_quest_choice(
-        self,
-        chat_id: int,
-        quest_session_id: str,
-        node_id: str,
-        choice_id: str,
-    ) -> None:
-        user = self.storage.get_user(chat_id)
-        if (
-            str(user["stage"]) != "quest"
-            or str(user["current_quest"] or "") != quest_session_id
-        ):
-            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
-            return
-        session, quest, node = self._quest_context(chat_id, quest_session_id)
-        if node.id != node_id or node.mode != "choice":
-            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
-            return
-        try:
-            transition = choose(
-                node, choice_id, json.loads(str(session["state_json"]))
-            )
-        except KeyError:
-            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
-            return
-        choice = next(item for item in node.choices if item.id == choice_id)
-        self._apply_quest_transition(
-            chat_id,
-            quest_session_id,
-            quest,
-            node,
-            transition,
-            input_kind="choice",
-            user_answer=choice.text,
-            choice_id=choice_id,
-        )
-
     def handle_quest_text(self, chat_id: int, response: str, user: Any) -> None:
         quest_session_id = str(user["current_quest"] or "")
         session, quest, node = self._quest_context(chat_id, quest_session_id)
@@ -486,9 +834,68 @@ class TutorlaingBot:
                 surface="quest_node",
             )
             return
-        transition = answer_free(
-            node, response, json.loads(str(session["state_json"]))
-        )
+        state = json.loads(str(session["state_json"]))
+        transition = answer_free(node, response, state)
+        ai_feedback = ""
+        if self.ai is not None:
+            step = ScenarioStep(
+                id=f"quest:{quest.id}:{node.id}",
+                interlocutor_pl=node.message,
+                context_ru=node.task_ru,
+                hint_ru=node.hint_ru,
+                expected_groups=node.expected_groups,
+                target_chunk=node.reference_answer,
+                bottleneck_ru=node.task_ru,
+                task_blocking=True,
+            )
+            try:
+                analysis = self.ai.analyze_response(
+                    step,
+                    response,
+                    str(user["instruction_language"]),
+                    str(user["target_language"]),
+                    transition.points,
+                    practice_level(user),
+                )
+                score = analysis.score
+                successful = analysis.task_achieved
+                transition = answer_free(
+                    node,
+                    response,
+                    state,
+                    score=score,
+                    successful=successful,
+                )
+                self.storage.add_ai_analysis(
+                    chat_id=chat_id,
+                    operation="quest_response",
+                    target_language=str(user["target_language"]),
+                    source_text=response,
+                    result=analysis.to_dict(),
+                    provider=analysis.provider,
+                    model=analysis.model,
+                    prompt_version=analysis.prompt_version,
+                    latency_ms=analysis.latency_ms,
+                    usage=analysis.usage,
+                    scenario_id=quest.id,
+                    step_index=int(session["steps_taken"]),
+                )
+                self.storage.event(
+                    chat_id,
+                    "quest_ai_analysis_completed",
+                    {"quest_id": quest.id, "node_id": node.id},
+                )
+                details = [*analysis.critical_corrections[:1]]
+                if analysis.natural_response:
+                    details.append(analysis.natural_response)
+                ai_feedback = "\n\n".join(details)
+            except AIError:
+                LOGGER.exception("Quest response analysis failed; using local rubric")
+                self.storage.event(
+                    chat_id,
+                    "ai_fallback_used",
+                    {"operation": "quest_response", "quest_id": quest.id},
+                )
         self._apply_quest_transition(
             chat_id,
             quest_session_id,
@@ -499,6 +906,7 @@ class TutorlaingBot:
             user_answer=response,
             choice_id=None,
             force_new=True,
+            extra_feedback=ai_feedback,
         )
 
     def _quest_context(
@@ -522,6 +930,7 @@ class TutorlaingBot:
         user_answer: str,
         choice_id: str | None,
         force_new: bool = False,
+        extra_feedback: str = "",
     ) -> None:
         advanced = self.storage.advance_quest(
             quest_session_id,
@@ -541,6 +950,8 @@ class TutorlaingBot:
         feedback = self._instruction_text(
             chat_id, transition.feedback_ru, "quest-consequence"
         )
+        if extra_feedback:
+            feedback += "\n\n" + extra_feedback
         if transition.reference_answer:
             feedback += "\n\n" + self._t(
                 chat_id,
@@ -705,41 +1116,169 @@ class TutorlaingBot:
     def _glossary_footnotes(self, chat_id: int, target_text: str) -> str:
         return self.language_support.glossary_footnotes(chat_id, target_text)
 
-    def begin_scenario(self, chat_id: int, scenario_id: str) -> None:
+    def _confirm_target_language_change(self, chat_id: int, language: str) -> None:
+        """A course change is destructive, so it cannot be hidden in settings."""
+        interface = self._language(chat_id)
+        copy = {
+            "title": {
+                "ru": "Сменить изучаемый язык?",
+                "uk": "Змінити мову навчання?",
+                "en": "Change the target language?",
+                "pl": "Zmienić język docelowy?",
+            },
+            "summary": {
+                "ru": "Текущее занятие относится к другому языку и будет завершено. Сохранённые ответы останутся в истории.",
+                "uk": "Поточне заняття стосується іншої мови й буде завершене. Збережені відповіді залишаться в історії.",
+                "en": "The current practice belongs to another language and will end. Saved answers will remain in your history.",
+                "pl": "Bieżące zajęcia dotyczą innego języka i zostaną zakończone. Zapisane odpowiedzi pozostaną w historii.",
+            },
+            "keep": {
+                "ru": "Оставить текущий язык",
+                "uk": "Залишити поточну мову",
+                "en": "Keep the current language",
+                "pl": "Zostaw obecny język",
+            },
+            "confirm": {
+                "ru": "Завершить и сменить",
+                "uk": "Завершити й змінити",
+                "en": "End and change",
+                "pl": "Zakończ i zmień",
+            },
+        }
+        text = lambda key: copy[key].get(interface, copy[key]["ru"])
+        self._workspace(
+            chat_id,
+            card(text("title"), text("summary")),
+            [
+                [{"text": text("keep"), "callback_data": "settings:target:keep"}],
+                [
+                    {
+                        "text": text("confirm"),
+                        "callback_data": f"settings:target:confirm:{language}",
+                    }
+                ],
+            ],
+            surface="target_language_confirmation",
+        )
+
+    def _cancel_all_activities(self, chat_id: int) -> None:
+        """End all open work after an explicit destructive course change."""
+        self.storage.abandon_all_activities(chat_id)
+
+    def begin_scenario(
+        self,
+        chat_id: int,
+        scenario_id: str,
+        *,
+        allow_switch: bool = False,
+        preserve_active: bool = False,
+    ) -> None:
         user = self.storage.get_user(chat_id)
         scenario = self._scenarios_for_user(user).get(scenario_id)
         if not scenario:
             self._notice(chat_id, "Этот сценарий не найден.")
             return
-        if str(user["stage"]) == "quest" and user["current_quest"]:
-            self._workspace(
-                chat_id,
-                card(
-                    self._t(chat_id, "quest.conflict_title"),
-                    self._t(chat_id, "quest.conflict_summary"),
-                ),
-                [
-                    [
-                        {
-                            "text": self._t(chat_id, "quest.continue"),
-                            "callback_data": "quest:resume",
-                        }
-                    ],
-                    home_row(self._language(chat_id)),
-                ],
-                surface="quest_conflict",
-            )
-            return
-        current_user = user
-        if current_user["current_drill"]:
-            self.storage.abandon_drill(str(current_user["current_drill"]), chat_id)
-        self.storage.start_session(chat_id, scenario_id)
+        current_scenario = str(user["current_scenario"] or "")
+        if not allow_switch and self.menu.resume_action(user):
+            if str(user["stage"]) in {"scenario", "practice"} and current_scenario == scenario_id:
+                self.resume_activity(chat_id)
+                return
+            preserve_active = True
+        self.storage.start_session(
+            chat_id, scenario_id, preserve_active=preserve_active
+        )
         description = self._instruction_text(
             chat_id,
             f"Цель: {scenario.objective_ru}\nСитуация: {scenario.opening_ru}",
             "scenario-opening",
         )
         self.send_scenario_step(chat_id, scenario, 0, intro=description)
+
+    def show_activities(self, chat_id: int) -> None:
+        user = self.storage.get_user(chat_id)
+        language = self._language(chat_id)
+        activities = self.activities.list_open(chat_id)
+        if not activities:
+            self._workspace(
+                chat_id,
+                card(
+                    self._t(chat_id, "activities.title"),
+                    self._t(chat_id, "activities.empty"),
+                ),
+                [home_row(language)],
+                surface="activities",
+            )
+            return
+        scenarios = self._scenarios_for_user(user)
+        quests = self.quest_catalog.for_user(user)
+        keyboard: list[list[dict[str, str]]] = []
+        lines: list[str] = []
+        for activity in activities:
+            if activity.kind == "scenario":
+                scenario = scenarios.get(activity.content_id)
+                title = scenario.title_pl if scenario else activity.title_hint
+                total = len(scenario.steps) if scenario else None
+                position = f"{min(activity.current + 1, total)}/{total}" if total else activity.position_label
+            elif activity.kind == "quest":
+                quest = quests.get(activity.content_id)
+                title = quest.title_target if quest else activity.title_hint
+                position = self._t(chat_id, "activities.quest_steps", count=activity.current)
+            else:
+                title = activity.title_hint
+                position = activity.position_label
+            status = self._t(
+                chat_id,
+                "activities.current" if activity.is_foreground else "activities.paused",
+            )
+            kind = self._t(chat_id, f"activities.kind.{activity.kind}")
+            lines.append(f"{status} · {kind}\n{title} · {position}")
+            keyboard.append(
+                [
+                    {
+                        "text": self._t(chat_id, "activities.resume", title=title),
+                        "callback_data": f"activity:resume:{activity.kind}:{activity.session_id}",
+                    }
+                ]
+            )
+        keyboard.append(home_row(language))
+        self._workspace(
+            chat_id,
+            card(self._t(chat_id, "activities.title"), "\n\n".join(lines)),
+            keyboard,
+            surface="activities",
+        )
+
+    def resume_saved_scenario(self, chat_id: int, session_id: str) -> None:
+        try:
+            session = self.storage.resume_scenario_session(chat_id, session_id)
+        except KeyError:
+            self.show_activities(chat_id)
+            return
+        scenario = self._scenarios_for_chat(chat_id).get(str(session["scenario_id"]))
+        if scenario is None:
+            self.show_activities(chat_id)
+            return
+        step = int(self.storage.get_user(chat_id)["current_step"])
+        if step >= len(scenario.steps):
+            self.begin_practice(chat_id, scenario, session_id)
+            return
+        self.send_scenario_step(chat_id, scenario, step)
+
+    def resume_saved_quest(self, chat_id: int, quest_session_id: str) -> None:
+        try:
+            self.storage.resume_quest_session(chat_id, quest_session_id)
+        except KeyError:
+            self.show_activities(chat_id)
+            return
+        self.resume_quest(chat_id)
+
+    def resume_saved_drill(self, chat_id: int, drill_id: str) -> None:
+        try:
+            self.storage.resume_drill_session(chat_id, drill_id)
+        except KeyError:
+            self.show_activities(chat_id)
+            return
+        self.send_drill_item(chat_id, drill_id)
 
     def send_scenario_step(
         self,
@@ -776,6 +1315,7 @@ class TutorlaingBot:
                         "callback_data": f"task:translate:{scenario.id}:{step_index}",
                     }
                 ],
+                [{"text": tr(language, "coach.open"), "callback_data": "coach:open"}],
                 [{"text": tr(language, "action.stop"), "callback_data": "cancel:confirm"}],
             ],
             force_new=scheduled,
@@ -930,7 +1470,7 @@ class TutorlaingBot:
             "но не копируйте его механически.",
             "practice-instruction",
         )
-        block_label = self._instruction_text(chat_id, "Полезный блок:", "practice-label")
+        block_label = self._copy(chat_id, "practice.label")
         self._workspace(
             chat_id,
             card(
@@ -966,18 +1506,14 @@ class TutorlaingBot:
         if evaluation.successful:
             self.finish_session(chat_id, scenario, session_id, step_index, evaluation.score)
         elif attempts < 2:
-            retry = self._instruction_text(
-                chat_id, "Пока не хватает части смысла. Попробуйте ещё раз:", "practice-retry"
-            )
+            retry = self._copy(chat_id, "practice.retry")
             self._workspace(
                 chat_id,
                 f"{retry}\n{step.target_chunk}",
                 surface="practice_retry",
             )
         else:
-            fallback = self._instruction_text(
-                chat_id, "Зафиксируем образец и вернёмся к нему позже:", "practice-fallback"
-            )
+            fallback = self._copy(chat_id, "practice.fallback")
             self._workspace(
                 chat_id,
                 f"{fallback}\n{step.target_chunk}",
@@ -1009,33 +1545,30 @@ class TutorlaingBot:
             current_session=None,
             current_review=None,
         )
+        keyboard = [
+            [{"text": "🧩 Закрепить эту фразу", "callback_data": "drill:start"}],
+            [{"text": "Выбрать ещё ситуацию", "callback_data": "scenarios:list"}],
+        ]
+        if self.storage.open_activity_count(chat_id):
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": self._t(chat_id, "action.activities"),
+                        "callback_data": "activities:list",
+                    }
+                ],
+            )
         self._workspace(
             chat_id,
             card(
                 "Маршрут пройден",
                 f"Проверка назначена через {interval} дн.\n\n"
-                f"Когда примените {TARGET_NOUNS_RU.get(str(self.storage.get_user(chat_id)['target_language']), 'язык')} в реальной ситуации, отметьте результат:",
+                "Примените это в реальной ситуации. Вернуться к отметке результата можно позже в разделе «Реальные ситуации».",
                 "ПОВТОР",
             ),
             [
-                [
-                    {
-                        "text": "✅ Получилось",
-                        "callback_data": f"outcome:{session_id}:success",
-                    },
-                    {
-                        "text": "🟡 Частично",
-                        "callback_data": f"outcome:{session_id}:partial",
-                    },
-                ],
-                [
-                    {
-                        "text": "🔴 Не получилось",
-                        "callback_data": f"outcome:{session_id}:failed",
-                    }
-                ],
-                [{"text": "🧩 Закрепить эту фразу", "callback_data": "drill:start"}],
-                [{"text": "Выбрать ещё ситуацию", "callback_data": "scenarios:list"}],
+                *keyboard,
             ],
             surface="session_complete",
         )
@@ -1072,6 +1605,93 @@ class TutorlaingBot:
                 home_row(self._language(chat_id)),
             ],
             surface="reviews",
+        )
+
+    def show_outcomes(self, chat_id: int) -> None:
+        """Ask about transfer only in a dedicated, voluntary follow-up flow."""
+        user = self.storage.get_user(chat_id)
+        language = self._language(chat_id)
+        sessions = self.storage.pending_outcome_sessions(
+            chat_id, str(user["target_language"])
+        )
+        copy = {
+            "title": {
+                "ru": "Реальные ситуации",
+                "uk": "Реальні ситуації",
+                "en": "Real situations",
+                "pl": "Prawdziwe sytuacje",
+            },
+            "summary": {
+                "ru": "Отмечайте только те ситуации, в которых уже использовали язык вне тренажёра.",
+                "uk": "Позначайте лише ситуації, у яких уже використовували мову поза тренажером.",
+                "en": "Mark only situations where you have already used the language outside practice.",
+                "pl": "Oznaczaj tylko sytuacje, w których użyto już języka poza treningiem.",
+            },
+            "empty": {
+                "ru": "Пока нет завершённых ситуаций без отметки. Вернитесь сюда после реального разговора.",
+                "uk": "Поки немає завершених ситуацій без позначки. Поверніться сюди після реальної розмови.",
+                "en": "There are no completed situations to mark yet. Return after a real conversation.",
+                "pl": "Nie ma jeszcze ukończonych sytuacji do oznaczenia. Wróć po prawdziwej rozmowie.",
+            },
+        }
+        text = lambda key: copy[key].get(language, copy[key]["ru"])
+        if not sessions:
+            self._workspace(
+                chat_id,
+                card(text("title"), text("empty")),
+                [home_row(language)],
+                surface="outcomes",
+            )
+            return
+        scenarios = self._scenarios_for_user(user)
+        keyboard: list[list[dict[str, str]]] = []
+        for session in sessions:
+            scenario = scenarios.get(str(session["scenario_id"]))
+            label = scenario.title_pl if scenario else str(session["scenario_id"])
+            keyboard.append(
+                [
+                    {
+                        "text": label,
+                        "callback_data": f"outcome:select:{session['id']}",
+                    }
+                ]
+            )
+        keyboard.append(home_row(language))
+        self._workspace(
+            chat_id,
+            card(text("title"), text("summary")),
+            keyboard,
+            surface="outcomes",
+        )
+
+    def show_outcome_choices(self, chat_id: int, session_id: str) -> None:
+        try:
+            session = self.storage.session(session_id)
+        except KeyError:
+            self.show_outcomes(chat_id)
+            return
+        if int(session["chat_id"]) != chat_id or session["status"] != "completed":
+            self.show_outcomes(chat_id)
+            return
+        language = self._language(chat_id)
+        labels = {
+            "success": {"ru": "✅ Получилось", "uk": "✅ Вийшло", "en": "✅ It worked", "pl": "✅ Udało się"},
+            "partial": {"ru": "🟡 Частично", "uk": "🟡 Частково", "en": "🟡 Partly", "pl": "🟡 Częściowo"},
+            "failed": {"ru": "🔴 Не получилось", "uk": "🔴 Не вийшло", "en": "🔴 It did not work", "pl": "🔴 Nie udało się"},
+        }
+        self._workspace(
+            chat_id,
+            card(
+                {"ru": "Как прошло в реальности?", "uk": "Як пройшло в реальності?", "en": "How did it go in real life?", "pl": "Jak poszło w rzeczywistości?"}.get(language, "Как прошло в реальности?"),
+                {"ru": "Выберите результат только этого реального разговора.", "uk": "Оберіть результат лише цієї реальної розмови.", "en": "Choose the result of this real conversation only.", "pl": "Wybierz wynik tylko tej prawdziwej rozmowy."}.get(language, "Выберите результат только этого реального разговора."),
+            ),
+            [
+                [{"text": labels["success"].get(language, labels["success"]["ru"]), "callback_data": f"outcome:report:{session_id}:success"}],
+                [{"text": labels["partial"].get(language, labels["partial"]["ru"]), "callback_data": f"outcome:report:{session_id}:partial"}],
+                [{"text": labels["failed"].get(language, labels["failed"]["ru"]), "callback_data": f"outcome:report:{session_id}:failed"}],
+                [{"text": {"ru": "Ещё не применял", "uk": "Ще не застосовував", "en": "I have not used it yet", "pl": "Jeszcze nie użyłem/am"}.get(language, "Ещё не применял"), "callback_data": "outcomes:list"}],
+            ],
+            surface="outcome_choices",
         )
 
     def begin_review(self, chat_id: int, review_id: int, scheduled: bool = False) -> None:
@@ -1240,6 +1860,12 @@ class TutorlaingBot:
                 ],
                 [
                     {
+                        "text": self._t(chat_id, "text_action.rephrase"),
+                        "callback_data": f"text:rephrase:{inbox_id}",
+                    }
+                ],
+                [
+                    {
                         "text": self._t(chat_id, "text_action.grammar"),
                         "callback_data": f"text:grammar:{inbox_id}",
                     }
@@ -1269,7 +1895,12 @@ class TutorlaingBot:
         self.toolkit.handle_phrase(chat_id, phrase)
 
     def analyze_text_inbox(
-        self, chat_id: int, inbox_id: int, *, grammar: bool = False
+        self,
+        chat_id: int,
+        inbox_id: int,
+        *,
+        grammar: bool = False,
+        variants: bool = False,
     ) -> None:
         try:
             phrase = str(self.storage.text_inbox(chat_id, inbox_id)["text"])
@@ -1331,7 +1962,11 @@ class TutorlaingBot:
                             "callback_data": (
                                 f"text:grammar:{inbox_id}"
                                 if grammar
-                                else f"text:check:{inbox_id}"
+                                else (
+                                    f"text:rephrase:{inbox_id}"
+                                    if variants
+                                    else f"text:check:{inbox_id}"
+                                )
                             ),
                         }
                     ],
@@ -1359,6 +1994,8 @@ class TutorlaingBot:
         )
         if grammar:
             self.feedback.explain_grammar(chat_id, analysis_id, "all")
+        elif variants:
+            self.feedback.show_variants(chat_id, analysis_id)
         else:
             self.feedback.show_result(
                 chat_id, analysis, analysis_id, standalone=True
@@ -1553,7 +2190,6 @@ class TutorlaingBot:
                 private=True,
                 tags=["personal:errors"],
             )
-        self.storage.suspend_activity(chat_id)
         drill_id = self.storage.start_drill(
             chat_id,
             int(sources[0]["id"]) if sources else None,
@@ -1635,6 +2271,9 @@ class TutorlaingBot:
                     {"text": self._t(chat_id, "action.reminders"), "callback_data": "reminders"},
                 ]
             )
+        keyboard.append(
+            [{"text": self._t(chat_id, "coach.open"), "callback_data": "coach:open"}]
+        )
         keyboard.append(
             [
                 {
@@ -1787,14 +2426,13 @@ class TutorlaingBot:
                     }
                 ],
             )
-        resume = self.menu.resume_action(self.storage.get_user(chat_id))
-        if resume:
+        if self.storage.open_activity_count(chat_id):
             keyboard.insert(
                 0,
                 [
                     {
-                        "text": self._t(chat_id, "action.return_to_activity"),
-                        "callback_data": resume,
+                        "text": self._t(chat_id, "action.activities"),
+                        "callback_data": "activities:list",
                     }
                 ],
             )
@@ -1946,14 +2584,13 @@ class TutorlaingBot:
         if user["current_drill"]:
             self.storage.abandon_drill(str(user["current_drill"]), chat_id)
         keyboard = [home_row(self._language(chat_id))]
-        resume = self.menu.resume_action(self.storage.get_user(chat_id))
-        if resume:
+        if self.storage.open_activity_count(chat_id):
             keyboard.insert(
                 0,
                 [
                     {
-                        "text": self._t(chat_id, "action.return_to_activity"),
-                        "callback_data": resume,
+                        "text": self._t(chat_id, "action.activities"),
+                        "callback_data": "activities:list",
                     }
                 ],
             )
@@ -2004,6 +2641,10 @@ class TutorlaingBot:
                 self.advance_drill(chat_id, drill_id, scheduled=True)
             else:
                 self.send_drill_item(chat_id, drill_id, scheduled=True)
+            return
+        if mode in {"intensive", "aggressive"} and self.send_background_card(
+            chat_id, scheduled=True
+        ):
             return
         stage = str(user["stage"])
         if stage == "scenario" and user["current_scenario"]:
@@ -2110,13 +2751,10 @@ class TutorlaingBot:
         current = self.storage.get_user(chat_id)
         if current["current_quest"]:
             self.storage.abandon_quest(str(current["current_quest"]), chat_id)
-            current = self.storage.get_user(chat_id)
-        if current["current_drill"]:
+        elif current["current_drill"]:
             self.storage.abandon_drill(str(current["current_drill"]), chat_id)
-            current = self.storage.get_user(chat_id)
-        self.storage.abandon_session(current["current_session"])
-        if current["current_drill"]:
-            self.storage.abandon_drill(str(current["current_drill"]), chat_id)
+        elif current["current_session"]:
+            self.storage.abandon_session(current["current_session"])
         self.storage.set_user_state(
             chat_id,
             stage="idle",
@@ -2127,13 +2765,23 @@ class TutorlaingBot:
             current_quest=None,
             pending_assignment=None,
             toolkit_input_mode=None,
-            suspended_activity_json=None,
         )
         if notify:
+            keyboard = [home_row(self._language(chat_id))]
+            if self.storage.open_activity_count(chat_id):
+                keyboard.insert(
+                    0,
+                    [
+                        {
+                            "text": self._t(chat_id, "action.activities"),
+                            "callback_data": "activities:list",
+                        }
+                    ],
+                )
             self.telegram.send_message(
                 chat_id,
-                "Текущая тренировка остановлена.",
-                [home_row(self._language(chat_id))],
+                "Текущее занятие остановлено.",
+                keyboard,
             )
 
     def handle_text(
@@ -2148,28 +2796,27 @@ class TutorlaingBot:
             return
         user = self.storage.ensure_user(chat_id, first_name)
         self.storage.record_user_interaction(chat_id)
-        command = text.strip().split(maxsplit=1)[0].lower()
-        if command.startswith("/") and user["toolkit_input_mode"]:
-            self.storage.set_user_state(chat_id, toolkit_input_mode=None)
+        command = parse_command(text)
+        if command.startswith("/") and (
+            user["toolkit_input_mode"]
+            or user["profile_input_mode"]
+            or user["coach_input_mode"]
+            or user["background_card_id"]
+        ):
+            self.storage.set_user_state(
+                chat_id,
+                toolkit_input_mode=None,
+                profile_input_mode=None,
+                coach_input_mode=None,
+            )
+            if user["coach_session_id"]:
+                self.storage.close_coach_session(chat_id)
+            if user["background_card_id"]:
+                self.storage.dismiss_background_card(chat_id)
             user = self.storage.get_user(chat_id)
-        if command in {
-            "/start",
-            "/menu",
-            "/privacy",
-            "/delete_me",
-            "/settings",
-            "/progress",
-            "/tools",
-            "/toolkit",
-            "/reminders",
-            "/drill",
-            "/scenarios",
-            "/quests",
-            "/review",
-            "/review_now",
-        }:
+        if command in PUBLIC_COMMANDS:
             self._focus_new_surface(chat_id, message_id)
-        if command in {"/start", "/menu"}:
+        if command == "/start":
             self.start(chat_id, first_name)
             return
         if command == "/privacy":
@@ -2178,10 +2825,20 @@ class TutorlaingBot:
         if command == "/delete_me":
             self.telegram.send_message(
                 chat_id,
-                "Удалить профиль, ответы, AI-разборы и расписание? Это необратимо.",
+                self._t(chat_id, "delete.confirm"),
                 [
-                    [{"text": "Да, удалить", "callback_data": "delete:confirm"}],
-                    [{"text": "Отмена", "callback_data": "home"}],
+                    [
+                        {
+                            "text": self._t(chat_id, "delete.action"),
+                            "callback_data": "delete:confirm",
+                        }
+                    ],
+                    [
+                        {
+                            "text": self._t(chat_id, "action.cancel"),
+                            "callback_data": "home",
+                        }
+                    ],
                 ],
             )
             return
@@ -2194,22 +2851,30 @@ class TutorlaingBot:
             if user["toolkit_input_mode"]:
                 self.storage.set_user_state(chat_id, toolkit_input_mode=None)
                 user = self.storage.get_user(chat_id)
+            if user["profile_input_mode"]:
+                self.storage.set_user_state(chat_id, profile_input_mode=None)
+                user = self.storage.get_user(chat_id)
+            if user["coach_session_id"]:
+                self.storage.close_coach_session(chat_id)
+                user = self.storage.get_user(chat_id)
+            if user["background_card_id"]:
+                self.storage.dismiss_background_card(chat_id)
+                user = self.storage.get_user(chat_id)
             self.menu.refresh_navigation(chat_id)
             if navigation_action == "home":
                 self.home(chat_id)
-            elif navigation_action == "learn":
-                if self.menu.resume_action(user):
-                    self.resume_activity(chat_id)
-                elif self.storage.pending_reviews(chat_id):
-                    self.show_reviews(chat_id)
-                else:
-                    self.show_scenarios(chat_id)
+            elif navigation_action == "activities":
+                self.show_activities(chat_id)
+            elif navigation_action == "practice":
+                self.show_practice_hub(chat_id)
             elif navigation_action == "tools":
                 self.toolkit.show_menu(chat_id)
-            elif navigation_action == "progress":
-                self.show_progress(chat_id)
-            else:
-                self.show_settings(chat_id)
+            return
+        if command == "/activities":
+            self.show_activities(chat_id)
+            return
+        if command == "/practice":
+            self.show_practice_hub(chat_id)
             return
         if command == "/settings":
             self.show_settings(chat_id)
@@ -2217,33 +2882,37 @@ class TutorlaingBot:
         if command == "/progress":
             self.show_progress(chat_id)
             return
-        if command in {"/tools", "/toolkit"}:
+        if command == "/tools":
             self.toolkit.show_menu(chat_id)
             return
-        if command == "/reminders":
-            self.show_reminders(chat_id)
-            return
-        if command == "/drill":
-            self.start_drill(chat_id)
+        if command == "/help":
+            self.show_help(chat_id)
             return
         if command == "/grammar":
-            fragment = text.strip()[len(command) :].strip()
+            command_parts = text.strip().split(maxsplit=1)
+            fragment = command_parts[1].strip() if len(command_parts) == 2 else ""
             if fragment:
                 self.explain_custom_grammar(chat_id, fragment)
             else:
-                self.telegram.send_message(chat_id, "Использование: /grammar <фрагмент>")
+                self._notice(chat_id, self._t(chat_id, "grammar.usage"))
+                self.show_help(chat_id)
             return
-        if command == "/scenarios":
-            self.show_scenarios(chat_id)
+        if command.startswith("/"):
+            self._notice(chat_id, self._t(chat_id, "help.unknown_command"))
+            self.show_help(chat_id)
             return
-        if command == "/quests":
-            self.show_quests(chat_id)
+        if user["background_card_id"]:
+            self.answer_background_card(
+                chat_id, int(user["background_card_id"]), text
+            )
             return
-        if command == "/review":
-            self.show_reviews(chat_id)
+        if user["coach_session_id"]:
+            self.answer_coach(
+                chat_id, str(user["coach_input_mode"] or "question"), text
+            )
             return
-        if command == "/review_now":
-            self.show_reviews(chat_id, include_future=True)
+        if user["profile_input_mode"]:
+            self.save_profile_text(chat_id, text, str(user["profile_input_mode"]))
             return
         if user["toolkit_input_mode"]:
             self.toolkit.handle_phrase(chat_id, text)
@@ -2293,6 +2962,18 @@ class TutorlaingBot:
             self.storage.set_user_state(chat_id, toolkit_input_mode=None)
             user = self.storage.get_user(chat_id)
 
+        if user["profile_input_mode"] and not data.startswith("profile:input:"):
+            self.storage.set_user_state(chat_id, profile_input_mode=None)
+            user = self.storage.get_user(chat_id)
+
+        if user["coach_session_id"] and not data.startswith("coach:"):
+            self.storage.close_coach_session(chat_id)
+            user = self.storage.get_user(chat_id)
+
+        if user["background_card_id"] and not data.startswith("background:"):
+            self.storage.dismiss_background_card(chat_id)
+            user = self.storage.get_user(chat_id)
+
         if data == "consent:accept":
             self.storage.accept_consent(chat_id, CONSENT_VERSION)
             self.home(chat_id)
@@ -2301,21 +2982,49 @@ class TutorlaingBot:
         elif data == "privacy:settings":
             self.show_privacy(chat_id, back_to_settings=True)
         elif data == "delete:confirm":
+            language = self._language(chat_id)
             self.storage.delete_user(chat_id)
             self.telegram.send_message(
-                chat_id, "Профиль, ответы и AI-разборы, связанные с Telegram ID, удалены."
+                chat_id, tr(language, "delete.done")
             )
         elif not self._has_current_consent(user):
             self.start(chat_id, first_name)
         elif data == "home":
             self.home(chat_id)
+        elif data == "practice":
+            self.show_practice_hub(chat_id)
+        elif data == "help":
+            self.show_help(chat_id)
         elif data == "toolkit":
             self.toolkit.show_menu(chat_id)
+        elif data == "coach:open":
+            self.open_coach(chat_id)
+        elif data == "coach:menu":
+            current = self.storage.get_user(chat_id)
+            self.storage.set_user_state(chat_id, coach_input_mode=None)
+            if current["coach_session_id"]:
+                self._show_coach_menu(chat_id, str(current["coach_session_id"]))
+            else:
+                self.open_coach(chat_id)
+        elif data.startswith("coach:input:"):
+            self.ask_coach_input(chat_id, data.rsplit(":", 1)[1])
+        elif data.startswith("coach:ask:"):
+            self.answer_coach(chat_id, data.rsplit(":", 1)[1])
+        elif data == "coach:return":
+            self.close_coach(chat_id)
+        elif data.startswith("background:reveal:"):
+            self.reveal_background_card(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data == "background:return":
+            self.close_background_card(chat_id)
         elif data.startswith("text:translate:"):
             _, _, inbox_id, mode = data.split(":", 3)
             self.translate_text_inbox(chat_id, int(inbox_id), mode)
         elif data.startswith("text:check:"):
             self.analyze_text_inbox(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("text:rephrase:"):
+            self.analyze_text_inbox(
+                chat_id, int(data.rsplit(":", 1)[1]), variants=True
+            )
         elif data.startswith("text:grammar:"):
             self.analyze_text_inbox(
                 chat_id, int(data.rsplit(":", 1)[1]), grammar=True
@@ -2328,11 +3037,6 @@ class TutorlaingBot:
             self.resume_quest(chat_id)
         elif data.startswith("quest:next:"):
             self.send_quest_node(chat_id, data.split(":", 2)[2])
-        elif data.startswith("quest:choice:"):
-            _, _, quest_session_id, node_id, choice_id = data.split(":", 4)
-            self.answer_quest_choice(
-                chat_id, quest_session_id, node_id, choice_id
-            )
         elif data.startswith("quest:hint:"):
             _, _, quest_session_id, node_id = data.split(":", 3)
             self.show_quest_hint(chat_id, quest_session_id, node_id)
@@ -2410,7 +3114,36 @@ class TutorlaingBot:
                 self.home(chat_id)
         elif data == "drill:stop":
             self.stop_drill(chat_id)
+        elif data == "settings:profile":
+            self.show_learner_profile(chat_id)
+        elif data == "profile:age":
+            self.menu.show_profile_choices(chat_id, "age")
+        elif data == "profile:role":
+            self.menu.show_profile_choices(chat_id, "role")
+        elif data.startswith("profile:set:"):
+            _, _, kind, value = data.split(":", 3)
+            if kind == "age":
+                self.learner_profiles.set_age_band(chat_id, value)
+            elif kind == "role":
+                self.learner_profiles.set_life_role(chat_id, value)
+            self.show_learner_profile(chat_id)
+        elif data.startswith("profile:input:"):
+            self.ask_profile_text(chat_id, data.rsplit(":", 1)[1])
+        elif data == "profile:adaptive:toggle":
+            profile = self.learner_profiles.get(chat_id)
+            self.learner_profiles.set_adaptive_level(
+                chat_id, not profile.adaptive_level_enabled
+            )
+            self.show_learner_profile(chat_id)
         elif data == "settings:languages":
+            self.show_learning_settings(chat_id)
+        elif data == "settings:target:keep":
+            self.show_learning_settings(chat_id)
+        elif data.startswith("settings:target:confirm:"):
+            language = data.rsplit(":", 1)[1]
+            if language in {"pl", "en"}:
+                self._cancel_all_activities(chat_id)
+                self.storage.set_language(chat_id, "target_language", language)
             self.show_learning_settings(chat_id)
         elif data.startswith("settings:set:"):
             _, _, kind, language = data.split(":", 3)
@@ -2430,8 +3163,13 @@ class TutorlaingBot:
             }
             if field and language in allowed.get(kind, set()):
                 current_language = str(self.storage.get_user(chat_id)[field])
-                if field == "target_language" and language != current_language:
-                    self.cancel_activity(chat_id, notify=False)
+                if (
+                    field == "target_language"
+                    and language != current_language
+                    and self.menu.resume_action(self.storage.get_user(chat_id))
+                ):
+                    self._confirm_target_language_change(chat_id, language)
+                    return
                 self.storage.set_language(chat_id, field, language)
                 if field == "instruction_language":
                     self.menu.refresh_navigation(chat_id)
@@ -2443,6 +3181,18 @@ class TutorlaingBot:
             self.show_language_choices(chat_id, data.split(":", 1)[1])
         elif data == "scenarios:list":
             self.show_scenarios(chat_id)
+        elif data == "activities:list":
+            self.show_activities(chat_id)
+        elif data.startswith("activity:resume:"):
+            _, _, kind, session_id = data.split(":", 3)
+            if kind == "scenario":
+                self.resume_saved_scenario(chat_id, session_id)
+            elif kind == "quest":
+                self.resume_saved_quest(chat_id, session_id)
+            elif kind == "drill":
+                self.resume_saved_drill(chat_id, session_id)
+            else:
+                self.show_activities(chat_id)
         elif data.startswith("scenario:"):
             self.begin_scenario(chat_id, data.split(":", 1)[1])
         elif data.startswith("task:translate:"):
@@ -2512,6 +3262,20 @@ class TutorlaingBot:
             self.show_reviews(chat_id, include_future=True)
         elif data.startswith("review:"):
             self.begin_review(chat_id, int(data.split(":", 1)[1]))
+        elif data == "outcomes:list":
+            self.show_outcomes(chat_id)
+        elif data.startswith("outcome:select:"):
+            self.show_outcome_choices(chat_id, data.rsplit(":", 1)[1])
+        elif data.startswith("outcome:report:"):
+            _, _, session_id, result = data.split(":", 3)
+            if self.storage.add_outcome(chat_id, session_id, result):
+                self.telegram.send_message(
+                    chat_id,
+                    "Спасибо. Этот реальный результат поможет подобрать следующее повторение.",
+                    [home_row(self._language(chat_id))],
+                )
+            else:
+                self.show_outcomes(chat_id)
         elif data.startswith("outcome:"):
             _, session_id, result = data.split(":", 2)
             session = self.storage.session(session_id)
@@ -2530,6 +3294,9 @@ class TutorlaingBot:
             self.cancel_activity(chat_id)
         elif data == "cancel:confirm":
             self.confirm_finish(chat_id)
+        else:
+            self._notice(chat_id, self._t(chat_id, "navigation.expired"))
+            self.home(chat_id)
 
     def handle_update(self, update: dict[str, Any]) -> None:
         self.update_dispatcher.dispatch(update)
@@ -2563,25 +3330,15 @@ class TutorlaingBot:
 
     def configure_commands(self) -> None:
         try:
-            self.telegram.call(
-                "setMyCommands",
-                {
-                    "commands": [
-                        {"command": "start", "description": "Открыть главное меню"},
-                        {"command": "scenarios", "description": "Выбрать ситуацию"},
-                        {"command": "review", "description": "Повторения на сегодня"},
-                        {"command": "review_now", "description": "Повторить сейчас"},
-                        {"command": "settings", "description": "Языки и настройки"},
-                        {"command": "progress", "description": "Прогресс и ближайший план"},
-                        {"command": "tools", "description": "Карточки, перевод и темы"},
-                        {"command": "drill", "description": "Закрепить материал"},
-                        {"command": "reminders", "description": "Настроить напоминания"},
-                        {"command": "grammar", "description": "Объяснить фрагмент"},
-                        {"command": "privacy", "description": "Как хранятся данные"},
-                        {"command": "delete_me", "description": "Удалить мои данные"},
-                    ]
-                },
-            )
+            self.telegram.call("setMyCommands", {"commands": command_payload("ru")})
+            for language in ("ru", "uk", "en", "pl"):
+                self.telegram.call(
+                    "setMyCommands",
+                    {
+                        "commands": command_payload(language),
+                        "language_code": language,
+                    },
+                )
         except TelegramError:
             LOGGER.warning("Could not register bot commands", exc_info=True)
 

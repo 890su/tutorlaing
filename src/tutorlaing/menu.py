@@ -9,6 +9,7 @@ from .contracts import Keyboard, MenuStore
 from .difficulty import practice_level
 from .i18n import tr
 from .language_support import LanguageSupport
+from .learner_profile import AGE_BANDS, LIFE_ROLES, LearnerProfileService
 from .navigation import back_row, home_row, reply_navigation
 from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
@@ -24,7 +25,7 @@ LANGUAGE_LABELS = {
     "pl": "Polski",
 }
 REMINDER_MODES = ("off", "gentle", "normal", "intensive", "aggressive")
-REPLY_KEYBOARD_VERSION = "navigation-v3"
+REPLY_KEYBOARD_VERSION = "navigation-v5"
 
 
 class LearnerMenu:
@@ -37,12 +38,14 @@ class LearnerMenu:
         catalog: ScenarioCatalog,
         language_support: LanguageSupport,
         progress_service: ProgressService,
+        learner_profiles: LearnerProfileService,
     ):
         self.store = store
         self.workspace = workspace
         self.catalog = catalog
         self.language_support = language_support
         self.progress_service = progress_service
+        self.learner_profiles = learner_profiles
 
     def home(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
@@ -88,20 +91,39 @@ class LearnerMenu:
             ]
             status = tr(language, "home.status.empty")
 
-        keyboard: Keyboard = [
-            primary,
-            [
-                {
-                    "text": tr(language, "action.scenarios"),
-                    "callback_data": "scenarios:list",
-                },
-                {"text": tr(language, "action.quests"), "callback_data": "quests:list"},
-            ],
-        ]
-        if not (due_count and not resume):
+        keyboard: Keyboard = [primary]
+        open_activity_count = getattr(
+            self.store, "open_activity_count", lambda _chat_id: 0
+        )(chat_id)
+        if open_activity_count:
             keyboard.append(
-                [{"text": review_label, "callback_data": "reviews:list"}]
+                [
+                    {
+                        "text": tr(language, "action.activities"),
+                        "callback_data": "activities:list",
+                    }
+                ]
             )
+        keyboard.extend(
+            [
+                [
+                    {
+                        "text": tr(language, "navigation.practice"),
+                        "callback_data": "practice",
+                    }
+                ],
+                [
+                    {
+                        "text": tr(language, "action.progress"),
+                        "callback_data": "progress",
+                    },
+                    {
+                        "text": tr(language, "navigation.settings"),
+                        "callback_data": "settings",
+                    },
+                ],
+            ]
+        )
         self.refresh_navigation(chat_id)
         self.workspace.show(
             chat_id,
@@ -136,6 +158,8 @@ class LearnerMenu:
             chat_id,
             "Cześć! Я помогу подготовиться к реальным разговорам на новом языке.\n\n"
             "Alpha сохраняет ваши текстовые ответы, результаты и Telegram ID. "
+            "Добровольно заполненные цели и жизненный контекст, а также вопросы "
+            "преподавателю тоже сохраняются в вашем профиле. "
             "Для персональной проверки учебная реплика и минимальный контекст "
             "отправляются OpenAI или Google Gemini. Имя и Telegram ID в AI не передаются. "
             "Голос не записывается. Все данные можно удалить командой /delete_me.\n\n"
@@ -175,7 +199,9 @@ class LearnerMenu:
             ),
             [
                 [{"text": tr(language, "settings.languages"), "callback_data": "settings:languages"}],
+                [{"text": tr(language, "profile.settings"), "callback_data": "settings:profile"}],
                 [{"text": tr(language, "action.reminders"), "callback_data": "reminders"}],
+                [{"text": tr(language, "navigation.help"), "callback_data": "help"}],
                 [
                     {
                         "text": tr(language, "settings.privacy"),
@@ -185,6 +211,59 @@ class LearnerMenu:
                 home_row(language),
             ],
             surface="settings",
+        )
+
+    def show_learner_profile(self, chat_id: int) -> None:
+        language = self._language(chat_id)
+        profile = self.learner_profiles.get(chat_id)
+        adaptive = tr(
+            language,
+            "profile.adaptive.on" if profile.adaptive_level_enabled else "profile.adaptive.off",
+        )
+        body = tr(
+            language,
+            "profile.summary",
+            age=tr(language, f"profile.age.{profile.age_band}"),
+            role=tr(language, f"profile.role.{profile.life_role}"),
+            weekly=profile.weekly_context or tr(language, "profile.not_set"),
+            goal=profile.current_goal or tr(language, "profile.not_set"),
+            adaptive=adaptive,
+        )
+        self.workspace.show(
+            chat_id,
+            card(tr(language, "profile.title"), body),
+            [
+                [{"text": tr(language, "profile.age"), "callback_data": "profile:age"}],
+                [{"text": tr(language, "profile.role"), "callback_data": "profile:role"}],
+                [{"text": tr(language, "profile.weekly"), "callback_data": "profile:input:weekly"}],
+                [{"text": tr(language, "profile.goal"), "callback_data": "profile:input:goal"}],
+                [{"text": tr(language, "profile.adaptive", value=adaptive), "callback_data": "profile:adaptive:toggle"}],
+                back_row(language, "settings", "settings"),
+            ],
+            surface="learner_profile",
+        )
+
+    def show_profile_choices(self, chat_id: int, kind: str) -> None:
+        language = self._language(chat_id)
+        profile = self.learner_profiles.get(chat_id)
+        values = AGE_BANDS if kind == "age" else LIFE_ROLES
+        current = profile.age_band if kind == "age" else profile.life_role
+        keyboard: Keyboard = [
+            [
+                {
+                    "text": ("✓ " if value == current else "")
+                    + tr(language, f"profile.{kind}.{value}"),
+                    "callback_data": f"profile:set:{kind}:{value}",
+                }
+            ]
+            for value in values
+        ]
+        keyboard.append(back_row(language, "settings:profile", "profile"))
+        self.workspace.show(
+            chat_id,
+            tr(language, f"profile.choose_{kind}"),
+            keyboard,
+            surface=f"profile_{kind}",
         )
 
     def show_learning_settings(self, chat_id: int) -> None:
@@ -298,6 +377,8 @@ class LearnerMenu:
         keyboard.extend(
             [
                 [{"text": self.text(chat_id, "settings.level"), "callback_data": "settings:level"}],
+                [{"text": tr(language, "progress.outcomes"), "callback_data": "outcomes:list"}],
+                [{"text": tr(language, "navigation.settings"), "callback_data": "settings"}],
                 home_row(self._language(chat_id)),
             ]
         )
@@ -306,6 +387,70 @@ class LearnerMenu:
             card(self.text(chat_id, "progress.title"), body),
             keyboard,
             surface="progress",
+        )
+
+    def show_practice_hub(self, chat_id: int) -> None:
+        user = self.store.get_user(chat_id)
+        language = str(user["instruction_language"])
+        due_count = len(self.store.pending_reviews(chat_id))
+        review_label = tr(language, "action.reviews")
+        if due_count:
+            review_label = f"{review_label} · {due_count}"
+        keyboard: Keyboard = []
+        open_activity_count = getattr(
+            self.store, "open_activity_count", lambda _chat_id: 0
+        )(chat_id)
+        if open_activity_count:
+            keyboard.append(
+                [
+                    {
+                        "text": tr(language, "action.activities"),
+                        "callback_data": "activities:list",
+                    }
+                ]
+            )
+        keyboard.extend(
+            [
+                [
+                    {
+                        "text": tr(language, "action.scenarios"),
+                        "callback_data": "scenarios:list",
+                    },
+                    {
+                        "text": tr(language, "practice.missions"),
+                        "callback_data": "quests:list",
+                    },
+                ],
+                [
+                    {"text": review_label, "callback_data": "reviews:list"},
+                    {
+                        "text": tr(language, "practice.focus"),
+                        "callback_data": "drill:start",
+                    },
+                ],
+                home_row(language),
+            ]
+        )
+        self.workspace.show(
+            chat_id,
+            card(
+                tr(language, "practice.title"),
+                tr(language, "practice.summary"),
+            ),
+            keyboard,
+            surface="practice_hub",
+        )
+
+    def show_help(self, chat_id: int) -> None:
+        language = self._language(chat_id)
+        self.workspace.show(
+            chat_id,
+            card(
+                tr(language, "help.title"),
+                tr(language, "help.summary"),
+            ),
+            [home_row(language)],
+            surface="help",
         )
 
     def show_reminders(self, chat_id: int) -> None:
@@ -392,6 +537,14 @@ class LearnerMenu:
             ]
             for scenario in scenarios.values()
         ]
+        open_activity_count = getattr(
+            self.store, "open_activity_count", lambda _chat_id: 0
+        )
+        if open_activity_count(chat_id):
+            keyboard.insert(
+                0,
+                [{"text": tr(language, "action.activities"), "callback_data": "activities:list"}],
+            )
         keyboard.append(home_row(language))
         self.workspace.show(
             chat_id,
@@ -401,21 +554,14 @@ class LearnerMenu:
         )
 
     def show_privacy(self, chat_id: int, *, back_to_settings: bool = False) -> None:
-        text = (
-            "Alpha хранит Telegram ID, имя, текст ответов, оценки и расписание "
-            "повторений. Для проверки фразы её текст, текущая реплика и учебная "
-            "цель отправляются OpenAI или Google Gemini. Telegram ID, имя и история других "
-            "сценариев в AI не передаются. Голос и контакты не собираются. Полные "
-            "тексты не отправляются в продуктовую аналитику.\n\n"
-            "Удалить все данные можно командой /delete_me."
-        )
+        language = self._language(chat_id)
         self.workspace.show(
             chat_id,
-            self.language_support.instruction_text(chat_id, text, "privacy"),
+            tr(language, "privacy.summary"),
             [
-                back_row(self._language(chat_id), "settings", "settings")
+                back_row(language, "settings", "settings")
                 if back_to_settings
-                else home_row(self._language(chat_id))
+                else home_row(language)
             ],
             surface="privacy",
         )

@@ -78,6 +78,9 @@ class AdaptiveDifficultyService:
         self.store = store
 
     def assess(self, chat_id: int) -> DifficultyProposal | None:
+        raw = self.store.difficulty_evidence(chat_id)
+        if not bool(raw.get("adaptive_level_enabled", True)):
+            return None
         pending = self.store.pending_difficulty_proposal(chat_id)
         if pending is not None:
             return self._proposal_from_row(pending)
@@ -85,7 +88,6 @@ class AdaptiveDifficultyService:
         if cooldown and datetime.fromisoformat(cooldown) > datetime.now(timezone.utc):
             return None
 
-        raw = self.store.difficulty_evidence(chat_id)
         # Do not ratchet the temporary challenge repeatedly. After accepting a
         # recommendation, the learner keeps that working level until changing
         # the profile level or a later explicit recalibration flow.

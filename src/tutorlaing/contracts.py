@@ -146,7 +146,14 @@ class QuestStore(Protocol):
 
     def get_user(self, chat_id: int) -> Any: ...
 
-    def start_quest(self, chat_id: int, quest_id: str, start_node: str) -> str: ...
+    def start_quest(
+        self,
+        chat_id: int,
+        quest_id: str,
+        start_node: str,
+        *,
+        preserve_active: bool = False,
+    ) -> str: ...
 
     def quest_session(self, quest_session_id: str, chat_id: int) -> Any: ...
 
@@ -209,12 +216,22 @@ class UpdateTarget(Protocol):
     ) -> None: ...
 
 
+class BackgroundLearningStore(Protocol):
+    """History needed to rotate activity-linked card formats and sources."""
+
+    def recent_background_card_types(
+        self, chat_id: int, activity_id: str, limit: int = 3
+    ) -> list[str]: ...
+
+    def recent_background_card_reasons(
+        self, chat_id: int, limit: int = 20
+    ) -> list[str]: ...
+
+
 class ToolkitStore(Protocol):
     def get_user(self, chat_id: int) -> Any: ...
 
     def set_user_state(self, chat_id: int, **values: Any) -> None: ...
-
-    def suspend_activity(self, chat_id: int) -> bool: ...
 
     def active_drill(self, chat_id: int) -> Any | None: ...
 

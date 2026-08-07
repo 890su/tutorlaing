@@ -210,6 +210,11 @@ class ApplicationModuleTests(unittest.TestCase):
             "evaluation_service.py",
             "feedback.py",
             "language_support.py",
+            "learner_profile.py",
+            "activities.py",
+            "background_learning.py",
+            "coach.py",
+            "commands.py",
             "menu.py",
             "navigation.py",
             "progress_service.py",
@@ -229,6 +234,52 @@ class ApplicationModuleTests(unittest.TestCase):
                         violations.append(f"{module}: {node.module}")
 
         self.assertEqual([], violations)
+
+    def test_literal_inline_callbacks_have_a_router_branch(self) -> None:
+        package = Path(__file__).parents[1] / "src" / "tutorlaing"
+        generated: set[str] = set()
+        for module in ("app.py", "feedback.py", "menu.py", "navigation.py", "toolkit.py"):
+            tree = ast.parse((package / module).read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Dict):
+                    continue
+                for key, value in zip(node.keys, node.values):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and key.value == "callback_data"
+                        and isinstance(value, ast.Constant)
+                        and isinstance(value.value, str)
+                    ):
+                        generated.add(value.value)
+
+        app_tree = ast.parse((package / "app.py").read_text(encoding="utf-8"))
+        exact: set[str] = set()
+        prefixes: set[str] = set()
+        for node in ast.walk(app_tree):
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name):
+                if node.left.id == "data":
+                    for comparator in node.comparators:
+                        if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                            exact.add(comparator.value)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "startswith"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "data"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                prefixes.add(node.args[0].value)
+
+        missing = sorted(
+            callback
+            for callback in generated
+            if callback not in exact
+            and not any(callback.startswith(prefix) for prefix in prefixes)
+        )
+        self.assertEqual([], missing)
 
 
 if __name__ == "__main__":

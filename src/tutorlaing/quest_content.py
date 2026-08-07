@@ -32,6 +32,8 @@ class QuestNode:
     retry_next: str = ""
     success_feedback_ru: str = ""
     retry_feedback_ru: str = ""
+    success_effects: dict[str, str] | None = None
+    retry_effects: dict[str, str] | None = None
     ending: str = ""
     summary_ru: str = ""
 
@@ -61,23 +63,51 @@ def _choice(raw: dict[str, Any]) -> QuestChoice:
 
 
 def _node(raw: dict[str, Any]) -> QuestNode:
+    choices = tuple(_choice(item) for item in raw.get("choices", []))
+    source_mode = str(raw["mode"])
+    # Quests are productive practice: legacy choice nodes are retained as
+    # semantic fallback routes, but are rendered and answered as free text.
+    if source_mode == "choice":
+        best = max(choices, key=lambda item: item.points)
+        retry = min(choices, key=lambda item: item.points)
+        mode = "free"
+        expected_groups = ((best.text,),)
+        reference_answer = best.text
+        success_next = best.next_node
+        retry_next = retry.next_node
+        success_feedback = best.feedback_ru
+        retry_feedback = retry.feedback_ru
+        success_effects = best.effects
+        retry_effects = retry.effects
+    else:
+        mode = source_mode
+        expected_groups = tuple(
+            tuple(str(value) for value in group)
+            for group in raw.get("expected_groups", [])
+        )
+        reference_answer = str(raw.get("reference_answer", ""))
+        success_next = str(raw.get("success_next", ""))
+        retry_next = str(raw.get("retry_next", ""))
+        success_feedback = str(raw.get("success_feedback_ru", ""))
+        retry_feedback = str(raw.get("retry_feedback_ru", ""))
+        success_effects = {}
+        retry_effects = {}
     return QuestNode(
         id=str(raw["id"]),
-        mode=str(raw["mode"]),
+        mode=mode,
         speaker=str(raw.get("speaker", "")),
         message=str(raw.get("message", "")),
         task_ru=str(raw.get("task_ru", "")),
         hint_ru=str(raw.get("hint_ru", "")),
-        choices=tuple(_choice(item) for item in raw.get("choices", [])),
-        expected_groups=tuple(
-            tuple(str(value) for value in group)
-            for group in raw.get("expected_groups", [])
-        ),
-        reference_answer=str(raw.get("reference_answer", "")),
-        success_next=str(raw.get("success_next", "")),
-        retry_next=str(raw.get("retry_next", "")),
-        success_feedback_ru=str(raw.get("success_feedback_ru", "")),
-        retry_feedback_ru=str(raw.get("retry_feedback_ru", "")),
+        choices=choices,
+        expected_groups=expected_groups,
+        reference_answer=reference_answer,
+        success_next=success_next,
+        retry_next=retry_next,
+        success_feedback_ru=success_feedback,
+        retry_feedback_ru=retry_feedback,
+        success_effects=success_effects,
+        retry_effects=retry_effects,
         ending=str(raw.get("ending", "")),
         summary_ru=str(raw.get("summary_ru", "")),
     )
