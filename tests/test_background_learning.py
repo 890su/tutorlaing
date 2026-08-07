@@ -161,6 +161,43 @@ class BackgroundLearningTests(unittest.TestCase):
         self.assertNotIn(draft.correct_answer, draft.context)
         self.assertIn("ten termin mi odpowiada", draft.accepted_answers)
 
+    def test_semantic_only_mode_skips_generic_recall(self) -> None:
+        service = BackgroundLearningService(FakeStore())
+
+        draft = service.build(
+            42,
+            "scenario",
+            "session-1",
+            {
+                "reference": "Boli mnie gardło.",
+                "task": "Opisz objaw.",
+                "learning_cards": [
+                    {
+                        "kind": "synonym",
+                        "cue": "Jak inaczej powiedzieć: «boli mnie gardło»?",
+                        "answer": "mam ból gardła",
+                    }
+                ],
+            },
+            semantic_only=True,
+        )
+
+        self.assertEqual("synonym", draft.card_type)
+        self.assertEqual("mam ból gardła", draft.correct_answer)
+
+    def test_semantic_only_mode_returns_none_without_authored_material(self) -> None:
+        service = BackgroundLearningService(FakeStore())
+
+        draft = service.build(
+            42,
+            "scenario",
+            "session-1",
+            {"reference": "Boli mnie gardło.", "task": "Opisz objaw."},
+            semantic_only=True,
+        )
+
+        self.assertIsNone(draft)
+
 
 if __name__ == "__main__":
     unittest.main()

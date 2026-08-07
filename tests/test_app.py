@@ -483,6 +483,79 @@ class AppFlowTests(unittest.TestCase):
 
         self.assertIsNone(self.storage.get_user(chat_id)["toolkit_input_mode"])
         self.assertIn("МАСТЕРСКАЯ", self.telegram.messages[-1]["text"])
+        labels = [
+            button["text"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        callbacks = [
+            button["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+            for button in row
+        ]
+        self.assertIn("Слова и смысл · текущая тема", labels)
+        self.assertIn("Переводные карточки · 4 варианта", labels)
+        self.assertIn("background:menu:toolkit", callbacks)
+
+    def test_semantic_practice_is_findable_and_preserves_current_position(self) -> None:
+        chat_id = 361
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.begin_scenario(chat_id, "pharmacy")
+        session_id = str(self.storage.get_user(chat_id)["current_session"])
+
+        self.bot.handle_callback(
+            chat_id, "Learner", "semantic-menu", "background:menu:toolkit"
+        )
+
+        menu = self.telegram.messages[-1]
+        self.assertIn("СЛОВА И СМЫСЛ", menu["text"])
+        self.assertIn("Синонимы и близкие формулировки", menu["text"])
+        callbacks = [row[0]["callback_data"] for row in menu["keyboard"]]
+        self.assertEqual(["background:start", "toolkit"], callbacks)
+
+        self.bot.handle_callback(
+            chat_id, "Learner", "semantic-start", "background:start"
+        )
+
+        current = self.storage.get_user(chat_id)
+        card_id = int(current["background_card_id"])
+        background = self.storage.background_card(chat_id, card_id)
+        self.assertEqual("synonym", background["card_type"])
+        self.assertEqual("scenario", current["stage"])
+        self.assertEqual(session_id, current["current_session"])
+        self.assertEqual(0, current["current_step"])
+        self.assertNotIn(
+            str(background["correct_answer"]), str(background["context"])
+        )
+
+        self.bot.handle_text(
+            chat_id, "Learner", str(background["correct_answer"])
+        )
+
+        feedback_callbacks = [
+            row[0]["callback_data"]
+            for row in self.telegram.messages[-1]["keyboard"]
+        ]
+        self.assertEqual(
+            ["background:start", "background:return"], feedback_callbacks
+        )
+        self.assertEqual(0, self.storage.get_user(chat_id)["current_step"])
+
+    def test_semantic_practice_empty_state_explains_how_to_unlock_it(self) -> None:
+        chat_id = 362
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+
+        self.bot.handle_callback(
+            chat_id, "Learner", "semantic-menu", "background:menu:toolkit"
+        )
+
+        message = self.telegram.messages[-1]
+        self.assertIn("Сначала откройте занятие", message["text"])
+        callbacks = [row[0]["callback_data"] for row in message["keyboard"]]
+        self.assertNotIn("background:start", callbacks)
+        self.assertEqual(["scenarios:list", "toolkit"], callbacks)
 
     def test_scenario_scaffolding_changes_with_learner_level(self) -> None:
         beginner = 37
@@ -1328,8 +1401,26 @@ class AppFlowTests(unittest.TestCase):
             for button in row
         ]
         self.assertEqual(
-            ["scenarios:list", "quests:list", "reviews:list", "drill:start", "home"],
+            [
+                "scenarios:list",
+                "quests:list",
+                "background:menu:practice",
+                "reviews:list",
+                "drill:start",
+                "home",
+            ],
             callbacks,
+        )
+
+        self.bot.handle_callback(
+            chat_id,
+            "Learner",
+            "semantic-from-practice",
+            "background:menu:practice",
+        )
+        self.assertEqual(
+            "practice",
+            self.telegram.messages[-1]["keyboard"][-1][0]["callback_data"],
         )
 
     def test_unknown_slash_command_never_becomes_a_task_answer(self) -> None:

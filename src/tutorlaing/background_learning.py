@@ -51,15 +51,25 @@ class BackgroundLearningService:
         activity_kind: str,
         activity_id: str,
         context: dict[str, Any],
+        *,
+        semantic_only: bool = False,
     ) -> BackgroundCardDraft | None:
-        reason, selected = self._select_source(chat_id, context)
+        selection = self._select_source(
+            chat_id, context, semantic_only=semantic_only
+        )
+        if selection is None:
+            return None
+        reason, selected = selection
         reference = " ".join(str(selected.get("reference") or "").split())
         if not reference:
             return None
         recent = self.store.recent_background_card_types(chat_id, activity_id, 3)
         semantic_cards = learning_card_seeds(selected.get("learning_cards"))
-        card_type = self._next_type(
-            recent, reference, tuple(card.kind for card in semantic_cards)
+        semantic_kinds = tuple(card.kind for card in semantic_cards)
+        card_type = (
+            self._next_semantic_type(recent, semantic_kinds)
+            if semantic_only
+            else self._next_type(recent, reference, semantic_kinds)
         )
         semantic = self._semantic_material(card_type, semantic_cards, len(recent))
         if semantic is None:
@@ -95,8 +105,12 @@ class BackgroundLearningService:
         )
 
     def _select_source(
-        self, chat_id: int, context: dict[str, Any]
-    ) -> tuple[str, dict[str, Any]]:
+        self,
+        chat_id: int,
+        context: dict[str, Any],
+        *,
+        semantic_only: bool = False,
+    ) -> tuple[str, dict[str, Any]] | None:
         pools: dict[str, list[dict[str, Any]]] = {
             "current_activity": [context],
             "related_activity": self._candidate_list(
@@ -104,7 +118,18 @@ class BackgroundLearningService:
             ),
             "older_due": self._candidate_list(context.get("due_candidates")),
         }
+        if semantic_only:
+            pools = {
+                reason: [
+                    candidate
+                    for candidate in candidates
+                    if learning_card_seeds(candidate.get("learning_cards"))
+                ]
+                for reason, candidates in pools.items()
+            }
         available = [reason for reason, candidates in pools.items() if candidates]
+        if not available:
+            return None
         total_weight = sum(SOURCE_WEIGHTS[reason] for reason in available)
         weights = {
             reason: SOURCE_WEIGHTS[reason] / total_weight for reason in available
@@ -202,6 +227,34 @@ class BackgroundLearningService:
         if not recent or recent[0] not in allowed:
             return allowed[0]
         return allowed[(allowed.index(recent[0]) + 1) % len(allowed)]
+
+    @staticmethod
+    def _next_semantic_type(recent: list[str], kinds: tuple[str, ...]) -> str:
+        allowed = list(dict.fromkeys(kinds))
+        if not allowed:
+            raise ValueError("Semantic card selection has no semantic material")
+        if not recent or recent[0] not in allowed:
+            return allowed[0]
+        return allowed[(allowed.index(recent[0]) + 1) % len(allowed)]
+
+    @staticmethod
+    def semantic_kinds(context: dict[str, Any]) -> tuple[str, ...]:
+        candidates = [
+            context,
+            *BackgroundLearningService._candidate_list(
+                context.get("related_candidates")
+            ),
+            *BackgroundLearningService._candidate_list(
+                context.get("due_candidates")
+            ),
+        ]
+        return tuple(
+            dict.fromkeys(
+                card.kind
+                for candidate in candidates
+                for card in learning_card_seeds(candidate.get("learning_cards"))
+            )
+        )
 
     @staticmethod
     def _semantic_material(

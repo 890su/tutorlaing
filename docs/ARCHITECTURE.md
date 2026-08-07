@@ -96,6 +96,12 @@ Telegram-навигация имеет три непересекающихся �
 отсекает неизвестные slash-команды и устаревшие callback до маршрутизации
 ответа учебному занятию.
 
+`Слова и смысл` является одним activity-linked use case с двумя discovery links:
+из `Практики` и первым пунктом `Инструментов`. Оба callback вызывают один экран
+и один semantic-only selector. Это допустимое перекрёстное обнаружение, а не
+дублирование state: карточка хранит один `background_card_id`, а foreground
+session и position не меняются. Полная карта находится в `docs/MENU_MAP.md`.
+
 Все порты находятся в `contracts.py`:
 
 - `TelegramGateway` — send/edit/action/callback acknowledge;

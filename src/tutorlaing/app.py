@@ -38,8 +38,9 @@ from .feedback import FeedbackPresenter
 from .evaluation_service import ResponseEvaluator
 from .language_support import LanguageSupport
 from .learner_profile import LearnerProfileService
+from .learning_cards import LEARNING_CARD_KINDS
 from .menu import LearnerMenu
-from .navigation import home_row, reply_action
+from .navigation import back_row, home_row, reply_action
 from .privacy import CONSENT_VERSION
 from .progress_service import ProgressService
 from .quest_content import Quest, QuestCatalog, QuestNode
@@ -526,15 +527,99 @@ class TutorlaingBot:
         return enriched
 
     def send_background_card(self, chat_id: int, *, scheduled: bool = False) -> bool:
+        return self._send_background_card(chat_id, scheduled=scheduled)
+
+    def _semantic_practice_context(
+        self, chat_id: int
+    ) -> tuple[str, str, dict[str, Any]] | None:
         try:
             activity_kind, activity_id, context = self._coach_context(chat_id)
         except KeyError:
-            return False
+            return None
         if activity_kind == "drill":
-            return False
+            return None
         context = self._background_context(chat_id, activity_kind, context)
+        return activity_kind, activity_id, context
+
+    def show_semantic_practice(
+        self, chat_id: int, *, return_to: str = "toolkit"
+    ) -> None:
+        language = self._language(chat_id)
+        semantic_context = self._semantic_practice_context(chat_id)
+        kinds = (
+            self.background_learning.semantic_kinds(semantic_context[2])
+            if semantic_context
+            else ()
+        )
+        if kinds:
+            available = "\n".join(
+                f"• {self._t(chat_id, f'background.kind.{kind}')}"
+                for kind in kinds
+            )
+            body = self._t(
+                chat_id, "background.menu_summary", available=available
+            )
+            keyboard: list[list[dict[str, str]]] = [
+                [
+                    {
+                        "text": self._t(chat_id, "background.start"),
+                        "callback_data": "background:start",
+                    }
+                ]
+            ]
+        else:
+            body = self._t(chat_id, "background.menu_unavailable")
+            keyboard = []
+            if getattr(
+                self.storage, "open_activity_count", lambda _chat_id: 0
+            )(chat_id):
+                keyboard.append(
+                    [
+                        {
+                            "text": self._t(chat_id, "action.activities"),
+                            "callback_data": "activities:list",
+                        }
+                    ]
+                )
+            keyboard.append(
+                [
+                    {
+                        "text": self._t(chat_id, "action.choose_situation"),
+                        "callback_data": "scenarios:list",
+                    }
+                ]
+            )
+        destination = "practice" if return_to == "practice" else "toolkit"
+        return_to = destination
+        keyboard.append(back_row(language, return_to, destination))
+        self._workspace(
+            chat_id,
+            card(self._t(chat_id, "background.menu_title"), body),
+            keyboard,
+            surface="background_menu",
+        )
+
+    def start_semantic_practice(self, chat_id: int) -> None:
+        if not self._send_background_card(chat_id, semantic_only=True):
+            self.show_semantic_practice(chat_id)
+
+    def _send_background_card(
+        self,
+        chat_id: int,
+        *,
+        scheduled: bool = False,
+        semantic_only: bool = False,
+    ) -> bool:
+        semantic_context = self._semantic_practice_context(chat_id)
+        if semantic_context is None:
+            return False
+        activity_kind, activity_id, context = semantic_context
         draft = self.background_learning.build(
-            chat_id, activity_kind, activity_id, context
+            chat_id,
+            activity_kind,
+            activity_id,
+            context,
+            semantic_only=semantic_only,
         )
         if draft is None:
             return False
@@ -594,10 +679,23 @@ class TutorlaingBot:
             answer=corrected,
             source=str(row["explanation"]),
         )
+        keyboard = [
+            [{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]
+        ]
+        if str(row["card_type"]) in LEARNING_CARD_KINDS:
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": self._t(chat_id, "background.more"),
+                        "callback_data": "background:start",
+                    }
+                ],
+            )
         self._workspace(
             chat_id,
             card(title, body),
-            [[{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]],
+            keyboard,
             force_new=True,
             surface="background_feedback",
         )
@@ -607,13 +705,26 @@ class TutorlaingBot:
         if str(row["status"]) != "pending":
             return
         self.storage.answer_background_card(chat_id, card_id, "[revealed]", 0.0)
+        keyboard = [
+            [{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]
+        ]
+        if str(row["card_type"]) in LEARNING_CARD_KINDS:
+            keyboard.insert(
+                0,
+                [
+                    {
+                        "text": self._t(chat_id, "background.more"),
+                        "callback_data": "background:start",
+                    }
+                ],
+            )
         self._workspace(
             chat_id,
             card(
                 self._t(chat_id, "background.revealed"),
                 self._t(chat_id, "background.reference", answer=row["correct_answer"]),
             ),
-            [[{"text": self._t(chat_id, "background.return"), "callback_data": "background:return"}]],
+            keyboard,
             surface="background_feedback",
         )
 
@@ -3030,6 +3141,12 @@ class TutorlaingBot:
             self.answer_coach(chat_id, data.rsplit(":", 1)[1])
         elif data == "coach:return":
             self.close_coach(chat_id)
+        elif data.startswith("background:menu:"):
+            self.show_semantic_practice(
+                chat_id, return_to=data.rsplit(":", 1)[1]
+            )
+        elif data == "background:start":
+            self.start_semantic_practice(chat_id)
         elif data.startswith("background:reveal:"):
             self.reveal_background_card(chat_id, int(data.rsplit(":", 1)[1]))
         elif data == "background:return":

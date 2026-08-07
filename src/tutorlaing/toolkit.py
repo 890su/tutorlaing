@@ -107,6 +107,12 @@ class PracticeToolkit:
         keyboard: Keyboard = [
             [
                 {
+                    "text": tr(language, "background.open"),
+                    "callback_data": "background:menu:toolkit",
+                }
+            ],
+            [
+                {
                     "text": tr(language, "toolkit.my_material"),
                     "callback_data": "drill:start",
                 }

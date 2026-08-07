@@ -422,6 +422,12 @@ class LearnerMenu:
                     },
                 ],
                 [
+                    {
+                        "text": tr(language, "background.open"),
+                        "callback_data": "background:menu:practice",
+                    }
+                ],
+                [
                     {"text": review_label, "callback_data": "reviews:list"},
                     {
                         "text": tr(language, "practice.focus"),
