@@ -1,309 +1,68 @@
 # Архитектура Tutorlaing
 
-## Результат аудита
+Актуально на 2026-08-07.
 
-Проект остаётся модульным монолитом: один Python-процесс, одна SQLite-база и
-один Telegram transport. Для текущей alpha это проще и надёжнее набора
-микросервисов, но прикладные функции теперь разделены контрактами.
+## Границы
 
-Исходное состояние перед рефакторингом:
-
-- `app.py`: 2010 строк и 62 метода; transport routing, UI, AI, локализация,
-  прогресс и учебный flow находились в одном `TutorlaingBot`;
-- `storage.py`: 893 строки и 46 методов; SQL, миграции и транзакции доступны
-  через один широкий concrete API;
-- `reminders.py` импортировал одновременно `app.py` и `storage.py`, создавая
-  обратную зависимость application → composition;
-- Telegram `callback_data` и пользовательские состояния представлены строками,
-  поэтому опечатки обнаруживаются только во время выполнения;
-- `ai.py` содержит модели результата, порт, OpenAI/Gemini adapters и failover;
-- границы модулей не проверялись автоматически.
-
-После первого этапа:
-
-- `app.py` уменьшен до 1361 строки; публичные wrapper-методы оставлены для
-  совместимости существующих flows и тестов;
-- UI workspace, меню, каталог курсов, языковая поддержка, прогресс,
-  AI-feedback, оценка ответа и Telegram update dispatch вынесены отдельно;
-- прикладные сервисы зависят от узких `Protocol`-портов из `contracts.py`;
-- `reminders.py` зависит от `ReminderStore` и `ReminderDelivery`, а не от
-  concrete `Storage` и `TutorlaingBot`;
-- transport exceptions проходят через общий `TransportError`;
-- architecture regression test запрещает application-модулям импортировать
-  `app`, `storage` и `telegram_api`.
-
-## Направление зависимостей
+Tutorlaing — модульный монолит: один Python-процесс, SQLite и Telegram
+transport. Это намеренный выбор для alpha; прикладные области отделены узкими
+`Protocol`-контрактами, а не микросервисами.
 
 ```mermaid
 flowchart LR
-    TG["Telegram webhook / polling"] --> UD["TelegramUpdateDispatcher"]
-    UD --> BOT["TutorlaingBot: composition и flow orchestration"]
-    BOT --> MENU["LearnerMenu"]
-    MENU --> NAV["Navigation helpers"]
-    BOT --> EVAL["ResponseEvaluator"]
-    BOT --> FB["FeedbackPresenter"]
-    BOT --> LANG["LanguageSupport"]
-    MENU --> PROG["ProgressService"]
-    MENU --> CAT["ScenarioCatalog"]
-    MENU --> WS["TelegramWorkspace"]
-    FB --> WS
-    FB --> LANG
-    EVAL --> PORTS["Protocol ports"]
-    PROG --> PORTS
-    LANG --> PORTS
-    WS --> PORTS
-    PORTS --> DB["Storage / SQLite adapter"]
-    PORTS --> API["TelegramAPI adapter"]
-    PORTS --> ROUTER["FailoverAIClient"]
-    ROUTER --> OAI["OpenAIClient / Responses API"]
-    ROUTER --> GEM["GeminiClient adapter"]
+    TG[Telegram] --> UD[Update dispatcher]
+    UD --> APP[Application orchestration]
+    APP --> UI[Menu and workspace]
+    APP --> FLOW[Scenario, quest and drill flows]
+    APP --> AI[Evaluation and feedback]
+    APP --> SIDE[Coach and background learning]
+    UI --> PORTS[Protocol ports]
+    FLOW --> PORTS
+    AI --> PORTS
+    SIDE --> PORTS
+    PORTS --> DB[SQLite]
+    PORTS --> API[Telegram and AI adapters]
 ```
 
-Правило: composition и adapters могут знать application-модули; application
-не знает concrete adapters. `TutorlaingBot` является composition root и
-координатором state machine, поэтому его concrete зависимости допустимы.
+## Модули
 
-## Функциональные модули и контракты
+| Модуль | Ответственность |
+|---|---|
+| `app.py` | composition root и orchestration переходов |
+| `menu.py` / `navigation.py` | `Сегодня`, `Учиться`, `Помощник`, `Профиль`; локализованные переходы |
+| `workspace.py` | одна актуальная Telegram-карточка и безопасный fallback при edit failure |
+| `catalog.py` / `content.py` | курируемые ситуации и версии контента |
+| `evaluation_service.py` / `feedback.py` | rule-based и AI-разбор ответа; видимый feedback |
+| `activities.py` | проекция параллельных незавершённых занятий и их позиции |
+| `coach.py` | side-channel преподавателя, не меняющий основной flow |
+| `learning_cards.py` / `background_learning.py` | валидируемый semantic content и связанная микро-практика |
+| `toolkit.py` | работа со своей фразой, переводные карточки и тематический drill |
+| `reminders.py` | слоты, quiet hours, retry и доставка не более одного задания |
+| `progress_service.py` / `learner_profile.py` | evidence-based прогресс и добровольный контекст |
+| `storage.py` | SQLite schema, миграции, транзакции и owner-scoped данные |
 
-| Модуль | Единственная ответственность | Входной контракт | Результат/эффект |
-|---|---|---|---|
-| `catalog.py` | Выбор курируемого курса по target language | `target_language` или профиль | Словарь `Scenario`; неизвестный язык — `ValueError` |
-| `evaluation_service.py` | Rule-based оценка и необязательное AI-обогащение | `LanguageStore`, `AIClient`, scenario/step/response | `EvaluationResult`; при AI-сбое сохраняется rule-based результат |
-| `language_support.py` | Перевод по запросу и level-aware сноски | `LanguageStore`, `AIClient` | Текст или безопасный fallback без перевода |
-| `feedback.py` | Вкладки результата, natural variants и grammar drill-down | `FeedbackStore`, workspace, language support, `AIClient` | Одна редактируемая feedback-card |
-| `progress_service.py` | Вывод mastery/focus/plan только из evidence | `ProgressStore` | Неизменяемый `ProgressSnapshot` |
-| `learner_profile.py` | Добровольный жизненный контекст и настройка адаптивности | `LearnerProfileStore` | Валидированный immutable `LearnerProfile` |
-| `activities.py` | Единая session-only модель незавершённой работы | `ActivityStore` | `LearningActivity[]`; foreground отделён от paused, позиция хранится в session table |
-| `coach.py` | Боковая консультация по текущему заданию | `CoachStore`, `AIClient` | `CoachResponse`; основной activity state неизменен |
-| `learning_cards.py` | Валидация semantic material независимо от доставки | content/AI mapping | Immutable `LearningCardSeed`; неизвестный тип или cue с ответом отклоняется |
-| `background_learning.py` | Связанная с занятием микро-практика | `BackgroundLearningStore`, необязательный `AIClient` | `BackgroundCardDraft`; foreground state неизменен |
-| `menu.py` | Home/settings/progress/reminder/privacy presentation | `MenuStore` и специализированные сервисы | Telegram cards без изменения учебной state machine |
-| `navigation.py` | Единые локализованные переходы Home/Back | instruction language + callback destination | Типовая строка кнопок без скрытой семантики `Назад` |
-| `commands.py` | Канонический каталог публичных slash-команд | instruction language или входной token | Локализованный BotCommand payload и нормализованная команда с поддержкой `@bot` |
-| `workspace.py` | Политика одной текущей карточки | `WorkspaceStore`, `TelegramGateway` | edit текущей либо один безопасный send |
-| `update_dispatcher.py` | Dedupe и нормализация Telegram update | `UpdateStore`, `TelegramGateway`, `UpdateTarget` | Один вызов text/callback handler; failed update доступен для retry |
-| `reminders.py` | Расчёт слотов и атомарная доставка | `ReminderStore`, `ReminderDelivery` | Не более одного assignment на зарезервированный slot |
-| `toolkit.py` | Независимый слой карточек, перевода и тематических тренировок | `ToolkitStore`, `ToolkitDelivery`, `AIClient` | Stateless-перевод либо обычный сохраняемый drill; другие sessions не скрываются |
-| `toolkit_fallback.py` | Детерминированные карточки/topic packs без внешнего AI | Курируемый material + instruction language | Валидный `DrillPack` с теми же invariants |
-| `app.py` | Composition root и orchestration учебной state machine | concrete adapters + application services | Переходы scenario/practice/review/drill |
-| `storage.py` | SQLite schema, migrations и транзакционные операции | вызовы портов | Персистентное состояние и audit events |
+## Контракты и инварианты
 
-Telegram-навигация имеет три непересекающихся слоя. Reply keyboard v6 отвечает
-только за четыре постоянных назначения (`Сегодня`, `Учиться`, `Помощник`,
-`Профиль`). Внутренние форматы выбираются внутри `Учиться`, а `Мои занятия`
-сохраняет параллельную работу. Inline callback относится к действию видимой карточки и при
-необходимости несёт identity объекта. `commands.py` открывает те же верхние
-разделы и служебные команды (`help`, `grammar`, privacy, deletion). `app.py`
-отсекает неизвестные slash-команды и устаревшие callback до маршрутизации
-ответа учебному занятию.
+- Presentation не делает SQL и не рассчитывает учебный результат.
+- AI не является единственным способом завершить flow: есть rule/content
+  fallback.
+- Только foreground activity принимает свободный ответ; остальные занятия
+  сохраняются с позицией.
+- Преподаватель и background card — side-channels: не меняют session id,
+  current step или outcome основной работы.
+- Reply keyboard содержит только постоянные намерения; inline callback всегда
+  относится к видимой карточке и при необходимости содержит identity объекта.
+- Один reminder slot материализует максимум одно задание.
+- Новый учебный формат входит в `Учиться` или `Помощник`; новый верхний раздел
+  требует usability-обоснования.
+- Платёжные ограничения реализуются будущими `EntitlementPolicy` и
+  `UsageMeter`; учебные flows не импортируют цены или billing SDK.
 
-`Слова и смысл` является одним activity-linked use case с двумя discovery links:
-из быстрой практики в `Учиться` и из `Помощника`. Оба callback вызывают один экран
-и один semantic-only selector. Это допустимое перекрёстное обнаружение, а не
-дублирование state: карточка хранит один `background_card_id`, а foreground
-session и position не меняются. Полная карта находится в `docs/MENU_MAP.md`.
+## Следующий технический долг
 
-Все порты находятся в `contracts.py`:
-
-- `TelegramGateway` — send/edit/action/callback acknowledge;
-- `WorkspaceStore` — профиль, workspace state и UI events;
-- `LanguageStore` — профиль, AI-analysis persistence и events;
-- `ProgressStore` — агрегированные учебные evidence;
-- `FeedbackStore` — сохранённые AI analyses;
-- `MenuStore` — профиль, reviews, reminder mode и progress evidence;
-- `ReminderStore` / `ReminderDelivery` — планирование отдельно от materialization;
-- `UpdateStore` / `UpdateTarget` — exactly-once local dispatch отдельно от bot;
-- `ToolkitStore` / `ToolkitDelivery` — генерация инструмента отдельно от общей drill delivery;
-- `LearnerProfileStore` — owner-scoped контекст отдельно от Telegram user state;
-- `ActivityStore` — открытые session projections отдельно от их renderers;
-- `CoachStore` — owner-scoped teacher sessions/exchanges отдельно от mission state;
-- `BackgroundLearningStore` — история типов и source reasons для activity-scoped
-  ротации и selector 60/25/15;
-- `TransportError` — единый recoverable transport failure.
-
-Protocols являются структурными: `Storage` и `TelegramAPI` не наследуют их и
-могут быть заменены test doubles или будущими adapters без изменения сервисов.
-
-## Что намеренно не разделено сейчас
-
-### SQLite repositories
-
-`Storage` пока остаётся одним adapter. Разделение на десяток repository-классов
-поверх одной connection создало бы больше ceremony и усложнило транзакции, не
-дав независимого deployment или второго storage engine. Следующий оправданный
-шаг — вынести schema migrations и типизированные DTO; repositories нужны при
-появлении второго backend либо сложных междоменных транзакций.
-
-### Учебная state machine
-
-В `TutorlaingBot` остаются scenario, practice, review и drill orchestration и
-строковый callback dispatcher. Это главный оставшийся hotspot. Его следует
-делить вертикальными use cases (`ScenarioFlow`, `ReviewFlow`, `DrillFlow`) после
-фиксации transition table и contract tests. Простое перемещение if/elif в новый
-файл не уменьшает связанность.
-
-### AI provider
-
-`AIClient` реализуют `OpenAIClient` (Responses API) и `GeminiClient`;
-`FailoverAIClient` декорирует их без изменения application contracts и
-временно размыкает primary circuit после `AIError`. Общие tutoring prompts и
-schemas сейчас повторно используются через наследование `OpenAIClient` от
-`GeminiClient`. Это прагматичный compatibility layer, но имена providers не
-должны становиться доменной иерархией. Следующий refactor — выделить DTO/schema,
-общий prompted client и два независимых transport adapters, сохранив текущие
-контрактные tests.
-
-## Правила дальнейших изменений
-
-1. Новый use case принимает только минимальный Protocol, а не весь `Storage`.
-2. Presentation не выполняет SQL и не рассчитывает mastery/оценку.
-3. AI никогда не является единственным способом завершить учебный flow.
-4. Один Telegram update либо завершается, либо освобождается для retry.
-5. Один scheduled slot материализует максимум одно задание.
-6. Новый target language добавляется через `ScenarioCatalog` и изолируется в
-   storage queries; UI не ветвится по языку в orchestration.
-7. Любая новая граница получает unit test; критический пользовательский путь —
-   integration test через `TutorlaingBot`.
-8. Экран имеет один главный action; возврат к родителю называет назначение, а
-   необратимое завершение активного flow требует подтверждения.
-9. Вспомогательный инструмент не уничтожает основной learner state: текстовый
-   tool хранит только свой input mode, drill-tool использует один сохраняемый
-   snapshot и атомарный restore. Вложенные drill-tools не создаются.
-10. Параллельные занятия могут храниться одновременно, но входящий свободный
-    текст маршрутизируется только в одно foreground-занятие. Переключение
-    foreground не меняет status остальных открытых sessions.
-
-## Переход к Mission Engine и коммерческим capabilities
-
-Следующий учебный движок строится как application module, а не как новый набор
-веток в `app.py`. `MissionEngine` получает versioned definition, состояние и
-реплику ученика; AI может предложить structured transition, но deterministic
-policy проверяет допустимые дельты, риски и завершение. Telegram отвечает только
-за отображение команды и результата.
-
-Монетизация подключается через будущие `EntitlementPolicy` и `UsageMeter`.
-Учебный use case спрашивает capability, например `voice_rehearsal` или
-`mission_variants`, и не импортирует billing SDK, тарифы или цены. Бесплатная
-полезная учебная петля не зависит от наличия платёжного adapter.
-
-`CoachService` является первым потребителем этого направления. Контекст
-фиксируется при открытии преподавателя и содержит только цель, текущую реплику,
-задание, hint, уровень и языковые настройки. Ответ преподавателя никогда не
-применяется как learner turn. Для операции `hint` application policy допускает
-только смысловой ориентир или короткие chunks; попытка AI вернуть полный ответ
-заменяется локальным fallback и пишется в audit events.
-
-## Следующий технический backlog
-
-1. Описать state/callback transition table и выделить `ScenarioFlow`,
-   `ReviewFlow`, `DrillFlow` без изменения поведения.
-2. Заменить raw `sqlite3.Row` на типизированные profile/evidence DTO на границе
-   application.
-3. Вынести schema migrations из `Storage` и тестировать upgrade с каждой
-   поддерживаемой предыдущей версии.
-4. Типизировать callback actions и learner stages через enum/value objects.
-5. Разделить AI models/port, общий prompt service и OpenAI/Gemini transport
-   adapters без изменения `AIClient` и failover semantics.
-6. Добавить formatter/linter/type-checker в CI после устранения исторических
-   нарушений, без массового изменения продуктового кода одним коммитом.
-
-## Контракт банка упражнений
-
-`ExerciseBank` — application service между генератором и `Storage`. Он знает
-инварианты pack (размер, разнообразие типов, active recall), но не выполняет SQL
-и не вызывает AI. Оркестратор действует в порядке `find_pack → generate/fallback
-→ add_pack → start_drill`.
-
-| Сущность | Ответственность | Срок жизни |
-|---|---|---|
-| `exercise_bank` | Версионированное содержание, scope, источник, качество | Между сессиями |
-| `exercise_tags` | Индексируемые type/skill/level/mode/scenario tags | Вместе с содержанием |
-| `drill_items` | Снимок задания и конкретный ответ в session | Одна попытка |
-| `learner_exercise_stats` | Seen/answer/mastery/next due одного ученика | История ученика |
-
-Граница приватности находится в запросе кандидатов: `global/curated` доступны
-всем при точном совпадении параметров, `user_private` — только владельцу.
-Content hash включает scope и owner, поэтому дедупликация не может случайно
-сделать личное упражнение общим. Старые `drill_items` остаются валидными с
-nullable `exercise_id`. Fingerprint истории входит в `scenario_id` личного pack:
-новая значимая ошибка создаёт новую границу подбора, а случайная перестановка
-курируемого материала — нет. Два показа полного набора разрешают refresh.
-
-## Контракт адаптивной сложности
-
-`AdaptiveDifficultyService` принимает только `AdaptiveDifficultyStore` и
-возвращает объяснимый `DifficultyProposal`. Storage adapter предоставляет
-нормализованные попытки, сохраняет skill snapshots и атомарно разрешает
-proposal. Telegram composition root лишь показывает предложение и передаёт
-явное accept/dismiss; он не рассчитывает пороги.
-
-```text
-drill/review/scenario evidence
-            ↓
-weighted skill snapshots
-            ↓
-conservative threshold rules
-            ↓
-pending proposal ── accept/dismiss callback
-            ↓
-practice_difficulty_offset (-1/0/+1)
-```
-
-`learner_level` и offset намеренно не объединены. `practice_level(user)` —
-единственная функция их композиции, используемая генерацией, оценкой,
-словарными сносками и exercise-bank lookup. Ручная смена профиля сбрасывает
-offset и pending proposal. Границы A0/C1 и уже принятое ненулевое смещение не
-создают новые рекомендации.
-
-Формат exercises подготовлен к следующему selector: response mode и evidence
-weight позволяют не приравнивать узнавание к воспроизведению, variant group —
-не показывать поверхностные дубли, difficulty vector — независимо менять
-языковую сложность, когнитивную операцию и объём опор. Rubric и prerequisites
-зарезервированы как явные данные, а не скрытая логика prompt.
-
-## Re-engagement внутри reminder scheduler
-
-Re-engagement не является вторым scheduler и не имеет отдельной очереди.
-`ReminderScheduler` материализует один due slot в одно из трёх решений:
-
-```text
-активен                       → одно текущее учебное задание
-неактивен, prompt due         → одна мотивирующая карточка
-неактивен, действует cooldown → слот резервируется без доставки
-```
-
-`last_interaction_at` обновляется только application entry points входящего
-text/callback. `last_reengagement_at` записывается после успешной Telegram
-доставки. Поэтому обновления расписания и audit events не маскируют отсутствие.
-Транспортный сбой сохраняет общий retry через пять минут. UI-кнопка вызывает
-существующий `send_scheduled_reminder`, поэтому выбор текущего scenario,
-review, drill или ближайшего задания остаётся в одной state machine.
-## Quest module
-
-Quest Engine разделён на четыре слоя:
-
-- `quest_content.py` — immutable content model, JSON loader и graph validation;
-- `quest_engine.py` — pure transition functions без Telegram, SQL и AI;
-- `Storage` через `QuestStore` — sessions, attempts и compare-current-node write;
-- `TutorlaingBot` — Telegram orchestration и workspace rendering.
-
-Контракт узла допускает `choice`, `free` или `ending`. Domain transition всегда
-возвращает `next_node`, outcome, feedback, points и новый state. Persistence
-принимает переход только если session active и `current_node == expected_node`.
-Это одновременно контракт идемпотентности callback и граница восстановления.
-
-Quest является main activity (`stage=quest`). Toolkit не знает его внутренней
-модели: он сохраняет и возвращает `current_quest` через общий activity snapshot.
-Reminder delivery также не вычисляет переходы, а только рендерит сохранённый узел.
-
-## Telegram message focus and text inbox
-
-`TelegramUpdateDispatcher` передаёт application layer message id входящего
-reply и callback. `TelegramWorkspace.start_new_surface` применяется к глобальной
-reply-навигации, а `focus_message` — к inline callback. Благодаря этому политика
-видимости не зависит от последнего сохранённого message id.
-
-`text_inbox` хранит не более 20 последних свободных фраз пользователя и отделён
-от learning activity. Callback с inbox id проходит owner check; перевод
-делегируется существующему toolkit, standalone check — существующему AI analysis
-contract, grammar — `FeedbackPresenter`. Удаление профиля каскадно удаляет inbox.
+1. Зафиксировать transition table и вынести сценарий, review и drill в
+   отдельные flow-классы без смены поведения.
+2. Ввести типизированные DTO на границе SQLite вместо распространения
+   `sqlite3.Row`.
+3. Реализовать P1 reminder budget/cooldown как отдельный policy-модуль с
+   контрактными тестами.
