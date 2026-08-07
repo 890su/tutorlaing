@@ -30,13 +30,13 @@ Telegram UI использует гибридную навигацию: стаб
 inline-callback. Полный текст вариантов вынесен из кнопок в сообщение. Уровень
 A0–C1 теперь управляет опорами scenario, требованиями AI и сложностью fallback.
 
-Состояние на 2026-08-01:
+Состояние на 2026-08-07:
 
 | Этап | Статус | Подтверждение / открытый gate |
 |---|---|---|
 | 0. Problem discovery | В работе | Сегмент и сценарии сформулированы, но 10–15 интервью ещё не проведены |
 | 1. Concierge | Готов инструмент | Telegram-прототип реализует полный цикл; нужны dogfooding и 5–8 внешних пользователей |
-| 2. Alpha | AI + очередь заданий реализованы; модульная UX-миграция продолжается | Польский/английский target, 4 языка объяснений, OpenAI-first анализ с Gemini failover, history-aware карточки/темы, настраиваемая адаптивная сложность, opt-in/re-engagement напоминания с retry, гибридный Telegram UI, privacy v4 и 159 тестов готовы. Реализованы: добровольный контекст ученика; session-only список незавершённых situation/mission/drill с сохранением позиции и одним явным foreground; связанный диалог с преподавателем; activity-linked background flow с selector 60/25/15; отдельный real-world outcome; AI-проверка свободных ответов миссий; нижняя навигация v5 и единый локализованный каталог slash-команд. В работе: разделение orchestration flow, Mission Engine, новые semantic card types и статический локализованный curated content. Текущая ветка не развёрнута как production; dogfooding и content/AI review открыты. |
+| 2. Alpha | AI + очередь заданий реализованы; модульная UX-миграция продолжается | Польский/английский target, 4 языка объяснений, OpenAI-first анализ с Gemini failover, history-aware карточки/темы, настраиваемая адаптивная сложность, opt-in/re-engagement напоминания с retry, гибридный Telegram UI, privacy v4 и 159 тестов готовы. Реализованы: добровольный контекст ученика; session-only список незавершённых situation/mission/drill с сохранением позиции и одним явным foreground; связанный диалог с преподавателем; activity-linked background flow с selector 60/25/15; отдельный real-world outcome; AI-проверка свободных ответов миссий; нижняя навигация v5 и единый локализованный каталог slash-команд. Commit `ac98eb2` прошёл CI и опубликован в GHCR как `sha-ac98eb2`; VM pull/recreate не подтверждён из-за недоступного SSH. В работе: разделение orchestration flow, Mission Engine, новые semantic card types и статический локализованный curated content. Dogfooding и content/AI review открыты. |
 | 3. Closed beta | Не начат | Нельзя начинать набор когорты до проверки польского контента и alpha-метрик |
 | 4. Paid pilot | Не начат | Требуется подтверждение переноса навыка и возвращаемости |
 

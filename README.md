@@ -414,6 +414,8 @@ fingerprint материала, а два показа одного полног
 - [docs/UX_NAVIGATION.md](./docs/UX_NAVIGATION.md) — информационная архитектура и правила Telegram UI.
 - [docs/DOGFOOD.md](./docs/DOGFOOD.md) — журнал проверки продукта на собственных ситуациях.
 - [deploy/README.md](./deploy/README.md) — контейнерный деплой из GitHub.
+- [deploy/ACCESS.md](./deploy/ACCESS.md) — безопасные маршруты и secret references
+  для `srv-150`, без private keys в репозитории.
 
 ## Локальный запуск
 
@@ -440,8 +442,9 @@ Telegram вида `/help@BotName` обрабатывается так же; не
 ## Текущий статус
 
 Стадия: AI-enabled техническая alpha; текущие изменения не развёрнуты как
-production-релиз. GitHub остаётся источником истины, GHCR — подготовленным
-каналом доставки контейнера. Публичный health, защищённый webhook,
+production-релиз. GitHub остаётся источником истины; commit `ac98eb2` опубликован
+в feature-ветке, CI успешен, GHCR image `sha-ac98eb2` собран. VM ещё не
+подтвердила pull/recreate из-за недоступного SSH. Публичный health, защищённый webhook,
 SQLite-миграции и flow `analysis → variants → translation → cards` ранее
 проверялись на сервере, но технический deploy не считается product gate.
 Scheduler продолжает scenario, practice, review и drill после паузы, отправляет

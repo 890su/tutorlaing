@@ -93,9 +93,11 @@ Telegram-first адаптивный тренер практического яз
   ранее были успешны. Локально проходят 159 тестов, включая hybrid UI, level-aware tasks,
   learner profile, resumable activity projection, teacher side-channel,
   activity-linked background selector 60/25/15, history-aware cards и reminder retry.
-- На VM сохранён Brainless MCP как management bridge. На 2026-08-06 публичный
-  health отвечает HTTP 200, но alias `srv-150` отсутствует в SSH-конфигурации
-  текущей операторской машины и не резолвится; прямой SSH-доступ не подтверждён.
+- Маршруты `srv-150`, SSH user, secret reference и безопасный ACL-wrapper
+  зафиксированы в `deploy/ACCESS.md`. Private key остаётся вне Tutorlaing в
+  secret-source проекта Brainless. На 2026-08-07 public health отвечает HTTP
+  200, но VPN `10.0.0.1` и LAN `192.168.0.150` дают timeout из-за известной
+  нестабильности WireGuard/CGNAT; новый GHCR image ещё не подтверждён на VM.
 
 ## Sources of truth
 

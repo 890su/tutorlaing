@@ -1,5 +1,8 @@
 # Deployment
 
+Server routes, secret references and the ACL-safe connection helper are
+documented in [ACCESS.md](./ACCESS.md). No private key is stored in this repo.
+
 GitHub is the source of truth. The VM only pulls the published container and
 stores runtime data in a named Docker volume.
 
@@ -89,9 +92,10 @@ Tutorlaing volume is included.
 
 Tutorlaing is not treated as a production product. The endpoints below describe
 the previously prepared alpha runtime and are not evidence that the current
-working tree has been deployed. On 2026-08-06 the public health endpoint returned
-HTTP 200. Direct SSH alias `srv-150` was not configured/resolvable on the current
-operator workstation, so container state was not changed or revalidated over SSH.
+working tree has been deployed. On 2026-08-07 the public health endpoint returned
+HTTP 200. Exact SSH routes and key reference were recovered and documented in
+`ACCESS.md`, but both VPN and LAN routes timed out from the current workstation;
+container state was not changed or revalidated over SSH.
 
 - Bot: @brnai_bot
 - Public health: https://brain.sekond.pl/health

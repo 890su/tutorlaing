@@ -471,3 +471,15 @@ Selector реализует 60/25/15 как дефицит целевой дол
 из нерелевантного материала только ради квоты. Автоматическая доставка пока
 остаётся только для `intensive` и `aggressive`; расширение на gentle/normal
 требует проверки opt-out и return-to-task.
+
+## 2026-08-07 — Доступ к VM хранится как secret reference
+
+Tutorlaing хранит только `server_id`, адреса, SSH user, fingerprint и ссылку
+`server/srv-150/ssh-admin890brain`. Private key остаётся в инфраструктурном
+secret-source вне репозитория. `deploy/connect-srv150.ps1` создаёт временную
+копию с закрытым ACL, проверяет ожидаемый fingerprint и удаляет её в `finally`.
+
+Public health не доказывает версию контейнера. Deploy считается завершённым
+только после SSH-команд `compose pull/up`, локального health и проверки логов.
+Известная недоступность WireGuard за CGNAT фиксируется как внешний blocker, а не
+обходится копированием ключа или отключением host-key verification.
