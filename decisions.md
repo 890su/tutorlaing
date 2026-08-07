@@ -483,3 +483,12 @@ Public health не доказывает версию контейнера. Deplo
 только после SSH-команд `compose pull/up`, локального health и проверки логов.
 Известная недоступность WireGuard за CGNAT фиксируется как внешний blocker, а не
 обходится копированием ключа или отключением host-key verification.
+
+## 2026-08-07 — Modular learning image ac98eb2 развёрнут на srv-150
+
+После восстановления WireGuard сервис `tutorlaing` обновлён через существующий
+compose без изменения persistent volume и без воздействия на n8n/Brainless.
+Image сменился с `sha256:99e9f019…` на опубликованный
+`sha256:8d4552bb4b77…`; Docker перешёл в `running healthy`. SQLite сохранила
+существующих пользователей, local/public health вернули `status=ok` и
+`database=ok`, startup logs подтвердили scheduler и webhook без ошибок.

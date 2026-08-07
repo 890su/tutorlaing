@@ -443,8 +443,9 @@ Telegram вида `/help@BotName` обрабатывается так же; не
 
 Стадия: AI-enabled техническая alpha; текущие изменения не развёрнуты как
 production-релиз. GitHub остаётся источником истины; commit `ac98eb2` опубликован
-в feature-ветке, CI успешен, GHCR image `sha-ac98eb2` собран. VM ещё не
-подтвердила pull/recreate из-за недоступного SSH. Публичный health, защищённый webhook,
+в feature-ветке, CI успешен, GHCR image `sha-ac98eb2` собран и 2026-08-07
+развёрнут на VM. Remote digest, Docker health, local/public health и чистые
+стартовые логи подтверждены. Публичный health, защищённый webhook,
 SQLite-миграции и flow `analysis → variants → translation → cards` ранее
 проверялись на сервере, но технический deploy не считается product gate.
 Scheduler продолжает scenario, practice, review и drill после паузы, отправляет

@@ -1285,10 +1285,11 @@ beta; английские квесты добавляются отдельны�
    `coach_exchanges`. В AI передаётся минимальный activity context без Telegram
    identity. `hint` ограничен уровнями помощи 1–2; слишком полный AI-ответ
    отклоняется policy и заменяется локальной смысловой подсказкой.
-7. [~] Commit `ac98eb2` опубликован в GitHub, CI и GHCR publish успешны;
+7. [x] Commit `ac98eb2` опубликован в GitHub, CI и GHCR publish успешны;
    immutable image доступен как `sha-ac98eb2`. Доступы `srv-150` восстановлены
-   как безопасная routing/secret-reference документация в `deploy/ACCESS.md`,
-   но фактический `compose pull/up` ожидает восстановления WireGuard/LAN SSH.
+   как безопасная routing/secret-reference документация в `deploy/ACCESS.md`.
+   После восстановления WireGuard выполнены `compose pull/up`, remote digest,
+   Docker health, local/public health и startup logs подтверждены.
 
 ### P1 — Mission Engine и фоновое обучение
 

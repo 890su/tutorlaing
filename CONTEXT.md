@@ -96,8 +96,10 @@ Telegram-first адаптивный тренер практического яз
 - Маршруты `srv-150`, SSH user, secret reference и безопасный ACL-wrapper
   зафиксированы в `deploy/ACCESS.md`. Private key остаётся вне Tutorlaing в
   secret-source проекта Brainless. На 2026-08-07 public health отвечает HTTP
-  200, но VPN `10.0.0.1` и LAN `192.168.0.150` дают timeout из-за известной
-  нестабильности WireGuard/CGNAT; новый GHCR image ещё не подтверждён на VM.
+  200. После восстановления VPN 2026-08-07 image `sha-ac98eb2` развёрнут на
+  VM; remote digest `8d4552bb…`, Docker `running healthy`, local/public health
+  и отсутствие startup errors подтверждены. WireGuard/CGNAT остаётся
+  потенциально нестабильным каналом для следующих deploy.
 
 ## Sources of truth
 

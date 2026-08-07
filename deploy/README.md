@@ -92,10 +92,10 @@ Tutorlaing volume is included.
 
 Tutorlaing is not treated as a production product. The endpoints below describe
 the previously prepared alpha runtime and are not evidence that the current
-working tree has been deployed. On 2026-08-07 the public health endpoint returned
-HTTP 200. Exact SSH routes and key reference were recovered and documented in
-`ACCESS.md`, but both VPN and LAN routes timed out from the current workstation;
-container state was not changed or revalidated over SSH.
+working tree has been deployed. On 2026-08-07 WireGuard SSH recovered and image
+`sha-ac98eb2` was pulled and recreated. Remote digest, local/public health,
+Docker health and logs were checked; details and exact evidence are in
+`ACCESS.md`.
 
 - Bot: @brnai_bot
 - Public health: https://brain.sekond.pl/health

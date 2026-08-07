@@ -89,16 +89,19 @@ docker compose logs --tail 80 tutorlaing
 Перед обновлением нужно проверить свободное место. После обновления обязательны
 health, отсутствие migration/Telegram ошибок в логах и внешний health.
 
-## Текущее состояние канала
+## Текущее состояние канала и deploy
 
 На 2026-08-07:
 
-- public health отвечает HTTP 200;
-- `10.0.0.1:22` и `192.168.0.150:22` дают timeout с текущей машины;
-- WireGuard interface `890ai_brainless_fp` поднят, client address `10.0.0.4`,
-  но handshake не восстанавливается;
-- известная причина — нестабильная UDP mapping за CGNAT;
-- новый контейнер опубликован в GHCR, но сервер ещё не подтвердил pull/recreate.
+- WireGuard `10.0.0.1:22` восстановился; wrapper вернул hostname `890brain`;
+- 2026-08-07 сервис `tutorlaing` обновлён с image
+  `sha256:99e9f019…` на `sha256:8d4552bb…`;
+- Docker state после recreate: `running healthy`;
+- local и public health отвечают `status=ok`, `database=ok`;
+- существующая SQLite data сохранена; стартовые логи не содержат ошибок;
+- scheduler и Telegram webhook запустились штатно.
 
-Долговременное исправление: Tailscale/NetBird либо Cloudflare Access SSH.
-До него public health не является доказательством, что новая версия развёрнута.
+WireGuard за CGNAT остаётся потенциально нестабильным. Долговременное исправление:
+Tailscale/NetBird либо Cloudflare Access SSH. Для каждого следующего deploy
+версия по-прежнему подтверждается remote image digest, local health и логами,
+а не одним public health.
