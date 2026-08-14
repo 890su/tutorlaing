@@ -17,3 +17,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 tutorlaing = ["content/*.json"]
+"tutorlaing.games" = ["*.html", "*.css", "*.js"]

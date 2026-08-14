@@ -7,6 +7,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
+from .games_web import GamesWebApp
 from .storage import Storage
 
 
@@ -19,9 +20,20 @@ def start_health_server(
     port: int,
     webhook_handler: Callable[[dict[str, Any]], None] | None = None,
     webhook_secret: str = "",
+    games_web_app: GamesWebApp | None = None,
 ) -> tuple[ThreadingHTTPServer, threading.Thread]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            if games_web_app is not None:
+                game_response = games_web_app.get(self.path)
+                if game_response is not None:
+                    self._send_response(
+                        game_response.status,
+                        game_response.body,
+                        game_response.content_type,
+                        game_response.headers,
+                    )
+                    return
             if self.path not in {"/health", "/healthz"}:
                 self.send_response(404)
                 self.end_headers()
@@ -40,6 +52,28 @@ def start_health_server(
             self.wfile.write(body)
 
         def do_POST(self) -> None:  # noqa: N802
+            if games_web_app is not None and self.path.startswith("/games/api/"):
+                try:
+                    content_length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    content_length = 0
+                if content_length < 0 or content_length > 100_000:
+                    self.send_response(400)
+                    self.end_headers()
+                    return
+                game_response = games_web_app.post(
+                    self.path,
+                    self.rfile.read(content_length),
+                    self.headers.get("X-Telegram-Init-Data", ""),
+                )
+                if game_response is not None:
+                    self._send_response(
+                        game_response.status,
+                        game_response.body,
+                        game_response.content_type,
+                        game_response.headers,
+                    )
+                    return
             if self.path != "/telegram/webhook" or webhook_handler is None:
                 self.send_response(404)
                 self.end_headers()
@@ -101,6 +135,22 @@ def start_health_server(
                 return
             self.send_response(200)
             self.end_headers()
+
+        def _send_response(
+            self,
+            status: int,
+            body: bytes,
+            content_type: str,
+            headers: tuple[tuple[str, str], ...] = (),
+        ) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            for name, value in headers:
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(body)
 
         def log_message(self, format: str, *args: Any) -> None:
             return

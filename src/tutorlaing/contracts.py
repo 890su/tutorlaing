@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 
-Keyboard = list[list[dict[str, str]]]
+Keyboard = list[list[dict[str, Any]]]
 ReplyKeyboard = list[list[str]]
 
 

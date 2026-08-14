@@ -20,6 +20,7 @@ class ConfigTests(unittest.TestCase):
             with patch.dict(os.environ, environment, clear=True):
                 settings = Settings.from_env()
             self.assertEqual("safe-test-secret", settings.telegram_webhook_secret)
+            self.assertEqual("https://example.com/games", settings.mini_app_url)
 
     def test_partial_webhook_configuration_is_rejected(self) -> None:
         environment = {

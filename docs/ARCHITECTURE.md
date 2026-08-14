@@ -1,6 +1,6 @@
 # Архитектура Tutorlaing
 
-Актуально на 2026-08-07.
+Актуально на 2026-08-14.
 
 ## Границы
 
@@ -37,6 +37,8 @@ flowchart LR
 | `coach.py` | side-channel преподавателя, не меняющий основной flow |
 | `learning_cards.py` / `background_learning.py` | валидируемый semantic content и связанная микро-практика |
 | `hourly_cards.py` | генерация и fallback batch-а почасовых карточек; состояние, scheduling и mastery остаются в storage/app |
+| `game_service.py` | реестр правил игр, приглашения, очередность ходов и owner-scoped проекция состояния |
+| `games_web.py` / `games/` | проверка Telegram Mini App `initData`, JSON API и статический мобильный игровой стол |
 | `toolkit.py` | работа со своей фразой, переводные карточки и тематический drill |
 | `reminders.py` | слоты, quiet hours, retry и доставка не более одного задания |
 | `progress_service.py` / `learner_profile.py` | evidence-based прогресс и добровольный контекст |
@@ -58,6 +60,10 @@ flowchart LR
   требует usability-обоснования.
 - Платёжные ограничения реализуются будущими `EntitlementPolicy` и
   `UsageMeter`; учебные flows не импортируют цены или billing SDK.
+- Mini App не доверяет `initDataUnsafe`: backend проверяет HMAC `initData`,
+  срок сессии и alpha-access до любой операции с игрой.
+- Игра не использует учебный foreground: участник, версия игры и текущий ход
+  проверяются SQLite-транзакцией перед записью.
 
 ## Следующий технический долг
 

@@ -155,6 +155,37 @@ class Storage:
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS game_profiles (
+            chat_id INTEGER PRIMARY KEY REFERENCES users(chat_id) ON DELETE CASCADE,
+            nickname TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS games (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending', 'active', 'finished', 'declined', 'cancelled')),
+            host_chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            guest_chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            turn_chat_id INTEGER REFERENCES users(chat_id) ON DELETE SET NULL,
+            winner_chat_id INTEGER REFERENCES users(chat_id) ON DELETE SET NULL,
+            state_json TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            finished_at TEXT,
+            CHECK(host_chat_id != guest_chat_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS game_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+            actor_chat_id INTEGER REFERENCES users(chat_id) ON DELETE SET NULL,
+            event_type TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY,
             chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
@@ -409,6 +440,10 @@ class Storage:
             ON coach_exchanges(coach_session_id, id);
         CREATE INDEX IF NOT EXISTS idx_hourly_cards_next
             ON hourly_cards(chat_id, target_language, status, review_due_at, id);
+        CREATE INDEX IF NOT EXISTS idx_games_participant
+            ON games(host_chat_id, guest_chat_id, status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_game_events_game
+            ON game_events(game_id, id);
         CREATE INDEX IF NOT EXISTS idx_background_cards_activity
             ON background_cards(chat_id, activity_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
@@ -1142,6 +1177,172 @@ class Storage:
                 "UPDATE users SET hourly_card_id = NULL, updated_at = ? WHERE chat_id = ?",
                 (now, chat_id),
             )
+
+    def set_game_nickname(self, chat_id: int, nickname: str) -> sqlite3.Row:
+        """Create or update the discoverable nickname used only by game invitations."""
+
+        current = utc_now()
+        with self._lock, self._connection:
+            try:
+                self._connection.execute(
+                    """
+                    INSERT INTO game_profiles(chat_id, nickname, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(chat_id) DO UPDATE SET nickname = excluded.nickname,
+                        updated_at = excluded.updated_at
+                    """,
+                    (chat_id, nickname, current),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Этот игровой ник уже занят.") from exc
+            row = self._connection.execute(
+                "SELECT * FROM game_profiles WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        self.event(chat_id, "game_nickname_set", {"nickname": nickname})
+        assert row is not None
+        return row
+
+    def game_profile(self, chat_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT * FROM game_profiles WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+
+    def game_profile_by_nickname(self, nickname: str) -> sqlite3.Row | None:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT * FROM game_profiles WHERE nickname = ? COLLATE NOCASE",
+                (nickname,),
+            ).fetchone()
+
+    def create_game_invitation(
+        self,
+        kind: str,
+        host_chat_id: int,
+        guest_chat_id: int,
+        state: dict[str, Any],
+    ) -> sqlite3.Row:
+        game_id = uuid.uuid4().hex
+        current = utc_now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO games(
+                    id, kind, status, host_chat_id, guest_chat_id, state_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
+                """,
+                (
+                    game_id,
+                    kind,
+                    host_chat_id,
+                    guest_chat_id,
+                    json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                    current,
+                    current,
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO game_events(game_id, actor_chat_id, event_type, payload_json, created_at)
+                VALUES (?, ?, 'invited', '{}', ?)
+                """,
+                (game_id, host_chat_id, current),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM games WHERE id = ?", (game_id,)
+            ).fetchone()
+        self.event(host_chat_id, "game_invited", {"game_id": game_id, "kind": kind})
+        assert row is not None
+        return row
+
+    def game_for_player(self, game_id: str, chat_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT games.*, host.nickname AS host_nickname,
+                       guest.nickname AS guest_nickname
+                FROM games
+                LEFT JOIN game_profiles AS host ON host.chat_id = games.host_chat_id
+                LEFT JOIN game_profiles AS guest ON guest.chat_id = games.guest_chat_id
+                WHERE games.id = ? AND (games.host_chat_id = ? OR games.guest_chat_id = ?)
+                """,
+                (game_id, chat_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Game not found")
+        return row
+
+    def games_for_player(self, chat_id: int) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._connection.execute(
+                """
+                SELECT games.*, host.nickname AS host_nickname,
+                       guest.nickname AS guest_nickname
+                FROM games
+                LEFT JOIN game_profiles AS host ON host.chat_id = games.host_chat_id
+                LEFT JOIN game_profiles AS guest ON guest.chat_id = games.guest_chat_id
+                WHERE games.host_chat_id = ? OR games.guest_chat_id = ?
+                ORDER BY CASE games.status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+                         games.updated_at DESC
+                LIMIT 20
+                """,
+                (chat_id, chat_id),
+            ).fetchall()
+
+    def update_game(
+        self,
+        game_id: str,
+        actor_chat_id: int,
+        expected_version: int,
+        *,
+        status: str,
+        state: dict[str, Any],
+        turn_chat_id: int | None,
+        winner_chat_id: int | None = None,
+        event_type: str,
+        event_payload: dict[str, Any] | None = None,
+    ) -> sqlite3.Row | None:
+        current = utc_now()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE games
+                SET status = ?, state_json = ?, turn_chat_id = ?, winner_chat_id = ?,
+                    version = version + 1, updated_at = ?,
+                    finished_at = CASE WHEN ? = 'finished' THEN ? ELSE finished_at END
+                WHERE id = ? AND version = ?
+                  AND (host_chat_id = ? OR guest_chat_id = ?)
+                """,
+                (
+                    status,
+                    json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                    turn_chat_id,
+                    winner_chat_id,
+                    current,
+                    status,
+                    current,
+                    game_id,
+                    expected_version,
+                    actor_chat_id,
+                    actor_chat_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+            self._connection.execute(
+                """
+                INSERT INTO game_events(game_id, actor_chat_id, event_type, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    game_id,
+                    actor_chat_id,
+                    event_type,
+                    json.dumps(event_payload or {}, ensure_ascii=False, separators=(",", ":")),
+                    current,
+                ),
+            )
+        return self.game_for_player(game_id, actor_chat_id)
 
     def set_user_state(self, chat_id: int, **values: Any) -> None:
         allowed = {

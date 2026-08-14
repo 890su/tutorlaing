@@ -6,6 +6,7 @@ import threading
 
 from .app import TutorlaingBot
 from .config import Settings
+from .games_web import GamesWebApp
 from .health import start_health_server
 from .reminders import ReminderScheduler
 from .storage import Storage
@@ -24,6 +25,25 @@ def main() -> None:
         bot, storage, interval=settings.reminder_scan_seconds
     )
     reminder_scheduler.start()
+    games_web_app = GamesWebApp(
+        storage,
+        settings.telegram_bot_token,
+        settings.allowed_chat_ids,
+        notify=lambda chat_id, text: bot.telegram.send_message(
+            chat_id,
+            text,
+            [
+                [
+                    {
+                        "text": "🎮 Открыть игры",
+                        "web_app": {"url": settings.mini_app_url},
+                    }
+                ]
+            ]
+            if settings.mini_app_url
+            else None,
+        ),
+    )
     webhook_mode = bool(settings.telegram_webhook_url)
     health_server, _ = start_health_server(
         storage,
@@ -31,6 +51,7 @@ def main() -> None:
         settings.health_port,
         webhook_handler=bot.handle_update if webhook_mode else None,
         webhook_secret=settings.telegram_webhook_secret,
+        games_web_app=games_web_app,
     )
     stopped = threading.Event()
 

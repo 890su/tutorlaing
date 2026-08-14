@@ -119,6 +119,7 @@ class TutorlaingBot:
             self,
             self.telegram,
             self.exercise_bank,
+            settings.mini_app_url,
         )
         self.offset = 0
         self.running = True
@@ -142,6 +143,23 @@ class TutorlaingBot:
     def is_allowed(self, chat_id: int) -> bool:
         allowed = self.settings.allowed_chat_ids
         return allowed is None or chat_id in allowed
+
+    def show_games(self, chat_id: int) -> None:
+        if not self.settings.mini_app_url:
+            self._notice(chat_id, self._t(chat_id, "games.unavailable"))
+            return
+        self.telegram.send_message(
+            chat_id,
+            card(self._t(chat_id, "games.title"), self._t(chat_id, "games.summary")),
+            [
+                [
+                    {
+                        "text": self._t(chat_id, "games.open"),
+                        "web_app": {"url": self.settings.mini_app_url},
+                    }
+                ]
+            ],
+        )
 
     def _scenarios_for_user(self, user: Any) -> dict[str, Scenario]:
         return self.catalog.for_user(user)
@@ -3179,6 +3197,9 @@ class TutorlaingBot:
             return
         if command == "/tools":
             self.toolkit.show_menu(chat_id)
+            return
+        if command == "/games":
+            self.show_games(chat_id)
             return
         if command == "/help":
             self.show_help(chat_id)

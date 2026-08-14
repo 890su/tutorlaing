@@ -5,6 +5,8 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+from tutorlaing.games_web import GamesWebApp
+from tutorlaing.privacy import CONSENT_VERSION
 from tutorlaing.health import start_health_server
 from tutorlaing.storage import Storage
 
@@ -95,6 +97,38 @@ class HealthTests(unittest.TestCase):
                 )
                 with urllib.request.urlopen(request, timeout=2) as response:
                     self.assertEqual(200, response.status)
+            finally:
+                server.shutdown()
+                server.server_close()
+                storage.close()
+
+    def test_games_mini_app_is_served_without_exposing_the_api(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage = Storage(Path(temp_dir) / "games.sqlite3")
+            storage.ensure_user(1, "Learner")
+            storage.accept_consent(1, CONSENT_VERSION)
+            server, _ = start_health_server(
+                storage,
+                "127.0.0.1",
+                0,
+                games_web_app=GamesWebApp(storage, "test-token"),
+            )
+            try:
+                port = server.server_address[1]
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/games", timeout=2
+                ) as response:
+                    self.assertEqual(200, response.status)
+                    self.assertIn("text/html", response.headers["Content-Type"])
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/games/api/state",
+                    data=b"{}",
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                )
+                with self.assertRaises(urllib.error.HTTPError) as context:
+                    urllib.request.urlopen(request, timeout=2)
+                self.assertEqual(403, context.exception.code)
             finally:
                 server.shutdown()
                 server.server_close()

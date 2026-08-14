@@ -83,6 +83,7 @@ class PracticeToolkit:
         delivery: ToolkitDelivery,
         telegram: TelegramGateway,
         exercise_bank: ExerciseBank | None = None,
+        games_url: str = "",
     ):
         self.store = store
         self.workspace = workspace
@@ -91,6 +92,7 @@ class PracticeToolkit:
         self.delivery = delivery
         self.telegram = telegram
         self.exercise_bank = exercise_bank or ExerciseBank(store)
+        self.games_url = games_url
 
     def show_menu(self, chat_id: int) -> None:
         user = self.store.get_user(chat_id)
@@ -145,6 +147,18 @@ class PracticeToolkit:
                     "callback_data": "toolkit:topics",
                 }
             ],
+            *(
+                [
+                    [
+                        {
+                            "text": tr(language, "games.open"),
+                            "web_app": {"url": self.games_url},
+                        }
+                    ]
+                ]
+                if self.games_url
+                else []
+            ),
             home_row(language),
         ]
         self._prepend_activity_return(keyboard, user, language)

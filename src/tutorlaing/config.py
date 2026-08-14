@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 
 def _parse_chat_ids(raw: str) -> frozenset[int] | None:
@@ -51,6 +52,7 @@ class Settings:
     ai_timeout: int = 45
     ai_failover_cooldown: int = 300
     reminder_scan_seconds: int = 60
+    mini_app_url: str = ""
 
     @property
     def ai_enabled(self) -> bool:
@@ -100,6 +102,15 @@ class Settings:
         if reasoning_effort not in {"none", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError("OPENAI_REASONING_EFFORT is not supported")
 
+        configured_mini_app_url = os.environ.get("MINI_APP_URL", "").strip()
+        if configured_mini_app_url and not configured_mini_app_url.startswith("https://"):
+            raise ValueError("MINI_APP_URL must use https://")
+        if not configured_mini_app_url and webhook_url:
+            webhook_parts = urlsplit(webhook_url)
+            configured_mini_app_url = urlunsplit(
+                (webhook_parts.scheme, webhook_parts.netloc, "/games", "", "")
+            )
+
         return cls(
             telegram_bot_token=token,
             allowed_chat_ids=_parse_chat_ids(
@@ -126,4 +137,5 @@ class Settings:
             reminder_scan_seconds=max(
                 15, min(3600, int(os.environ.get("REMINDER_SCAN_SECONDS", "60")))
             ),
+            mini_app_url=configured_mini_app_url,
         )
