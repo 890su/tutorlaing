@@ -598,6 +598,14 @@ GHCR image `sha-a4fbd45` опубликован с digest
 Startup logs подтвердили scheduler и webhook без ошибки. Persistent volume и
 сторонние сервисы не изменялись.
 
+## 2026-08-14 — Webhook recovery 634c862 развёрнут на srv-150
+
+GHCR image `sha-634c862` опубликован с digest
+`sha256:0afce3a51b5d63e55458d33771c921b14ac83968b3ad0ddcc899255e41c3ea09`.
+На VM обновлён только сервис `tutorlaing` через `docker compose pull/up
+--no-deps`; container healthy, local и public health вернули `status=ok`,
+`database=ok`. Очередь Telegram webhook после обновления: `0`.
+
 ## 2026-08-07 — Semantic practice начинается с выбранного формата
 
 Экран `Синонимы и смысл фраз · текущая тема` показывает отдельные кнопки для
