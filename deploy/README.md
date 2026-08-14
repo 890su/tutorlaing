@@ -1,6 +1,6 @@
 # Deployment
 
-Актуально на 2026-08-07. GitHub публикует image в GHCR; VM только скачивает
+Актуально на 2026-08-14. GitHub публикует image в GHCR; VM только скачивает
 его и хранит SQLite в persistent volume. Private keys и `.env` в Git не
 хранятся.
 
@@ -32,7 +32,10 @@ docker compose logs --tail 80 tutorlaing
 
 Deploy считается подтверждённым только после remote image digest, local health
 и проверки логов. Один public health не доказывает, что на VM работает новая
-версия. Последняя подтверждённая версия: `sha-a4fbd45`.
+версия. Последняя подтверждённая версия: `sha-634c862`
+(`sha256:0afce3a51b5d…`). Образ `sha-a0771ee` опубликован, но ещё не считается
+развёрнутым: для его подтверждения нужны SSH, remote digest, local health и
+логи.
 
 ## Rollback
 
