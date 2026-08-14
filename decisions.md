@@ -643,6 +643,15 @@ container healthy, local и public health вернули `status=ok`, `database=
 Публичный игровой экран `/games` ответил HTTP 200, а игровой API без подписанного
 Telegram `initData` — HTTP 403. Persistent volume и сторонние сервисы не менялись.
 
+## 2026-08-14 — Simplified game invitations b0bc96c развёрнуты на srv-150
+
+GHCR image `sha-b0bc96c` опубликован с digest
+`sha256:0e61d60078679fc26d0fb9b27f62e00122d55a7f49dd47e7e03dea3553201591`.
+На VM обновлён только `tutorlaing` через `docker compose pull/up --no-deps`;
+container healthy, local и public health вернули `status=ok`, `database=ok`.
+Публичный `/games/app.js` подтвердил новый поиск по Telegram `@username` и
+ссылочное приглашение; API игры без Telegram `initData` вернул HTTP 403.
+
 ## 2026-08-07 — Semantic practice начинается с выбранного формата
 
 Экран `Синонимы и смысл фраз · текущая тема` показывает отдельные кнопки для
