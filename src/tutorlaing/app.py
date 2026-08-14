@@ -779,7 +779,13 @@ class TutorlaingBot:
             chat_id,
             card(
                 self._t(chat_id, "hourly.title"),
-                f"{kind}\n\n{row['cue']}",
+                self._t(
+                    chat_id,
+                    "hourly.card_body",
+                    kind=kind,
+                    cue=str(row["cue"]),
+                    answer=str(row["answer"]),
+                ),
             ),
             [
                 [

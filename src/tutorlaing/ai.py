@@ -1065,7 +1065,7 @@ class GeminiClient:
                     "learner_context": material,
                     "requirements": [
                         f"Create exactly {HOURLY_CARD_BATCH_SIZE} cards: two new useful words, two synonym/alternative phrase cards, and two frequent practical phrases.",
-                        "Each cue is a brief active-recall question in explanation_language; it must not contain the full answer or an accepted answer.",
+                        "Each cue is a short everyday meaning or situation in explanation_language, not a question. It must not contain the full answer or an accepted answer.",
                         "answer and accepted_answers are in target_language. Accept only meaning-preserving natural variants.",
                         "details is in explanation_language, briefly showing the answer, its use and one realistic context.",
                         "Make cards safe, neutral and immediately useful in daily life. Avoid legal, medical or financial advice and do not invent facts.",

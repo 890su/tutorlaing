@@ -421,6 +421,8 @@ class AppFlowTests(unittest.TestCase):
         first = self.telegram.messages[-1]
         callbacks = [button["callback_data"] for row in first["keyboard"] for button in row]
         self.assertIn("КАРТОЧКА НА МИНУТУ", first["text"])
+        self.assertIn("→", first["text"])
+        self.assertIn("отвечать в чат не нужно", first["text"])
         self.assertTrue(any(value.startswith("hourly:know:") for value in callbacks))
         self.assertTrue(any(value.startswith("hourly:details:") for value in callbacks))
         self.assertTrue(any(value.startswith("hourly:next:") for value in callbacks))
