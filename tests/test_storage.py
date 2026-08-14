@@ -38,6 +38,42 @@ class StorageTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.storage.get_user(42)
 
+    def test_hourly_card_requires_two_successful_checks_before_mastery(self) -> None:
+        chat_id = 77
+        now = datetime(2026, 8, 14, 8, 0, tzinfo=timezone.utc)
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.save_hourly_cards(
+            chat_id,
+            target_language="pl",
+            instruction_language="ru",
+            cards=[
+                {
+                    "kind": "word",
+                    "cue": "Как по-польски «чек»?",
+                    "answer": "paragon",
+                    "accepted_answers": ["paragon"],
+                    "details": "Paragon — чек из магазина.",
+                }
+            ],
+            provider="test",
+            model="test",
+        )
+        card = self.storage.next_hourly_card(chat_id, now)
+        self.assertEqual("shown", card["status"])
+        self.storage.mark_hourly_card_known(chat_id, int(card["id"]), now)
+        due = self.storage.next_hourly_card(chat_id, now + timedelta(hours=1))
+        self.assertEqual("check_due", due["status"])
+
+        self.storage.begin_hourly_card_check(chat_id, int(due["id"]))
+        self.assertFalse(self.storage.answer_hourly_card_check(chat_id, int(due["id"]), 1.0, now + timedelta(hours=1)))
+        self.assertEqual("check_due", self.storage.hourly_card(chat_id, int(due["id"]))["status"])
+
+        due = self.storage.next_hourly_card(chat_id, now + timedelta(days=1, hours=1))
+        self.storage.begin_hourly_card_check(chat_id, int(due["id"]))
+        self.assertTrue(self.storage.answer_hourly_card_check(chat_id, int(due["id"]), 1.0, now + timedelta(days=1, hours=1)))
+        self.assertEqual("mastered", self.storage.hourly_card(chat_id, int(due["id"]))["status"])
+        self.assertIsNone(self.storage.next_hourly_card(chat_id, now + timedelta(days=2)))
+
     def test_health_reports_database_state(self) -> None:
         self.storage.ensure_user(1)
         self.assertEqual({"database": "ok", "users": 1}, self.storage.health())

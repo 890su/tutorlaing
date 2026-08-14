@@ -49,6 +49,7 @@ class Storage:
             coach_session_id TEXT,
             coach_input_mode TEXT,
             background_card_id INTEGER,
+            hourly_card_id INTEGER,
             pending_assignment TEXT,
             workspace_message_id INTEGER,
             reply_keyboard_version TEXT,
@@ -130,6 +131,28 @@ class Storage:
             score REAL,
             created_at TEXT NOT NULL,
             answered_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS hourly_cards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            target_language TEXT NOT NULL,
+            instruction_language TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('word', 'synonym', 'phrase')),
+            cue TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            accepted_answers_json TEXT NOT NULL,
+            details TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new'
+                CHECK(status IN ('new', 'shown', 'check_due', 'checking', 'learning', 'mastered', 'skipped')),
+            check_count INTEGER NOT NULL DEFAULT 0,
+            review_due_at TEXT,
+            shown_at TEXT,
+            known_at TEXT,
+            mastered_at TEXT,
+            provider TEXT NOT NULL DEFAULT '',
+            model TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS sessions (
@@ -384,6 +407,8 @@ class Storage:
             ON coach_sessions(chat_id, status, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_coach_exchanges_session
             ON coach_exchanges(coach_session_id, id);
+        CREATE INDEX IF NOT EXISTS idx_hourly_cards_next
+            ON hourly_cards(chat_id, target_language, status, review_due_at, id);
         CREATE INDEX IF NOT EXISTS idx_background_cards_activity
             ON background_cards(chat_id, activity_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
@@ -419,6 +444,7 @@ class Storage:
             self._ensure_column("users", "coach_session_id", "TEXT")
             self._ensure_column("users", "coach_input_mode", "TEXT")
             self._ensure_column("users", "background_card_id", "INTEGER")
+            self._ensure_column("users", "hourly_card_id", "INTEGER")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column("users", "reply_keyboard_version", "TEXT")
@@ -879,6 +905,191 @@ class Storage:
                 (now, chat_id),
             )
 
+    def save_hourly_cards(
+        self,
+        chat_id: int,
+        *,
+        target_language: str,
+        instruction_language: str,
+        cards: list[dict[str, Any]],
+        provider: str,
+        model: str,
+    ) -> list[int]:
+        """Persist a generated batch once; delivery never regenerates its cards."""
+
+        now = utc_now()
+        ids: list[int] = []
+        with self._lock, self._connection:
+            for card in cards:
+                cursor = self._connection.execute(
+                    """
+                    INSERT INTO hourly_cards(
+                        chat_id, target_language, instruction_language, kind, cue,
+                        answer, accepted_answers_json, details, provider, model, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        chat_id,
+                        target_language,
+                        instruction_language,
+                        card["kind"],
+                        card["cue"],
+                        card["answer"],
+                        json.dumps(card["accepted_answers"], ensure_ascii=False),
+                        card["details"],
+                        provider,
+                        model,
+                        now,
+                    ),
+                )
+                ids.append(int(cursor.lastrowid))
+        self.event(chat_id, "hourly_cards_generated", {"count": len(ids), "provider": provider})
+        return ids
+
+    def recent_hourly_card_answers(self, chat_id: int, limit: int = 24) -> list[str]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT answer FROM hourly_cards WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+                (chat_id, max(1, min(100, limit))),
+            ).fetchall()
+        return [str(row["answer"]) for row in rows]
+
+    def next_hourly_card(self, chat_id: int, now: datetime | None = None) -> sqlite3.Row | None:
+        current = (now or datetime.now(timezone.utc)).isoformat()
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT * FROM hourly_cards
+                WHERE chat_id = ?
+                  AND ((status = 'check_due' AND review_due_at <= ?)
+                       OR status IN ('new', 'shown', 'learning'))
+                ORDER BY CASE WHEN status = 'check_due' THEN 0
+                              WHEN status = 'learning' THEN 1
+                              WHEN status = 'new' THEN 2 ELSE 3 END,
+                         id ASC
+                LIMIT 1
+                """,
+                (chat_id, current),
+            ).fetchone()
+            if row is not None and row["status"] == "new":
+                self._connection.execute(
+                    "UPDATE hourly_cards SET status = 'shown', shown_at = ? WHERE id = ?",
+                    (current, int(row["id"])),
+                )
+                row = self._connection.execute(
+                    "SELECT * FROM hourly_cards WHERE id = ?", (int(row["id"]),)
+                ).fetchone()
+        return row
+
+    def hourly_card(self, chat_id: int, card_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM hourly_cards WHERE id = ? AND chat_id = ?",
+                (card_id, chat_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Hourly card not found: {card_id}")
+        return row
+
+    def mark_hourly_card_known(
+        self, chat_id: int, card_id: int, now: datetime | None = None
+    ) -> None:
+        current = now or datetime.now(timezone.utc)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE hourly_cards SET status = 'check_due', known_at = ?,
+                    review_due_at = ?
+                WHERE id = ? AND chat_id = ? AND status IN ('new', 'shown', 'learning')
+                """,
+                (current.isoformat(), (current + timedelta(hours=1)).isoformat(), card_id, chat_id),
+            )
+        if cursor.rowcount != 1:
+            raise KeyError(f"Hourly card cannot be queued: {card_id}")
+        self.event(chat_id, "hourly_card_known", {"card_id": card_id})
+
+    def skip_hourly_card(self, chat_id: int, card_id: int) -> None:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                UPDATE hourly_cards SET status = 'skipped'
+                WHERE id = ? AND chat_id = ? AND status IN ('new', 'shown', 'learning')
+                """,
+                (card_id, chat_id),
+            )
+        self.event(chat_id, "hourly_card_skipped", {"card_id": card_id})
+
+    def begin_hourly_card_check(self, chat_id: int, card_id: int) -> sqlite3.Row:
+        now = utc_now()
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE hourly_cards SET status = 'checking'
+                WHERE id = ? AND chat_id = ? AND status = 'check_due'
+                """,
+                (card_id, chat_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Hourly card is not due for a check: {card_id}")
+            self._connection.execute(
+                "UPDATE users SET hourly_card_id = ?, updated_at = ? WHERE chat_id = ?",
+                (card_id, now, chat_id),
+            )
+        return self.hourly_card(chat_id, card_id)
+
+    def answer_hourly_card_check(
+        self,
+        chat_id: int,
+        card_id: int,
+        score: float,
+        now: datetime | None = None,
+    ) -> bool:
+        """Return whether the card is mastered after this answer."""
+
+        current = now or datetime.now(timezone.utc)
+        passed = score >= 0.8
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT check_count FROM hourly_cards WHERE id = ? AND chat_id = ? AND status = 'checking'",
+                (card_id, chat_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Hourly card check is not pending: {card_id}")
+            checks = int(row["check_count"]) + 1 if passed else int(row["check_count"])
+            mastered = passed and checks >= 2
+            status = "mastered" if mastered else "check_due" if passed else "learning"
+            due_at = None if mastered else (current + timedelta(days=1)).isoformat() if passed else current.isoformat()
+            self._connection.execute(
+                """
+                UPDATE hourly_cards SET status = ?, check_count = ?, review_due_at = ?,
+                    mastered_at = ? WHERE id = ? AND chat_id = ?
+                """,
+                (status, checks, due_at, current.isoformat() if mastered else None, card_id, chat_id),
+            )
+            self._connection.execute(
+                "UPDATE users SET hourly_card_id = NULL, updated_at = ? WHERE chat_id = ? AND hourly_card_id = ?",
+                (current.isoformat(), chat_id, card_id),
+            )
+        self.event(chat_id, "hourly_card_checked", {"card_id": card_id, "score": score, "mastered": mastered})
+        return mastered
+
+    def dismiss_hourly_card_check(self, chat_id: int) -> None:
+        now = utc_now()
+        with self._lock, self._connection:
+            user = self._connection.execute(
+                "SELECT hourly_card_id FROM users WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+            if user is None or not user["hourly_card_id"]:
+                return
+            self._connection.execute(
+                "UPDATE hourly_cards SET status = 'check_due' WHERE id = ? AND chat_id = ? AND status = 'checking'",
+                (int(user["hourly_card_id"]), chat_id),
+            )
+            self._connection.execute(
+                "UPDATE users SET hourly_card_id = NULL, updated_at = ? WHERE chat_id = ?",
+                (now, chat_id),
+            )
+
     def set_user_state(self, chat_id: int, **values: Any) -> None:
         allowed = {
             "stage",
@@ -893,6 +1104,7 @@ class Storage:
             "coach_session_id",
             "coach_input_mode",
             "background_card_id",
+            "hourly_card_id",
             "pending_assignment",
             "workspace_message_id",
             "reply_keyboard_version",
@@ -2048,7 +2260,7 @@ class Storage:
     def set_reminder_mode(
         self, chat_id: int, mode: str, next_at: datetime | None
     ) -> None:
-        if mode not in {"off", "gentle", "normal", "intensive", "aggressive"}:
+        if mode not in {"off", "gentle", "normal", "intensive", "aggressive", "hourly"}:
             raise ValueError(f"Unsupported reminder mode: {mode}")
         with self._lock, self._connection:
             self._connection.execute(
@@ -2113,6 +2325,7 @@ class Storage:
                       AND toolkit_input_mode IS NULL
                       AND coach_session_id IS NULL
                       AND background_card_id IS NULL
+                      AND hourly_card_id IS NULL
                       AND stage IN (
                           'idle', 'waiting', 'scenario', 'practice', 'review', 'drill',
                           'quest'
@@ -2130,8 +2343,9 @@ class Storage:
         sent_at: datetime,
         next_at: datetime,
         pending_until: datetime,
+        cooldown_until: datetime | None = None,
     ) -> bool:
-        cooldown_until = sent_at + timedelta(hours=2)
+        cooldown = cooldown_until or sent_at + timedelta(hours=2)
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """
@@ -2142,7 +2356,7 @@ class Storage:
                 (
                     sent_at.isoformat(),
                     next_at.isoformat(),
-                    cooldown_until.isoformat(),
+                    cooldown.isoformat(),
                     pending_until.isoformat(),
                     chat_id,
                     expected_at,

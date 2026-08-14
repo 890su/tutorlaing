@@ -16,6 +16,7 @@ REMINDER_SLOTS = {
     "normal": ((9, 0), (19, 0)),
     "intensive": ((8, 0), (12, 0), (17, 0), (21, 0)),
     "aggressive": ((8, 0), (10, 30), (13, 0), (15, 30), (18, 0), (21, 0)),
+    "hourly": tuple((hour, 0) for hour in range(8, 22)),
 }
 
 # A re-engagement card replaces one normal reminder slot. It never creates an
@@ -142,7 +143,8 @@ class ReminderScheduler:
                 str(user["reminder_next_at"]),
                 current,
                 next_at,
-                pause_until_tomorrow(current, str(user["timezone"])),
+                current if mode == "hourly" else pause_until_tomorrow(current, str(user["timezone"])),
+                cooldown_until=current if mode == "hourly" else None,
             ):
                 continue
             inactive_days = reengagement_inactive_days(user, current)

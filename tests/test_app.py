@@ -410,6 +410,27 @@ class AppFlowTests(unittest.TestCase):
         self.assertEqual("aggressive", user["reminder_mode"])
         self.assertIsNotNone(user["reminder_next_at"])
 
+    def test_hourly_cards_are_cached_and_know_queues_a_free_text_check(self) -> None:
+        chat_id = 413
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.bot.set_reminder_mode(chat_id, "hourly")
+
+        self.bot.send_scheduled_reminder(chat_id, "hourly")
+
+        first = self.telegram.messages[-1]
+        callbacks = [button["callback_data"] for row in first["keyboard"] for button in row]
+        self.assertIn("КАРТОЧКА НА МИНУТУ", first["text"])
+        self.assertTrue(any(value.startswith("hourly:know:") for value in callbacks))
+        self.assertTrue(any(value.startswith("hourly:details:") for value in callbacks))
+        self.assertTrue(any(value.startswith("hourly:next:") for value in callbacks))
+        card_id = int(next(value for value in callbacks if value.startswith("hourly:know:")).rsplit(":", 1)[1])
+
+        self.bot.handle_callback(chat_id, "Learner", "known", f"hourly:know:{card_id}")
+        queued = self.storage.hourly_card(chat_id, card_id)
+        self.assertEqual("check_due", queued["status"])
+        self.assertIn("коротким заданием", self.telegram.messages[-1]["text"])
+
     def test_reminder_settings_include_a_manual_delivery_check(self) -> None:
         chat_id = 34
         self.storage.ensure_user(chat_id, "Learner")

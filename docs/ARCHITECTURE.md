@@ -36,6 +36,7 @@ flowchart LR
 | `activities.py` | проекция параллельных незавершённых занятий и их позиции |
 | `coach.py` | side-channel преподавателя, не меняющий основной flow |
 | `learning_cards.py` / `background_learning.py` | валидируемый semantic content и связанная микро-практика |
+| `hourly_cards.py` | генерация и fallback batch-а почасовых карточек; состояние, scheduling и mastery остаются в storage/app |
 | `toolkit.py` | работа со своей фразой, переводные карточки и тематический drill |
 | `reminders.py` | слоты, quiet hours, retry и доставка не более одного задания |
 | `progress_service.py` / `learner_profile.py` | evidence-based прогресс и добровольный контекст |

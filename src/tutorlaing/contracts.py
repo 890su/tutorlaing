@@ -123,6 +123,7 @@ class ReminderStore(Protocol):
         sent_at: datetime,
         next_at: datetime,
         pending_until: datetime,
+        cooldown_until: datetime | None = None,
     ) -> bool: ...
 
     def schedule_next_reminder(

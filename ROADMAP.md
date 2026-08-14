@@ -1,6 +1,6 @@
 # Roadmap Tutorlaing
 
-Актуально на 2026-08-07. Подробный исторический roadmap находится в
+Актуально на 2026-08-14. Подробный исторический roadmap находится в
 [`archive/docs/ROADMAP_legacy_2026-08-07.md`](archive/docs/ROADMAP_legacy_2026-08-07.md).
 
 ## Сейчас: закрытая alpha

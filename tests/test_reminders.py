@@ -34,6 +34,13 @@ class FailingReminderBot(FakeReminderBot):
 
 
 class ReminderTests(unittest.TestCase):
+    def test_hourly_mode_uses_each_daytime_hour(self) -> None:
+        now = datetime(2026, 8, 10, 8, 2, tzinfo=timezone.utc)
+
+        next_at = next_reminder_at("hourly", now)
+
+        self.assertEqual(datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc), next_at)
+
     def test_reengagement_threshold_depends_on_selected_mode(self) -> None:
         now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
         base = {

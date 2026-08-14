@@ -24,7 +24,7 @@ LANGUAGE_LABELS = {
     "en": "English",
     "pl": "Polski",
 }
-REMINDER_MODES = ("off", "gentle", "normal", "intensive", "aggressive")
+REMINDER_MODES = ("off", "gentle", "normal", "intensive", "aggressive", "hourly")
 REPLY_KEYBOARD_VERSION = "navigation-v6"
 
 

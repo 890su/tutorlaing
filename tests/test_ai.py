@@ -106,6 +106,35 @@ class GeminiClientTests(unittest.TestCase):
         self.assertIn("exactly three", requirements)
         self.assertIn("friendly", requirements)
 
+    def test_hourly_cards_are_structured_as_a_cached_batch(self) -> None:
+        cards = [
+            {
+                "kind": kind,
+                "cue": f"Вопрос {index}",
+                "answer": f"odpowiedź {index}",
+                "accepted_answers": [],
+                "details": f"Разбор {index}",
+            }
+            for index, kind in enumerate(
+                ("word", "word", "synonym", "synonym", "phrase", "phrase"), 1
+            )
+        ]
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(request)
+            return FakeHTTPResponse(
+                {"candidates": [{"content": {"parts": [{"text": json.dumps({"cards": cards})}]}}]}
+            )
+
+        client = GeminiClient("test-key", opener=opener)
+        batch = client.generate_hourly_cards({"learner_level": "A1"}, "ru", "pl")
+
+        self.assertEqual(6, len(batch.cards))
+        self.assertEqual("synonym", batch.cards[2].kind)
+        prompt = json.loads(json.loads(requests[0].data.decode("utf-8"))["contents"][0]["parts"][0]["text"])
+        self.assertIn("exactly 6 cards", " ".join(prompt["requirements"]))
+
     def test_drill_pack_requires_variety_and_active_recall(self) -> None:
         base = {
             "skill": "case",

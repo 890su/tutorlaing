@@ -36,6 +36,7 @@ from .drill_fallback import build_adaptive_fallback
 from .exercise_bank import ExerciseBank, material_signature
 from .i18n import tr, ui_copy
 from .feedback import FeedbackPresenter
+from .hourly_cards import HourlyCardService
 from .evaluation_service import ResponseEvaluator
 from .language_support import LanguageSupport
 from .learner_profile import LearnerProfileService
@@ -93,6 +94,7 @@ class TutorlaingBot:
         self.activities = ActivityService(storage)
         self.coach = CoachService(storage, self.ai)
         self.background_learning = BackgroundLearningService(storage, self.ai)
+        self.hourly_cards = HourlyCardService(self.ai)
         self.adaptive_difficulty = AdaptiveDifficultyService(storage)
         self.feedback = FeedbackPresenter(
             storage, self.workspace, self.language_support, self.ai
@@ -742,6 +744,119 @@ class TutorlaingBot:
     def close_background_card(self, chat_id: int) -> None:
         self.storage.dismiss_background_card(chat_id)
         self.resume_activity(chat_id)
+
+    def _next_hourly_card(self, chat_id: int) -> Any | None:
+        card_row = self.storage.next_hourly_card(chat_id)
+        if card_row is not None:
+            return card_row
+        user = self.storage.get_user(chat_id)
+        cards, provider, model = self.hourly_cards.generate(
+            user,
+            self.storage.recent_hourly_card_answers(chat_id),
+            dict(self.storage.learner_profile(chat_id)),
+        )
+        self.storage.save_hourly_cards(
+            chat_id,
+            target_language=str(user["target_language"]),
+            instruction_language=str(user["instruction_language"]),
+            cards=cards,
+            provider=provider,
+            model=model,
+        )
+        return self.storage.next_hourly_card(chat_id)
+
+    def send_hourly_card(self, chat_id: int) -> None:
+        """Deliver one cached hourly card without replacing the foreground lesson."""
+
+        row = self._next_hourly_card(chat_id)
+        if row is None:
+            raise RuntimeError("Could not prepare an hourly card")
+        if str(row["status"]) == "check_due":
+            self._send_hourly_card_check(chat_id, int(row["id"]))
+            return
+        kind = self._t(chat_id, f"hourly.kind.{row['kind']}")
+        self.telegram.send_message(
+            chat_id,
+            card(
+                self._t(chat_id, "hourly.title"),
+                f"{kind}\n\n{row['cue']}",
+            ),
+            [
+                [
+                    {"text": self._t(chat_id, "hourly.know"), "callback_data": f"hourly:know:{row['id']}"},
+                    {"text": self._t(chat_id, "hourly.details"), "callback_data": f"hourly:details:{row['id']}"},
+                ],
+                [{"text": self._t(chat_id, "hourly.next"), "callback_data": f"hourly:next:{row['id']}"}],
+            ],
+        )
+        self.storage.event(chat_id, "hourly_card_shown", {"card_id": int(row["id"])})
+
+    def show_hourly_card_details(self, chat_id: int, card_id: int) -> None:
+        row = self.storage.hourly_card(chat_id, card_id)
+        if str(row["status"]) in {"mastered", "skipped"}:
+            self._notice(chat_id, self._t(chat_id, "difficulty.stale"))
+            return
+        self.telegram.send_message(
+            chat_id,
+            card(self._t(chat_id, "hourly.details_title"), str(row["details"])),
+            [
+                [
+                    {"text": self._t(chat_id, "hourly.know"), "callback_data": f"hourly:know:{card_id}"},
+                    {"text": self._t(chat_id, "hourly.next"), "callback_data": f"hourly:next:{card_id}"},
+                ]
+            ],
+        )
+
+    def mark_hourly_card_known(self, chat_id: int, card_id: int) -> None:
+        self.storage.mark_hourly_card_known(chat_id, card_id)
+        self.telegram.send_message(
+            chat_id,
+            self._t(chat_id, "hourly.known_queued"),
+            [[{"text": self._t(chat_id, "hourly.next"), "callback_data": "hourly:next:0"}]],
+        )
+
+    def skip_hourly_card(self, chat_id: int, card_id: int) -> None:
+        if card_id:
+            self.storage.skip_hourly_card(chat_id, card_id)
+        self.send_hourly_card(chat_id)
+
+    def _send_hourly_card_check(self, chat_id: int, card_id: int) -> None:
+        row = self.storage.begin_hourly_card_check(chat_id, card_id)
+        self.telegram.send_message(
+            chat_id,
+            card(
+                self._t(chat_id, "hourly.check_title"),
+                f"{row['cue']}\n\n{self._t(chat_id, 'hourly.check_write')}",
+            ),
+            [[{"text": self._t(chat_id, "hourly.forgot"), "callback_data": f"hourly:forgot:{card_id}"}]],
+        )
+
+    def answer_hourly_card_check(self, chat_id: int, card_id: int, response: str) -> None:
+        row = self.storage.hourly_card(chat_id, card_id)
+        item = DrillItem(
+            type="free_recall",
+            skill=str(row["kind"]),
+            prompt=str(row["cue"]),
+            context="",
+            options=(),
+            correct_answer=str(row["answer"]),
+            accepted_answers=tuple(json.loads(str(row["accepted_answers_json"]))),
+            explanation=str(row["details"]),
+            hint="",
+            difficulty=1,
+        )
+        evaluation = self._evaluate_drill_response(chat_id, item, response)
+        mastered = self.storage.answer_hourly_card_check(chat_id, card_id, evaluation.score)
+        key = "hourly.mastered" if mastered else "hourly.check_passed" if evaluation.score >= 0.8 else "hourly.check_retry"
+        body = self._t(chat_id, key, answer=evaluation.corrected_answer or str(row["answer"]))
+        self.telegram.send_message(chat_id, card(self._t(chat_id, "hourly.check_result"), body))
+
+    def forget_hourly_card(self, chat_id: int, card_id: int) -> None:
+        self.storage.answer_hourly_card_check(chat_id, card_id, 0.0)
+        self.telegram.send_message(
+            chat_id,
+            card(self._t(chat_id, "hourly.check_result"), self._t(chat_id, "hourly.check_retry", answer="")),
+        )
 
     def show_language_choices(self, chat_id: int, kind: str) -> None:
         self.menu.show_language_choices(chat_id, kind)
@@ -2776,6 +2891,9 @@ class TutorlaingBot:
 
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
         user = self.storage.get_user(chat_id)
+        if mode == "hourly":
+            self.send_hourly_card(chat_id)
+            return
         if user["pending_assignment"]:
             self.send_pending_assignment(chat_id, scheduled=True)
             return
@@ -2961,6 +3079,8 @@ class TutorlaingBot:
                 self.storage.close_coach_session(chat_id)
             if user["background_card_id"]:
                 self.storage.dismiss_background_card(chat_id)
+            if user["hourly_card_id"]:
+                self.storage.dismiss_hourly_card_check(chat_id)
             user = self.storage.get_user(chat_id)
         if command in PUBLIC_COMMANDS:
             self._focus_new_surface(chat_id, message_id)
@@ -3054,6 +3174,11 @@ class TutorlaingBot:
                 chat_id, int(user["background_card_id"]), text
             )
             return
+        if user["hourly_card_id"]:
+            self.answer_hourly_card_check(
+                chat_id, int(user["hourly_card_id"]), text
+            )
+            return
         if user["coach_session_id"]:
             self.answer_coach(
                 chat_id, str(user["coach_input_mode"] or "question"), text
@@ -3122,6 +3247,10 @@ class TutorlaingBot:
             self.storage.dismiss_background_card(chat_id)
             user = self.storage.get_user(chat_id)
 
+        if user["hourly_card_id"] and not data.startswith("hourly:"):
+            self.storage.dismiss_hourly_card_check(chat_id)
+            user = self.storage.get_user(chat_id)
+
         if data == "consent:accept":
             self.storage.accept_consent(chat_id, CONSENT_VERSION)
             self.home(chat_id)
@@ -3162,6 +3291,14 @@ class TutorlaingBot:
             self.answer_coach(chat_id, data.rsplit(":", 1)[1])
         elif data == "coach:return":
             self.close_coach(chat_id)
+        elif data.startswith("hourly:know:"):
+            self.mark_hourly_card_known(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("hourly:details:"):
+            self.show_hourly_card_details(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("hourly:next:"):
+            self.skip_hourly_card(chat_id, int(data.rsplit(":", 1)[1]))
+        elif data.startswith("hourly:forgot:"):
+            self.forget_hourly_card(chat_id, int(data.rsplit(":", 1)[1]))
         elif data.startswith("background:menu:"):
             self.show_semantic_practice(
                 chat_id, return_to=data.rsplit(":", 1)[1]
