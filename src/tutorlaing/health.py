@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
 from .storage import Storage
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def start_health_server(
@@ -69,12 +73,29 @@ def start_health_server(
                 return
             try:
                 update = json.loads(self.rfile.read(content_length).decode("utf-8"))
-                webhook_handler(update)
-            except (json.JSONDecodeError, UnicodeDecodeError, KeyError, ValueError):
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 self.send_response(400)
                 self.end_headers()
                 return
+            try:
+                webhook_handler(update)
+            except (KeyError, ValueError):
+                # Telegram retries every non-2xx response.  Callback data can
+                # outlive a menu deployment, so an obsolete or malformed
+                # update must not stall all later messages in its queue.
+                LOGGER.warning(
+                    "Ignoring malformed Telegram update",
+                    exc_info=True,
+                    extra={"telegram_update_id": update.get("update_id")},
+                )
+                self.send_response(200)
+                self.end_headers()
+                return
             except Exception:
+                LOGGER.exception(
+                    "Telegram webhook handler failed",
+                    extra={"telegram_update_id": update.get("update_id")},
+                )
                 self.send_response(500)
                 self.end_headers()
                 return

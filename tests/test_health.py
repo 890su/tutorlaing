@@ -69,6 +69,37 @@ class HealthTests(unittest.TestCase):
                 server.server_close()
                 storage.close()
 
+    def test_webhook_acknowledges_malformed_callback_update(self) -> None:
+        def malformed_handler(_update: dict) -> None:
+            raise ValueError("obsolete callback")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            storage = Storage(Path(temp_dir) / "webhook.sqlite3")
+            server, _ = start_health_server(
+                storage,
+                "127.0.0.1",
+                0,
+                webhook_handler=malformed_handler,
+                webhook_secret="test-secret",
+            )
+            try:
+                port = server.server_address[1]
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/telegram/webhook",
+                    data=b'{"update_id": 2, "callback_query": {}}',
+                    method="POST",
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Telegram-Bot-Api-Secret-Token": "test-secret",
+                    },
+                )
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    self.assertEqual(200, response.status)
+            finally:
+                server.shutdown()
+                server.server_close()
+                storage.close()
+
 
 if __name__ == "__main__":
     unittest.main()
