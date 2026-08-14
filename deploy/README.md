@@ -33,7 +33,7 @@ docker compose logs --tail 80 tutorlaing
 Deploy считается подтверждённым только после remote image digest, local health
 и проверки логов. Один public health не доказывает, что на VM работает новая
 версия. Последняя подтверждённая версия: `sha-634c862`
-(`sha256:0afce3a51b5d…`). Образ `sha-a0771ee` опубликован, но ещё не считается
+(`sha256:0afce3a51b5d…`). Образ `sha-7bbb03f` опубликован, но ещё не считается
 развёрнутым: для его подтверждения нужны SSH, remote digest, local health и
 логи.
 

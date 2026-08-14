@@ -65,7 +65,7 @@ P2: персональный план дня и privacy-safe продуктов�
   `~/services/tutorlaing`; текущая ветка не развёртывается автоматически.
 - Последняя подтверждённая production-версия — `sha-634c862`
   (`sha256:0afce3a51b5d…`): Docker healthy, local и public health ответили
-  HTTP 200 2026-08-14. Версия `sha-a0771ee` опубликована в GHCR и ожидает
+  HTTP 200 2026-08-14. Версия `sha-7bbb03f` опубликована в GHCR и ожидает
   remote-подтверждения: 2026-08-14 недоступны оба SSH-маршрута к VM.
 - Доступ описан в `deploy/ACCESS.md`. В проекте нет и не должно быть private
   keys, token, Telegram ID или содержимого `.env`.

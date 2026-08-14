@@ -38,5 +38,5 @@ reference; private key, пароли, токены и содержимое `.env
 (`sha256:0afce3a51b5d…`): Docker был `running healthy`, local/public health
 вернули `status=ok`, `database=ok`. Канал WireGuard за CGNAT нестабилен;
 следующий deploy подтверждается remote digest, local health и логами, а не одним
-публичным health endpoint. Версия `sha-a0771ee` опубликована и ожидает этой
+публичным health endpoint. Версия `sha-7bbb03f` опубликована и ожидает этой
 проверки, так как оба SSH-маршрута недоступны.
