@@ -1004,6 +1004,13 @@ class Storage:
                 """,
                 (current.isoformat(), (current + timedelta(hours=1)).isoformat(), card_id, chat_id),
             )
+            self._connection.execute(
+                """
+                UPDATE users SET hourly_card_id = NULL, updated_at = ?
+                WHERE chat_id = ? AND hourly_card_id = ?
+                """,
+                (current.isoformat(), chat_id, card_id),
+            )
         if cursor.rowcount != 1:
             raise KeyError(f"Hourly card cannot be queued: {card_id}")
         self.event(chat_id, "hourly_card_known", {"card_id": card_id})
@@ -1017,7 +1024,53 @@ class Storage:
                 """,
                 (card_id, chat_id),
             )
+            self._connection.execute(
+                """
+                UPDATE users SET hourly_card_id = NULL, updated_at = ?
+                WHERE chat_id = ? AND hourly_card_id = ?
+                """,
+                (utc_now(), chat_id, card_id),
+            )
         self.event(chat_id, "hourly_card_skipped", {"card_id": card_id})
+
+    def answer_hourly_card_prompt(
+        self,
+        chat_id: int,
+        card_id: int,
+        score: float,
+        now: datetime | None = None,
+    ) -> bool:
+        """Resolve the immediate answer without advancing the foreground lesson."""
+
+        current = now or datetime.now(timezone.utc)
+        passed = score >= 0.8
+        status = "check_due" if passed else "learning"
+        review_due_at = (
+            (current + timedelta(hours=1)).isoformat() if passed else current.isoformat()
+        )
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                UPDATE hourly_cards SET status = ?, known_at = ?, review_due_at = ?
+                WHERE id = ? AND chat_id = ? AND status IN ('new', 'shown', 'learning')
+                """,
+                (status, current.isoformat(), review_due_at, card_id, chat_id),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Hourly card prompt is not pending: {card_id}")
+            self._connection.execute(
+                """
+                UPDATE users SET hourly_card_id = NULL, updated_at = ?
+                WHERE chat_id = ? AND hourly_card_id = ?
+                """,
+                (current.isoformat(), chat_id, card_id),
+            )
+        self.event(
+            chat_id,
+            "hourly_card_prompt_answered",
+            {"card_id": card_id, "score": score, "passed": passed},
+        )
+        return passed
 
     def begin_hourly_card_check(self, chat_id: int, card_id: int) -> sqlite3.Row:
         now = utc_now()

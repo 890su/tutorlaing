@@ -774,18 +774,13 @@ class TutorlaingBot:
         if str(row["status"]) == "check_due":
             self._send_hourly_card_check(chat_id, int(row["id"]))
             return
+        self.storage.set_user_state(chat_id, hourly_card_id=int(row["id"]))
         kind = self._t(chat_id, f"hourly.kind.{row['kind']}")
         self.telegram.send_message(
             chat_id,
             card(
                 self._t(chat_id, "hourly.title"),
-                self._t(
-                    chat_id,
-                    "hourly.card_body",
-                    kind=kind,
-                    cue=str(row["cue"]),
-                    answer=str(row["answer"]),
-                ),
+                f"{kind}\n\n{row['cue']}",
             ),
             [
                 [
@@ -839,7 +834,16 @@ class TutorlaingBot:
 
     def answer_hourly_card_check(self, chat_id: int, card_id: int, response: str) -> None:
         row = self.storage.hourly_card(chat_id, card_id)
-        item = DrillItem(
+        item = self._hourly_card_item(row)
+        evaluation = self._evaluate_drill_response(chat_id, item, response)
+        mastered = self.storage.answer_hourly_card_check(chat_id, card_id, evaluation.score)
+        key = "hourly.mastered" if mastered else "hourly.check_passed" if evaluation.score >= 0.8 else "hourly.check_retry"
+        body = self._t(chat_id, key, answer=evaluation.corrected_answer or str(row["answer"]))
+        self.telegram.send_message(chat_id, card(self._t(chat_id, "hourly.check_result"), body))
+
+    @staticmethod
+    def _hourly_card_item(row: Any) -> DrillItem:
+        return DrillItem(
             type="free_recall",
             skill=str(row["kind"]),
             prompt=str(row["cue"]),
@@ -851,11 +855,27 @@ class TutorlaingBot:
             hint="",
             difficulty=1,
         )
-        evaluation = self._evaluate_drill_response(chat_id, item, response)
-        mastered = self.storage.answer_hourly_card_check(chat_id, card_id, evaluation.score)
-        key = "hourly.mastered" if mastered else "hourly.check_passed" if evaluation.score >= 0.8 else "hourly.check_retry"
-        body = self._t(chat_id, key, answer=evaluation.corrected_answer or str(row["answer"]))
-        self.telegram.send_message(chat_id, card(self._t(chat_id, "hourly.check_result"), body))
+
+    def answer_hourly_card_prompt(self, chat_id: int, card_id: int, response: str) -> None:
+        row = self.storage.hourly_card(chat_id, card_id)
+        evaluation = self._evaluate_drill_response(
+            chat_id, self._hourly_card_item(row), response
+        )
+        passed = self.storage.answer_hourly_card_prompt(
+            chat_id, card_id, evaluation.score
+        )
+        if passed:
+            body = self._t(chat_id, "hourly.prompt_correct")
+        else:
+            body = self._t(
+                chat_id,
+                "hourly.prompt_retry",
+                answer=evaluation.corrected_answer or str(row["answer"]),
+                details=str(row["details"]),
+            )
+        self.telegram.send_message(
+            chat_id, card(self._t(chat_id, "hourly.prompt_title"), body)
+        )
 
     def forget_hourly_card(self, chat_id: int, card_id: int) -> None:
         self.storage.answer_hourly_card_check(chat_id, card_id, 0.0)
@@ -3074,6 +3094,7 @@ class TutorlaingBot:
             or user["profile_input_mode"]
             or user["coach_input_mode"]
             or user["background_card_id"]
+            or user["hourly_card_id"]
         ):
             self.storage.set_user_state(
                 chat_id,
@@ -3181,9 +3202,11 @@ class TutorlaingBot:
             )
             return
         if user["hourly_card_id"]:
-            self.answer_hourly_card_check(
-                chat_id, int(user["hourly_card_id"]), text
-            )
+            card = self.storage.hourly_card(chat_id, int(user["hourly_card_id"]))
+            if str(card["status"]) == "checking":
+                self.answer_hourly_card_check(chat_id, int(card["id"]), text)
+            else:
+                self.answer_hourly_card_prompt(chat_id, int(card["id"]), text)
             return
         if user["coach_session_id"]:
             self.answer_coach(

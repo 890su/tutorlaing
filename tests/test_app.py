@@ -421,8 +421,6 @@ class AppFlowTests(unittest.TestCase):
         first = self.telegram.messages[-1]
         callbacks = [button["callback_data"] for row in first["keyboard"] for button in row]
         self.assertIn("КАРТОЧКА НА МИНУТУ", first["text"])
-        self.assertIn("→", first["text"])
-        self.assertIn("отвечать в чат не нужно", first["text"])
         self.assertTrue(any(value.startswith("hourly:know:") for value in callbacks))
         self.assertTrue(any(value.startswith("hourly:details:") for value in callbacks))
         self.assertTrue(any(value.startswith("hourly:next:") for value in callbacks))
@@ -431,7 +429,27 @@ class AppFlowTests(unittest.TestCase):
         self.bot.handle_callback(chat_id, "Learner", "known", f"hourly:know:{card_id}")
         queued = self.storage.hourly_card(chat_id, card_id)
         self.assertEqual("check_due", queued["status"])
+        self.assertIsNone(self.storage.get_user(chat_id)["hourly_card_id"])
         self.assertIn("коротким заданием", self.telegram.messages[-1]["text"])
+
+    def test_hourly_card_answer_does_not_advance_foreground_activity(self) -> None:
+        chat_id = 414
+        self.storage.ensure_user(chat_id, "Learner")
+        self.storage.accept_consent(chat_id, CONSENT_VERSION)
+        self.storage.set_user_state(chat_id, stage="waiting")
+        self.bot.set_reminder_mode(chat_id, "hourly")
+
+        self.bot.send_scheduled_reminder(chat_id, "hourly")
+        card_id = int(self.storage.get_user(chat_id)["hourly_card_id"])
+
+        self.bot.handle_text(chat_id, "Learner", "paragon")
+
+        card = self.storage.hourly_card(chat_id, card_id)
+        self.assertEqual("check_due", card["status"])
+        user = self.storage.get_user(chat_id)
+        self.assertEqual("waiting", user["stage"])
+        self.assertIsNone(user["hourly_card_id"])
+        self.assertIn("ОТВЕТ НА КАРТОЧКУ", self.telegram.messages[-1]["text"])
 
     def test_reminder_settings_include_a_manual_delivery_check(self) -> None:
         chat_id = 34
