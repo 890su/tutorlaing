@@ -42,12 +42,14 @@ class GamesWebApp:
         telegram_token: str,
         allowed_chat_ids: frozenset[int] | None = None,
         notify: Callable[[int, str], None] | None = None,
+        bot_username: str = "",
     ) -> None:
         self.storage = storage
         self.telegram_token = telegram_token
         self.allowed_chat_ids = allowed_chat_ids
         self.games = GameService(storage)
         self.notify = notify
+        self.bot_username = bot_username.strip().removeprefix("@").lower()
 
     def get(self, raw_path: str) -> WebResponse | None:
         path = urlsplit(raw_path).path
@@ -80,16 +82,22 @@ class GamesWebApp:
                 raise GameError("Ожидался объект запроса.")
             chat_id = self._authenticate(init_data)
             if path == "/games/api/state":
-                result = self.games.snapshot(chat_id)
-            elif path == "/games/api/profile":
-                result = self.games.set_nickname(chat_id, str(data.get("nickname", "")))
+                result = self._decorate_snapshot(self.games.snapshot(chat_id))
             elif path == "/games/api/invitations":
                 result = self.games.invite(
                     chat_id,
                     str(data.get("kind", "")),
-                    str(data.get("nickname", "")),
+                    str(data.get("username", "")),
                 )
                 self._notify_opponent(result, chat_id, "invite")
+            elif path == "/games/api/link-invitations":
+                result = self._decorate_share_link(
+                    self.games.create_link_invitation(chat_id, str(data.get("kind", "")))
+                )
+            elif path == "/games/api/claim-link":
+                token = str(data.get("token", ""))
+                result = self.games.claim_link_invitation(chat_id, token)
+                self._notify_opponent(result, chat_id, "claim")
             elif path == "/games/api/accept":
                 result = self.games.accept(chat_id, str(data.get("game_id", "")))
                 self._notify_opponent(result, chat_id, "accept")
@@ -141,7 +149,24 @@ class GamesWebApp:
         user = self.storage.ensure_user(chat_id, str(identity.get("first_name", "")))
         if int(user["consent_version"]) != CONSENT_VERSION:
             raise MiniAppAuthError("Сначала откройте бот и подтвердите правила приватности.")
+        self.games.sync_telegram_username(chat_id, str(identity.get("username", "")))
         return chat_id
+
+    def _decorate_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **snapshot,
+            "share_links": [
+                self._decorate_share_link(link) for link in snapshot.get("share_links", [])
+            ],
+        }
+
+    def _decorate_share_link(self, link: dict[str, Any]) -> dict[str, Any]:
+        if not self.bot_username:
+            raise GameError("Ссылка-приглашение пока недоступна. Откройте соперника по @username.")
+        return {
+            **link,
+            "url": f"https://t.me/{self.bot_username}?start=game_{link['token']}",
+        }
 
     def _notify_opponent(self, game: dict[str, Any], actor_chat_id: int, action: str) -> None:
         if self.notify is None:
@@ -150,6 +175,7 @@ class GamesWebApp:
         opponent_id = int(row["guest_chat_id"] if int(row["host_chat_id"]) == actor_chat_id else row["host_chat_id"])
         texts = {
             "invite": "🎮 Вам пришло приглашение в крестики-нолики. Откройте «Игры вдвоём» в помощнике.",
+            "claim": "🎮 Соперник открыл приглашение. Подтвердите начало игры в «Игры вдвоём».",
             "accept": "🎮 Приглашение принято. Ваш ход уже отображается в игре.",
             "decline": "🎮 Приглашение в игру отклонено.",
             "move": "🎮 Соперник сделал ход. Откройте «Игры вдвоём» в помощнике.",

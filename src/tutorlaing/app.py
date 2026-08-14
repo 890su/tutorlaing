@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .ai import (
     AIClient,
@@ -144,10 +146,18 @@ class TutorlaingBot:
         allowed = self.settings.allowed_chat_ids
         return allowed is None or chat_id in allowed
 
-    def show_games(self, chat_id: int) -> None:
+    def show_games(self, chat_id: int, join_token: str = "") -> None:
         if not self.settings.mini_app_url:
             self._notice(chat_id, self._t(chat_id, "games.unavailable"))
             return
+        game_url = self.settings.mini_app_url
+        if join_token:
+            parts = urlsplit(game_url)
+            query = dict(parse_qsl(parts.query, keep_blank_values=True))
+            query["join"] = join_token
+            game_url = urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+            )
         self.telegram.send_message(
             chat_id,
             card(self._t(chat_id, "games.title"), self._t(chat_id, "games.summary")),
@@ -155,7 +165,7 @@ class TutorlaingBot:
                 [
                     {
                         "text": self._t(chat_id, "games.open"),
-                        "web_app": {"url": self.settings.mini_app_url},
+                        "web_app": {"url": game_url},
                     }
                 ]
             ],
@@ -3130,6 +3140,15 @@ class TutorlaingBot:
         if command in PUBLIC_COMMANDS:
             self._focus_new_surface(chat_id, message_id)
         if command == "/start":
+            start_parts = text.strip().split(maxsplit=1)
+            invite_match = (
+                re.fullmatch(r"game_([0-9a-f]{32})", start_parts[1].strip())
+                if len(start_parts) == 2
+                else None
+            )
+            if invite_match and self._has_current_consent(user):
+                self.show_games(chat_id, invite_match.group(1))
+                return
             self.start(chat_id, first_name)
             return
         if command == "/privacy":

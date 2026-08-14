@@ -239,6 +239,29 @@ class AppFlowTests(unittest.TestCase):
         self.storage.close()
         self.temp_dir.cleanup()
 
+    def test_game_start_link_opens_the_matching_mini_app_invitation(self) -> None:
+        settings = Settings(
+            telegram_bot_token="test",
+            allowed_chat_ids=None,
+            data_dir=Path(self.temp_dir.name),
+            health_host="127.0.0.1",
+            health_port=0,
+            poll_timeout=5,
+            log_level="INFO",
+            telegram_webhook_url="",
+            telegram_webhook_secret="",
+            mini_app_url="https://example.test/games",
+        )
+        bot = TutorlaingBot(settings, self.storage, self.telegram)
+        self.storage.ensure_user(777, "Guest")
+        self.storage.accept_consent(777, CONSENT_VERSION)
+        token = "a" * 32
+        bot.handle_text(777, "Guest", f"/start game_{token}")
+        keyboard = self.telegram.messages[-1]["keyboard"]
+        self.assertEqual(
+            f"https://example.test/games?join={token}", keyboard[0][0]["web_app"]["url"]
+        )
+
     def test_complete_learning_loop_schedules_review(self) -> None:
         chat_id = 100
         self.bot.start(chat_id, "Igor")

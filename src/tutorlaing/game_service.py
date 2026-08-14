@@ -13,11 +13,11 @@ class GameError(ValueError):
 
 
 class GameStore(Protocol):
-    def set_game_nickname(self, chat_id: int, nickname: str) -> Any: ...
-
     def game_profile(self, chat_id: int) -> Any | None: ...
 
-    def game_profile_by_nickname(self, nickname: str) -> Any | None: ...
+    def sync_game_telegram_username(self, chat_id: int, username: str) -> Any | None: ...
+
+    def game_profile_by_telegram_username(self, username: str) -> Any | None: ...
 
     def create_game_invitation(
         self, kind: str, host_chat_id: int, guest_chat_id: int, state: dict[str, Any]
@@ -26,6 +26,14 @@ class GameStore(Protocol):
     def game_for_player(self, game_id: str, chat_id: int) -> Any: ...
 
     def games_for_player(self, chat_id: int) -> list[Any]: ...
+
+    def create_game_link_invitation(
+        self, kind: str, host_chat_id: int, state: dict[str, Any]
+    ) -> Any: ...
+
+    def game_link_invitations_for_host(self, chat_id: int) -> list[Any]: ...
+
+    def claim_game_link_invitation(self, token: str, guest_chat_id: int) -> Any | None: ...
 
     def update_game(
         self,
@@ -42,14 +50,14 @@ class GameStore(Protocol):
     ) -> Any | None: ...
 
 
-NICKNAME_RE = re.compile(r"^[a-z0-9_]{3,24}$")
+TELEGRAM_USERNAME_RE = re.compile(r"^[a-z0-9_]{5,32}$")
 
 
-def normalize_nickname(value: str) -> str:
-    nickname = value.strip().removeprefix("@").lower()
-    if not NICKNAME_RE.fullmatch(nickname):
-        raise GameError("Ник: 3–24 символа, только a-z, 0-9 и _.")
-    return nickname
+def normalize_telegram_username(value: str) -> str:
+    username = value.strip().removeprefix("@").lower()
+    if not TELEGRAM_USERNAME_RE.fullmatch(username):
+        raise GameError("Введите Telegram @username: 5–32 символа, только a-z, 0-9 и _.")
+    return username
 
 
 @dataclass(frozen=True)
@@ -124,31 +132,50 @@ class GameService:
             for item in GAME_REGISTRY.values()
         ]
 
-    def set_nickname(self, chat_id: int, nickname: str) -> dict[str, str]:
-        normalized = normalize_nickname(nickname)
-        existing = self.store.game_profile_by_nickname(normalized)
-        if existing is not None and int(existing["chat_id"]) != chat_id:
-            raise GameError("Этот игровой ник уже занят.")
-        profile = self.store.set_game_nickname(chat_id, normalized)
-        return {"nickname": str(profile["nickname"])}
+    def sync_telegram_username(self, chat_id: int, username: str) -> None:
+        """Refresh the discovery alias from a Telegram-signed identity."""
+
+        if not username:
+            return
+        try:
+            self.store.sync_game_telegram_username(
+                chat_id, normalize_telegram_username(username)
+            )
+        except ValueError as exc:
+            raise GameError(str(exc)) from exc
 
     def snapshot(self, chat_id: int) -> dict[str, Any]:
         profile = self.store.game_profile(chat_id)
         return {
-            "profile": {"nickname": str(profile["nickname"])} if profile else None,
+            "profile": (
+                {"telegram_username": str(profile["telegram_username"])}
+                if profile and profile["telegram_username"]
+                else None
+            ),
             "catalog": self.catalog(),
             "games": [self._public_game(row, chat_id) for row in self.store.games_for_player(chat_id)],
+            "share_links": [
+                {
+                    "token": str(row["token"]),
+                    "kind": str(row["kind"]),
+                    "title": GAME_REGISTRY[str(row["kind"])].title,
+                    "expires_at": str(row["expires_at"]),
+                }
+                for row in self.store.game_link_invitations_for_host(chat_id)
+            ],
         }
 
-    def invite(self, chat_id: int, kind: str, nickname: str) -> dict[str, Any]:
+    def invite(self, chat_id: int, kind: str, username: str) -> dict[str, Any]:
         definition = GAME_REGISTRY.get(kind)
         if definition is None:
             raise GameError("Эта игра пока недоступна.")
-        if self.store.game_profile(chat_id) is None:
-            raise GameError("Сначала выберите игровой ник.")
-        opponent = self.store.game_profile_by_nickname(normalize_nickname(nickname))
+        opponent = self.store.game_profile_by_telegram_username(
+            normalize_telegram_username(username)
+        )
         if opponent is None:
-            raise GameError("Игрок с таким ником ещё не открыл игры в боте.")
+            raise GameError(
+                "Этот @username ещё не открывал игры в боте. Отправьте ему ссылку ниже."
+            )
         opponent_id = int(opponent["chat_id"])
         if opponent_id == chat_id:
             raise GameError("Нельзя пригласить самого себя.")
@@ -156,6 +183,24 @@ class GameService:
             kind, chat_id, opponent_id, definition.initial_state()
         )
         return self._public_game(self.store.game_for_player(str(row["id"]), chat_id), chat_id)
+
+    def create_link_invitation(self, chat_id: int, kind: str) -> dict[str, Any]:
+        definition = GAME_REGISTRY.get(kind)
+        if definition is None:
+            raise GameError("Эта игра пока недоступна.")
+        row = self.store.create_game_link_invitation(kind, chat_id, definition.initial_state())
+        return {
+            "token": str(row["token"]),
+            "kind": kind,
+            "title": definition.title,
+            "expires_at": str(row["expires_at"]),
+        }
+
+    def claim_link_invitation(self, chat_id: int, token: str) -> dict[str, Any]:
+        row = self.store.claim_game_link_invitation(token, chat_id)
+        if row is None:
+            raise GameError("Эта ссылка уже использована, устарела или создана вами.")
+        return self._public_game(row, chat_id)
 
     def accept(self, chat_id: int, game_id: str) -> dict[str, Any]:
         row = self.store.game_for_player(game_id, chat_id)
@@ -226,9 +271,7 @@ class GameService:
         host_id = int(row["host_chat_id"])
         guest_id = int(row["guest_chat_id"])
         mine = chat_id == host_id
-        opponent = str(
-            (row["guest_nickname"] if mine else row["host_nickname"]) or "игрок"
-        )
+        opponent = str((row["guest_nickname"] if mine else row["host_nickname"]) or "игрок")
         status = str(row["status"])
         return {
             "id": str(row["id"]),

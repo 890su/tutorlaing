@@ -37,7 +37,7 @@ flowchart LR
 | `coach.py` | side-channel преподавателя, не меняющий основной flow |
 | `learning_cards.py` / `background_learning.py` | валидируемый semantic content и связанная микро-практика |
 | `hourly_cards.py` | генерация и fallback batch-а почасовых карточек; состояние, scheduling и mastery остаются в storage/app |
-| `game_service.py` | реестр правил игр, приглашения, очередность ходов и owner-scoped проекция состояния |
+| `game_service.py` | реестр правил игр, приглашения по @username/ссылке, очередность ходов и owner-scoped проекция состояния |
 | `games_web.py` / `games/` | проверка Telegram Mini App `initData`, JSON API и статический мобильный игровой стол |
 | `toolkit.py` | работа со своей фразой, переводные карточки и тематический drill |
 | `reminders.py` | слоты, quiet hours, retry и доставка не более одного задания |
@@ -64,6 +64,8 @@ flowchart LR
   срок сессии и alpha-access до любой операции с игрой.
 - Игра не использует учебный foreground: участник, версия игры и текущий ход
   проверяются SQLite-транзакцией перед записью.
+- Telegram `chat_id` — единственный identity; обновляемый `@username` служит
+  лишь для поиска, а ссылочное приглашение — одноразовый bearer-token с TTL.
 
 ## Следующий технический долг
 

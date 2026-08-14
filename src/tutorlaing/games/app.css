@@ -42,6 +42,10 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in sr
 .game-card span { color: var(--muted); font-size: 13px; }
 .game-card.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
 .game-list { display: grid; gap: 8px; margin-top: 14px; }
+.or { margin: 14px 0 10px; color: var(--muted); font-size: 12px; font-weight: 800; text-align: center; text-transform: uppercase; letter-spacing: .1em; }
+.share-link { display: grid; gap: 9px; margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; }
+.share-link strong { font-size: 14px; }
+.share-link input { font-size: 12px; }
 .game-row { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: transparent; text-align: left; }
 .game-row strong, .game-row small { display: block; }
 .game-row small { margin-top: 3px; color: var(--muted); }

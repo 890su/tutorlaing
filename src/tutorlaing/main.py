@@ -10,6 +10,7 @@ from .games_web import GamesWebApp
 from .health import start_health_server
 from .reminders import ReminderScheduler
 from .storage import Storage
+from .telegram_api import TelegramError
 
 
 def main() -> None:
@@ -25,6 +26,15 @@ def main() -> None:
         bot, storage, interval=settings.reminder_scan_seconds
     )
     reminder_scheduler.start()
+    bot_username = ""
+    try:
+        identity = bot.telegram.call("getMe", timeout=10)
+        if isinstance(identity, dict):
+            bot_username = str(identity.get("username", ""))
+    except TelegramError:
+        logging.getLogger(__name__).warning(
+            "Could not resolve bot username for game invite links", exc_info=True
+        )
     games_web_app = GamesWebApp(
         storage,
         settings.telegram_bot_token,
@@ -43,6 +53,7 @@ def main() -> None:
             if settings.mini_app_url
             else None,
         ),
+        bot_username=bot_username,
     )
     webhook_mode = bool(settings.telegram_webhook_url)
     health_server, _ = start_health_server(

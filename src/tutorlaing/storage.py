@@ -158,7 +158,21 @@ class Storage:
         CREATE TABLE IF NOT EXISTS game_profiles (
             chat_id INTEGER PRIMARY KEY REFERENCES users(chat_id) ON DELETE CASCADE,
             nickname TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            telegram_username TEXT COLLATE NOCASE UNIQUE,
             updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS game_link_invitations (
+            token TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending', 'claimed', 'cancelled')),
+            host_chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            guest_chat_id INTEGER REFERENCES users(chat_id) ON DELETE SET NULL,
+            game_id TEXT REFERENCES games(id) ON DELETE SET NULL,
+            state_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            claimed_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS games (
@@ -444,6 +458,8 @@ class Storage:
             ON games(host_chat_id, guest_chat_id, status, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_game_events_game
             ON game_events(game_id, id);
+        CREATE INDEX IF NOT EXISTS idx_game_link_invitations_host
+            ON game_link_invitations(host_chat_id, status, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_background_cards_activity
             ON background_cards(chat_id, activity_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_ai_analyses_chat
@@ -499,6 +515,12 @@ class Storage:
             self._ensure_column("users", "reminder_pending_until", "TEXT")
             self._ensure_column("users", "last_interaction_at", "TEXT")
             self._ensure_column("users", "last_reengagement_at", "TEXT")
+            self._ensure_column("game_profiles", "telegram_username", "TEXT")
+            self._connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_game_profiles_telegram_username "
+                "ON game_profiles(telegram_username COLLATE NOCASE) "
+                "WHERE telegram_username IS NOT NULL"
+            )
             self._ensure_column(
                 "users", "timezone", "TEXT NOT NULL DEFAULT 'Europe/Warsaw'"
             )
@@ -1178,41 +1200,141 @@ class Storage:
                 (now, chat_id),
             )
 
-    def set_game_nickname(self, chat_id: int, nickname: str) -> sqlite3.Row:
-        """Create or update the discoverable nickname used only by game invitations."""
-
-        current = utc_now()
-        with self._lock, self._connection:
-            try:
-                self._connection.execute(
-                    """
-                    INSERT INTO game_profiles(chat_id, nickname, updated_at) VALUES (?, ?, ?)
-                    ON CONFLICT(chat_id) DO UPDATE SET nickname = excluded.nickname,
-                        updated_at = excluded.updated_at
-                    """,
-                    (chat_id, nickname, current),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise ValueError("Этот игровой ник уже занят.") from exc
-            row = self._connection.execute(
-                "SELECT * FROM game_profiles WHERE chat_id = ?", (chat_id,)
-            ).fetchone()
-        self.event(chat_id, "game_nickname_set", {"nickname": nickname})
-        assert row is not None
-        return row
-
     def game_profile(self, chat_id: int) -> sqlite3.Row | None:
         with self._lock:
             return self._connection.execute(
                 "SELECT * FROM game_profiles WHERE chat_id = ?", (chat_id,)
             ).fetchone()
 
-    def game_profile_by_nickname(self, nickname: str) -> sqlite3.Row | None:
+    def sync_game_telegram_username(
+        self, chat_id: int, username: str
+    ) -> sqlite3.Row | None:
+        """Remember only the username Telegram signed for game discovery."""
+
+        if not username:
+            return self.game_profile(chat_id)
+        current = utc_now()
+        with self._lock, self._connection:
+            try:
+                self._connection.execute(
+                    """
+                    INSERT INTO game_profiles(chat_id, nickname, telegram_username, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(chat_id) DO UPDATE SET
+                        telegram_username = excluded.telegram_username,
+                        updated_at = excluded.updated_at
+                    """,
+                    # ``nickname`` is a legacy unique column. Keep it private so an
+                    # old self-chosen nickname cannot block a real Telegram username.
+                    (chat_id, f"telegram_{chat_id}", username, current),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("Этот Telegram @username уже используется в играх.") from exc
+            return self._connection.execute(
+                "SELECT * FROM game_profiles WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+
+    def game_profile_by_telegram_username(self, username: str) -> sqlite3.Row | None:
         with self._lock:
             return self._connection.execute(
-                "SELECT * FROM game_profiles WHERE nickname = ? COLLATE NOCASE",
-                (nickname,),
+                "SELECT * FROM game_profiles WHERE telegram_username = ? COLLATE NOCASE",
+                (username,),
             ).fetchone()
+
+    def create_game_link_invitation(
+        self, kind: str, host_chat_id: int, state: dict[str, Any]
+    ) -> sqlite3.Row:
+        token = uuid.uuid4().hex
+        current = utc_now()
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO game_link_invitations(
+                    token, kind, status, host_chat_id, state_json, created_at, expires_at
+                ) VALUES (?, ?, 'pending', ?, ?, ?, ?)
+                """,
+                (
+                    token,
+                    kind,
+                    host_chat_id,
+                    json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+                    current,
+                    expires_at,
+                ),
+            )
+            row = self._connection.execute(
+                "SELECT * FROM game_link_invitations WHERE token = ?", (token,)
+            ).fetchone()
+        self.event(host_chat_id, "game_link_created", {"token": token, "kind": kind})
+        assert row is not None
+        return row
+
+    def game_link_invitations_for_host(self, chat_id: int) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._connection.execute(
+                """
+                SELECT * FROM game_link_invitations
+                WHERE host_chat_id = ? AND status = 'pending' AND expires_at > ?
+                ORDER BY created_at DESC LIMIT 10
+                """,
+                (chat_id, utc_now()),
+            ).fetchall()
+
+    def claim_game_link_invitation(
+        self, token: str, guest_chat_id: int
+    ) -> sqlite3.Row | None:
+        """Atomically turn a bearer invite into a two-player game once."""
+
+        current = utc_now()
+        with self._lock, self._connection:
+            invite = self._connection.execute(
+                "SELECT * FROM game_link_invitations WHERE token = ?", (token,)
+            ).fetchone()
+            if (
+                invite is None
+                or str(invite["status"]) != "pending"
+                or str(invite["expires_at"]) <= current
+                or int(invite["host_chat_id"]) == guest_chat_id
+            ):
+                return None
+            game_id = uuid.uuid4().hex
+            self._connection.execute(
+                """
+                INSERT INTO games(
+                    id, kind, status, host_chat_id, guest_chat_id, state_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
+                """,
+                (
+                    game_id,
+                    str(invite["kind"]),
+                    int(invite["host_chat_id"]),
+                    guest_chat_id,
+                    str(invite["state_json"]),
+                    current,
+                    current,
+                ),
+            )
+            claimed = self._connection.execute(
+                """
+                UPDATE game_link_invitations
+                SET status = 'claimed', guest_chat_id = ?, game_id = ?, claimed_at = ?
+                WHERE token = ? AND status = 'pending'
+                """,
+                (guest_chat_id, game_id, current, token),
+            )
+            if claimed.rowcount != 1:
+                return None
+            self._connection.execute(
+                """
+                INSERT INTO game_events(game_id, actor_chat_id, event_type, payload_json, created_at)
+                VALUES (?, ?, 'invited_by_link', '{}', ?)
+                """,
+                (game_id, int(invite["host_chat_id"]), current),
+            )
+        self.event(guest_chat_id, "game_link_claimed", {"game_id": game_id})
+        return self.game_for_player(game_id, guest_chat_id)
 
     def create_game_invitation(
         self,
@@ -1259,8 +1381,8 @@ class Storage:
         with self._lock:
             row = self._connection.execute(
                 """
-                SELECT games.*, host.nickname AS host_nickname,
-                       guest.nickname AS guest_nickname
+                SELECT games.*, COALESCE(host.telegram_username, host.nickname) AS host_nickname,
+                       COALESCE(guest.telegram_username, guest.nickname) AS guest_nickname
                 FROM games
                 LEFT JOIN game_profiles AS host ON host.chat_id = games.host_chat_id
                 LEFT JOIN game_profiles AS guest ON guest.chat_id = games.guest_chat_id
@@ -1276,8 +1398,8 @@ class Storage:
         with self._lock:
             return self._connection.execute(
                 """
-                SELECT games.*, host.nickname AS host_nickname,
-                       guest.nickname AS guest_nickname
+                SELECT games.*, COALESCE(host.telegram_username, host.nickname) AS host_nickname,
+                       COALESCE(guest.telegram_username, guest.nickname) AS guest_nickname
                 FROM games
                 LEFT JOIN game_profiles AS host ON host.chat_id = games.host_chat_id
                 LEFT JOIN game_profiles AS guest ON guest.chat_id = games.guest_chat_id
