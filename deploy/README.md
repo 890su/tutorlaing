@@ -32,10 +32,10 @@ docker compose logs --tail 80 tutorlaing
 
 Deploy считается подтверждённым только после remote image digest, local health
 и проверки логов. Один public health не доказывает, что на VM работает новая
-версия. Последняя подтверждённая версия: `sha-634c862`
-(`sha256:0afce3a51b5d…`). Образ `sha-7bbb03f` опубликован, но ещё не считается
-развёрнутым: для его подтверждения нужны SSH, remote digest, local health и
-логи.
+версия. Последняя подтверждённая версия: `sha-53f7b45`
+(`sha256:8d0389b8e6106ab537930fecc6d7686880fd835396288784b596ff860835d856`).
+На VM подтверждены SSH, remote digest, local health и startup-логи; публичный
+`/games` вернул HTTP 200, а API без Telegram `initData` — 403.
 
 ## Rollback
 

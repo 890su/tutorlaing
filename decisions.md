@@ -623,6 +623,15 @@ GHCR image `sha-634c862` опубликован с digest
 --no-deps`; container healthy, local и public health вернули `status=ok`,
 `database=ok`. Очередь Telegram webhook после обновления: `0`.
 
+## 2026-08-14 — Telegram Mini App games 53f7b45 развёрнут на srv-150
+
+GHCR image `sha-53f7b45` опубликован с digest
+`sha256:8d0389b8e6106ab537930fecc6d7686880fd835396288784b596ff860835d856`.
+На VM обновлён только сервис `tutorlaing` через `docker compose pull/up --no-deps`;
+container healthy, local и public health вернули `status=ok`, `database=ok`.
+Публичный игровой экран `/games` ответил HTTP 200, а игровой API без подписанного
+Telegram `initData` — HTTP 403. Persistent volume и сторонние сервисы не менялись.
+
 ## 2026-08-07 — Semantic practice начинается с выбранного формата
 
 Экран `Синонимы и смысл фраз · текущая тема` показывает отдельные кнопки для
