@@ -27,7 +27,7 @@ function statusLabel(game) {
   if (game.status === "pending") return game.can_accept ? "вас ждут" : "приглашение";
   if (game.status === "active") return game.your_turn ? "ваш ход" : "ход соперника";
   if (game.status === "finished") return game.winner === "draw" ? "ничья" : game.winner === "you" ? "вы выиграли" : "соперник выиграл";
-  return game.status === "declined" ? "отклонено" : "закрыто";
+  return game.status === "declined" ? "отклонено" : game.status === "cancelled" ? "завершена" : "закрыто";
 }
 function currentGame() { return model?.games.find((game) => game.id === selectedId) || model?.games.find((game) => game.status === "active" || game.can_accept) || null; }
 function renderNotice(message = "", isError = false) { return message ? `<p class="notice ${isError ? "error" : ""}">${escapeHtml(message)}</p>` : ""; }
@@ -46,7 +46,9 @@ function boardView(game) {
   const board = game.state.board || [];
   const prompt = game.status === "pending" ? (game.can_accept ? "Вас пригласили в игру" : "Ждём ответ соперника") : game.status === "active" ? (game.your_turn ? "Ваш ход" : "Ход соперника") : statusLabel(game);
   const cells = board.map((mark, index) => `<button class="cell ${mark === "X" ? "x" : mark === "O" ? "o" : ""}" data-move="${index}" ${(!game.your_turn || mark || game.status !== "active") ? "disabled" : ""} aria-label="Клетка ${index + 1}">${mark || ""}</button>`).join("");
-  const actions = game.can_accept ? `<button class="button" data-action="accept">Принять</button><button class="button ghost" data-action="decline">Отклонить</button>` : "";
+  const pendingActions = game.can_accept ? `<button class="button" data-action="accept">Принять</button><button class="button ghost" data-action="decline">Отклонить</button>` : "";
+  const activeActions = game.status === "active" ? `<button class="button danger" data-action="resign">Сдаться</button><button class="button ghost" data-action="finish">Завершить игру</button>` : "";
+  const actions = `${pendingActions}${activeActions}`;
   return `<section class="panel"><div class="board-head"><div><h2>${escapeHtml(game.title)}</h2><p>Вы: ${escapeHtml(game.you.nickname)} · ${game.you.marker} &nbsp; Соперник: ${escapeHtml(game.opponent.nickname)} · ${game.opponent.marker}</p></div><span class="turn">${escapeHtml(prompt)}</span></div><div class="board">${cells}</div><div class="actions">${actions}<button class="button ghost" data-action="lobby">К списку игр</button></div></section>`;
 }
 function render(message = "", isError = false) {
@@ -64,7 +66,7 @@ function render(message = "", isError = false) {
   if (invite) invite.addEventListener("submit", (event) => { event.preventDefault(); perform("/games/api/invitations", {kind: selectedGame, username: new FormData(invite).get("username")}); });
 }
 async function refresh(message = "", isError = false) { try { model = await api("/games/api/state"); render(message, isError); } catch (error) { render(error.message, true); } }
-async function perform(path, body) { try { await api(path, body); await refresh(path.endsWith("/move") ? "Ход отправлен." : "Готово."); } catch (error) { render(error.message, true); } }
+async function perform(path, body) { try { await api(path, body); const message = path.endsWith("/move") ? "Ход отправлен." : path.endsWith("/resign") ? "Вы сдались. Партия завершена." : path.endsWith("/finish") ? "Партия завершена без победителя." : "Готово."; await refresh(message); } catch (error) { render(error.message, true); } }
 async function createLink() { try { await api("/games/api/link-invitations", {kind: selectedGame}); await refresh("Ссылка готова: скопируйте её или отправьте прямо из Telegram."); } catch (error) { render(error.message, true); } }
 async function copyLink(url) { try { await navigator.clipboard.writeText(url); render("Ссылка скопирована."); } catch (_) { render("Не удалось скопировать ссылку. Нажмите и удерживайте поле со ссылкой.", true); } }
 function shareLink(url) { const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent("Сыграем в крестики-нолики в Tutorlaing?")}`; if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl); else copyLink(url); }

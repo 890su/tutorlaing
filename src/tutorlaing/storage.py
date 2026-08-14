@@ -1431,7 +1431,7 @@ class Storage:
                 UPDATE games
                 SET status = ?, state_json = ?, turn_chat_id = ?, winner_chat_id = ?,
                     version = version + 1, updated_at = ?,
-                    finished_at = CASE WHEN ? = 'finished' THEN ? ELSE finished_at END
+                    finished_at = CASE WHEN ? IN ('finished', 'declined', 'cancelled') THEN ? ELSE finished_at END
                 WHERE id = ? AND version = ?
                   AND (host_chat_id = ? OR guest_chat_id = ?)
                 """,

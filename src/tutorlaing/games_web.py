@@ -109,6 +109,12 @@ class GamesWebApp:
                     chat_id, str(data.get("game_id", "")), int(data.get("position", -1))
                 )
                 self._notify_opponent(result, chat_id, "move")
+            elif path == "/games/api/resign":
+                result = self.games.resign(chat_id, str(data.get("game_id", "")))
+                self._notify_opponent(result, chat_id, "resign")
+            elif path == "/games/api/finish":
+                result = self.games.finish(chat_id, str(data.get("game_id", "")))
+                self._notify_opponent(result, chat_id, "finish")
             else:
                 return WebResponse(404, b"", "text/plain")
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError, GameError) as exc:
@@ -179,6 +185,8 @@ class GamesWebApp:
             "accept": "🎮 Приглашение принято. Ваш ход уже отображается в игре.",
             "decline": "🎮 Приглашение в игру отклонено.",
             "move": "🎮 Соперник сделал ход. Откройте «Игры вдвоём» в помощнике.",
+            "resign": "🎮 Соперник сдался. Партия завершена вашей победой.",
+            "finish": "🎮 Соперник завершил партию без победителя.",
         }
         self.notify(opponent_id, texts[action])
 

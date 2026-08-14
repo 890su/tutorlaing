@@ -267,6 +267,48 @@ class GameService:
             raise GameError("Ход уже сделан. Обновите поле.")
         return self._public_game(updated, chat_id)
 
+    def resign(self, chat_id: int, game_id: str) -> dict[str, Any]:
+        """Finish an active game, awarding the win to the other player."""
+
+        row = self.store.game_for_player(game_id, chat_id)
+        if str(row["status"]) != "active":
+            raise GameError("Сдаться можно только в активной партии.")
+        host_id = int(row["host_chat_id"])
+        guest_id = int(row["guest_chat_id"])
+        winner_id = guest_id if chat_id == host_id else host_id
+        updated = self.store.update_game(
+            game_id,
+            chat_id,
+            int(row["version"]),
+            status="finished",
+            state=json.loads(str(row["state_json"])),
+            turn_chat_id=None,
+            winner_chat_id=winner_id,
+            event_type="resigned",
+        )
+        if updated is None:
+            raise GameError("Игра уже изменилась. Обновите экран.")
+        return self._public_game(updated, chat_id)
+
+    def finish(self, chat_id: int, game_id: str) -> dict[str, Any]:
+        """Close an active game without assigning a winner."""
+
+        row = self.store.game_for_player(game_id, chat_id)
+        if str(row["status"]) != "active":
+            raise GameError("Завершить можно только активную партию.")
+        updated = self.store.update_game(
+            game_id,
+            chat_id,
+            int(row["version"]),
+            status="cancelled",
+            state=json.loads(str(row["state_json"])),
+            turn_chat_id=None,
+            event_type="finished_by_player",
+        )
+        if updated is None:
+            raise GameError("Игра уже изменилась. Обновите экран.")
+        return self._public_game(updated, chat_id)
+
     def _public_game(self, row: Any, chat_id: int) -> dict[str, Any]:
         host_id = int(row["host_chat_id"])
         guest_id = int(row["guest_chat_id"])

@@ -60,6 +60,21 @@ class GameServiceTests(unittest.TestCase):
         with self.assertRaises(GameError):
             self.games.claim_link_invitation(20, link["token"])
 
+    def test_player_can_resign_or_finish_an_active_game(self) -> None:
+        invitation = self.games.invite(10, "tic_tac_toe", "bob_2")
+        self.games.accept(20, invitation["id"])
+        resigned = self.games.resign(20, invitation["id"])
+        self.assertEqual("finished", resigned["status"])
+        self.assertEqual("opponent", resigned["winner"])
+        with self.assertRaises(GameError):
+            self.games.move(10, invitation["id"], 0)
+
+        second = self.games.invite(10, "tic_tac_toe", "bob_2")
+        self.games.accept(20, second["id"])
+        cancelled = self.games.finish(10, second["id"])
+        self.assertEqual("cancelled", cancelled["status"])
+        self.assertIsNone(cancelled["winner"])
+
 
 class GamesWebAppTests(unittest.TestCase):
     token = "test-token"
