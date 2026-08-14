@@ -580,6 +580,15 @@ reminder modes, но сохраняет pause и quiet hours. Так явно в
 `mastered`, после чего selector её полностью исключает. Неудачная проверка
 возвращает карточку в короткую практику.
 
+## 2026-08-14 — Hourly cards a4fbd45 развёрнуты на srv-150
+
+GHCR image `sha-a4fbd45` опубликован с digest
+`sha256:fc26e7f79be864e7fd8c387f12eb2adea316a5c2853314c29760b8979b24104b`.
+На VM сервис обновлён через `docker compose pull/up --no-deps tutorlaing`;
+контейнер healthy, local и public health вернули `status=ok`, `database=ok`.
+Startup logs подтвердили scheduler и webhook без ошибки. Persistent volume и
+сторонние сервисы не изменялись.
+
 ## 2026-08-07 — Semantic practice начинается с выбранного формата
 
 Экран `Синонимы и смысл фраз · текущая тема` показывает отдельные кнопки для

@@ -63,7 +63,7 @@ P2: персональный план дня и privacy-safe продуктов�
 
 - Docker image публикуется в GHCR. Runtime: `srv-150`,
   `~/services/tutorlaing`; текущая ветка не развёртывается автоматически.
-- Последняя подтверждённая production-версия — `sha-aa997e8`, Docker healthy;
+- Последняя подтверждённая production-версия — `sha-a4fbd45`, Docker healthy;
   public health отвечал HTTP 200 2026-08-07. Более новая menu-ветка ещё не
   подтверждена по SSH из-за нестабильного WireGuard/CGNAT.
 - Доступ описан в `deploy/ACCESS.md`. В проекте нет и не должно быть private

@@ -34,7 +34,7 @@ reference; private key, пароли, токены и содержимое `.env
 
 ## Состояние
 
-Последняя подтверждённая deploy-версия — `sha-aa997e8`
+Последняя подтверждённая deploy-версия — `sha-a4fbd45`
 (`sha256:8d4552bb4b77…`): Docker был `running healthy`, local/public health
 вернули `status=ok`, `database=ok`. Канал WireGuard за CGNAT нестабилен;
 следующий deploy подтверждается remote digest, local health и логами, а не одним
