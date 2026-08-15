@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -65,6 +66,7 @@ class GameDefinition:
     key: str
     title: str
     min_players: int
+    description: str = ""
 
     def initial_state(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -73,6 +75,27 @@ class GameDefinition:
         self, state: dict[str, Any], marker: str, position: int
     ) -> tuple[dict[str, Any], str | None, bool]:
         raise NotImplementedError
+
+    def public_state(self, state: dict[str, Any], marker: str) -> dict[str, Any]:
+        return state
+
+    def action(
+        self,
+        state: dict[str, Any],
+        marker: str,
+        action: str,
+        card: str = "",
+        target: str = "",
+    ) -> "GameTransition":
+        raise GameError("У этой игры нет такого действия.")
+
+
+@dataclass(frozen=True)
+class GameTransition:
+    state: dict[str, Any]
+    turn_marker: str | None
+    winner_marker: str | None = None
+    draw: bool = False
 
 
 class TicTacToeDefinition(GameDefinition):
@@ -88,7 +111,7 @@ class TicTacToeDefinition(GameDefinition):
     )
 
     def __init__(self) -> None:
-        super().__init__("tic_tac_toe", "Крестики-нолики", 2)
+        super().__init__("tic_tac_toe", "Крестики-нолики", 2, "Классика · 3 в ряд")
 
     def initial_state(self) -> dict[str, Any]:
         return {"board": ["" for _ in range(9)]}
@@ -117,7 +140,396 @@ class TicTacToeDefinition(GameDefinition):
         return {"board": board}, winner, winner is None and all(board)
 
 
-GAME_REGISTRY: dict[str, GameDefinition] = {"tic_tac_toe": TicTacToeDefinition()}
+class DurakDefinition(GameDefinition):
+    """Two-player podkidnoy Durak with server-owned deck and hidden hands."""
+
+    ranks = ("6", "7", "8", "9", "10", "J", "Q", "K", "A")
+    suits = ("C", "D", "H", "S")
+    rank_value = {rank: index for index, rank in enumerate(ranks)}
+
+    def __init__(self) -> None:
+        super().__init__("durak", "Дурак", 2, "Подкидной · 36 карт")
+
+    def initial_state(self) -> dict[str, Any]:
+        deck = [f"{rank}{suit}" for suit in self.suits for rank in self.ranks]
+        secrets.SystemRandom().shuffle(deck)
+        hands = {"X": [], "O": []}
+        for _ in range(6):
+            for marker in ("X", "O"):
+                hands[marker].append(deck.pop(0))
+        trump_suit = deck[-1][-1]
+        lowest = {
+            marker: min(
+                (self.rank_value[card[:-1]] for card in hand if card[-1] == trump_suit),
+                default=99,
+            )
+            for marker, hand in hands.items()
+        }
+        attacker = "X" if lowest["X"] <= lowest["O"] else "O"
+        defender = "O" if attacker == "X" else "X"
+        return {
+            "deck": deck,
+            "trump_suit": trump_suit,
+            "trump_card": deck[-1],
+            "hands": hands,
+            "table": [],
+            "attacker": attacker,
+            "defender": defender,
+            "phase": "attack",
+            "attack_limit": min(6, len(hands[defender])),
+        }
+
+    def public_state(self, state: dict[str, Any], marker: str) -> dict[str, Any]:
+        self._validate_state(state)
+        attacker = str(state["attacker"])
+        defender = str(state["defender"])
+        table = [
+            {"attack": str(pair["attack"]), "defense": str(pair.get("defense", ""))}
+            for pair in state["table"]
+        ]
+        all_defended = bool(table) and all(pair["defense"] for pair in table)
+        phase = str(state["phase"])
+        can_throw = (
+            marker == attacker
+            and phase in {"defend", "take"}
+            and len(table) < int(state["attack_limit"])
+            and bool(self._throwable_cards(state, marker))
+        )
+        return {
+            "game": "durak",
+            "trump_suit": str(state["trump_suit"]),
+            "trump_card": str(state["trump_card"]),
+            "deck_count": len(state["deck"]),
+            "hand": self._sorted_hand(state["hands"][marker], str(state["trump_suit"])),
+            "opponent_cards": len(state["hands"][self._other(marker)]),
+            "table": table,
+            "attacker": attacker,
+            "defender": defender,
+            "phase": phase,
+            "attack_limit": int(state["attack_limit"]),
+            "can": {
+                "attack": marker == attacker and phase == "attack",
+                "throw": can_throw,
+                "beat": marker == defender and phase == "defend" and any(
+                    not pair["defense"] for pair in table
+                ),
+                "take": marker == defender and phase == "defend",
+                "finish_round": marker == attacker
+                and (phase == "take" or (phase == "defend" and all_defended)),
+            },
+        }
+
+    def action(
+        self,
+        state: dict[str, Any],
+        marker: str,
+        action: str,
+        card: str = "",
+        target: str = "",
+    ) -> GameTransition:
+        self._validate_state(state)
+        next_state = json.loads(json.dumps(state))
+        if action == "attack":
+            self._attack(next_state, marker, card)
+        elif action == "throw":
+            self._throw(next_state, marker, card)
+        elif action == "beat":
+            self._beat(next_state, marker, card, target)
+        elif action == "take":
+            self._take(next_state, marker)
+        elif action == "finish_round":
+            self._finish_round(next_state, marker)
+        else:
+            raise GameError("Неизвестное действие в этой партии.")
+        winner, draw = self._winner(next_state)
+        return GameTransition(next_state, None if winner or draw else self._turn_marker(next_state), winner, draw)
+
+    def _attack(self, state: dict[str, Any], marker: str, card: str) -> None:
+        if marker != state["attacker"] or state["phase"] != "attack":
+            raise GameError("Сейчас атакует соперник.")
+        self._remove_hand_card(state, marker, card)
+        state["table"].append({"attack": card, "defense": ""})
+        state["phase"] = "defend"
+
+    def _throw(self, state: dict[str, Any], marker: str, card: str) -> None:
+        if marker != state["attacker"] or state["phase"] not in {"defend", "take"}:
+            raise GameError("Подкидывать сейчас нельзя.")
+        if len(state["table"]) >= int(state["attack_limit"]):
+            raise GameError("Больше карт в этом раунде подкинуть нельзя.")
+        if card not in self._throwable_cards(state, marker):
+            raise GameError("Подкинуть можно только карту ранга, уже лежащего на столе.")
+        self._remove_hand_card(state, marker, card)
+        state["table"].append({"attack": card, "defense": ""})
+
+    def _beat(self, state: dict[str, Any], marker: str, card: str, target: str) -> None:
+        if marker != state["defender"] or state["phase"] != "defend":
+            raise GameError("Сейчас отбивается соперник.")
+        self._remove_hand_card(state, marker, card)
+        pair = next(
+            (
+                item
+                for item in state["table"]
+                if item["attack"] == target and not item.get("defense")
+            ),
+            None,
+        )
+        if pair is None:
+            state["hands"][marker].append(card)
+            raise GameError("Эта карта атаки уже закрыта.")
+        if not self._beats(card, str(pair["attack"]), str(state["trump_suit"])):
+            state["hands"][marker].append(card)
+            raise GameError("Эта карта не бьёт выбранную карту.")
+        pair["defense"] = card
+
+    def _take(self, state: dict[str, Any], marker: str) -> None:
+        if marker != state["defender"] or state["phase"] != "defend":
+            raise GameError("Взять карты может только защищающийся игрок.")
+        state["phase"] = "take"
+
+    def _finish_round(self, state: dict[str, Any], marker: str) -> None:
+        attacker = str(state["attacker"])
+        defender = str(state["defender"])
+        defended = bool(state["table"]) and all(pair.get("defense") for pair in state["table"])
+        if marker != attacker or (state["phase"] != "take" and not defended):
+            raise GameError("Раунд можно завершить после отбоя или решения взять карты.")
+        if state["phase"] == "take":
+            state["hands"][defender].extend(
+                card for pair in state["table"] for card in (pair["attack"], pair.get("defense", "")) if card
+            )
+            next_attacker = attacker
+        else:
+            next_attacker = defender
+        self._refill(state, attacker, defender)
+        state["table"] = []
+        state["attacker"] = next_attacker
+        state["defender"] = self._other(next_attacker)
+        state["phase"] = "attack"
+        state["attack_limit"] = min(6, len(state["hands"][state["defender"]]))
+
+    def _refill(self, state: dict[str, Any], attacker: str, defender: str) -> None:
+        for marker in (attacker, defender):
+            while len(state["hands"][marker]) < 6 and state["deck"]:
+                state["hands"][marker].append(state["deck"].pop(0))
+
+    def _winner(self, state: dict[str, Any]) -> tuple[str | None, bool]:
+        if state["deck"]:
+            return None, False
+        empty = [marker for marker in ("X", "O") if not state["hands"][marker]]
+        if len(empty) == 1:
+            return empty[0], False
+        return None, len(empty) == 2
+
+    def _turn_marker(self, state: dict[str, Any]) -> str:
+        if state["phase"] in {"attack", "take"}:
+            return str(state["attacker"])
+        if all(pair.get("defense") for pair in state["table"]):
+            return str(state["attacker"])
+        return str(state["defender"])
+
+    def _throwable_cards(self, state: dict[str, Any], marker: str) -> list[str]:
+        table_ranks = {card[:-1] for pair in state["table"] for card in (pair["attack"], pair.get("defense", "")) if card}
+        return [card for card in state["hands"][marker] if card[:-1] in table_ranks]
+
+    def _remove_hand_card(self, state: dict[str, Any], marker: str, card: str) -> None:
+        if card not in state["hands"][marker]:
+            raise GameError("Этой карты нет у вас в руке.")
+        state["hands"][marker].remove(card)
+
+    def _beats(self, defense: str, attack: str, trump_suit: str) -> bool:
+        defense_rank, defense_suit = defense[:-1], defense[-1]
+        attack_rank, attack_suit = attack[:-1], attack[-1]
+        return (defense_suit == attack_suit and self.rank_value[defense_rank] > self.rank_value[attack_rank]) or (
+            defense_suit == trump_suit and attack_suit != trump_suit
+        )
+
+    def _sorted_hand(self, cards: list[str], trump_suit: str) -> list[str]:
+        return sorted(
+            cards,
+            key=lambda card: (
+                card[-1] == trump_suit,
+                self.rank_value[card[:-1]],
+                card[-1],
+            ),
+        )
+
+    @staticmethod
+    def _other(marker: str) -> str:
+        return "O" if marker == "X" else "X"
+
+    def _validate_state(self, state: dict[str, Any]) -> None:
+        if (
+            not isinstance(state.get("deck"), list)
+            or not isinstance(state.get("hands"), dict)
+            or set(state["hands"]) != {"X", "O"}
+            or state.get("attacker") not in {"X", "O"}
+            or state.get("defender") not in {"X", "O"}
+            or state["attacker"] == state["defender"]
+            or state.get("phase") not in {"attack", "defend", "take"}
+            or state.get("trump_suit") not in self.suits
+            or not isinstance(state.get("trump_card"), str)
+            or not isinstance(state.get("table"), list)
+        ):
+            raise GameError("Состояние партии повреждено.")
+
+
+class BattleshipDefinition(GameDefinition):
+    """Two-player Battleship with server-owned fleet layouts and shot history."""
+
+    size = 10
+    fleet = (4, 3, 3, 2, 2, 2, 1, 1, 1, 1)
+    columns = "ABCDEFGHIJ"
+
+    def __init__(self) -> None:
+        super().__init__("battleship", "Морской бой", 2, "Классика · поле 10 × 10")
+
+    def initial_state(self) -> dict[str, Any]:
+        return {
+            "boards": {"X": self._place_fleet(), "O": self._place_fleet()},
+            "shots": {"X": [], "O": []},
+            "turn": "X",
+            "last_shot": None,
+        }
+
+    def public_state(self, state: dict[str, Any], marker: str) -> dict[str, Any]:
+        self._validate_state(state)
+        opponent = self._other(marker)
+        own_shots = set(state["shots"][marker])
+        opponent_shots = set(state["shots"][opponent])
+        own_cells = {cell for ship in state["boards"][marker] for cell in ship}
+        opponent_cells = {cell for ship in state["boards"][opponent] for cell in ship}
+
+        own = [
+            {
+                "cell": cell,
+                "result": "hit" if cell in opponent_shots else "ship",
+            }
+            for cell in sorted(own_cells | opponent_shots, key=self._cell_index)
+        ]
+        target = [
+            {
+                "cell": cell,
+                "result": "hit" if cell in opponent_cells else "miss",
+            }
+            for cell in sorted(own_shots, key=self._cell_index)
+        ]
+        return {
+            "game": "battleship",
+            "size": self.size,
+            "own": own,
+            "target": target,
+            "your_fleet": self._afloat(state["boards"][marker], opponent_shots),
+            "opponent_fleet": self._afloat(state["boards"][opponent], own_shots),
+            "can_fire": marker == state["turn"],
+            "last_shot": state["last_shot"],
+        }
+
+    def action(
+        self,
+        state: dict[str, Any],
+        marker: str,
+        action: str,
+        card: str = "",
+        target: str = "",
+    ) -> GameTransition:
+        self._validate_state(state)
+        if action != "fire":
+            raise GameError("В морском бое доступен только выстрел по клетке.")
+        if marker != state["turn"]:
+            raise GameError("Сейчас ход соперника.")
+        cell = target.upper().strip()
+        if not self._is_cell(cell):
+            raise GameError("Выберите клетку игрового поля.")
+        if cell in state["shots"][marker]:
+            raise GameError("По этой клетке вы уже стреляли.")
+        next_state = json.loads(json.dumps(state))
+        next_state["shots"][marker].append(cell)
+        opponent = self._other(marker)
+        hit = cell in {item for ship in next_state["boards"][opponent] for item in ship}
+        next_state["last_shot"] = {"by": marker, "cell": cell, "result": "hit" if hit else "miss"}
+        winner = (
+            marker
+            if all(
+                ship_cells <= set(next_state["shots"][marker])
+                for ship_cells in map(set, next_state["boards"][opponent])
+            )
+            else None
+        )
+        if not winner:
+            next_state["turn"] = opponent
+        return GameTransition(next_state, None if winner else opponent, winner)
+
+    def _place_fleet(self) -> list[list[str]]:
+        randomizer = secrets.SystemRandom()
+        ships: list[list[str]] = []
+        blocked: set[int] = set()
+        for length in self.fleet:
+            for _ in range(500):
+                horizontal = bool(randomizer.randrange(2))
+                row = randomizer.randrange(self.size)
+                column = randomizer.randrange(self.size)
+                if horizontal and column + length > self.size:
+                    continue
+                if not horizontal and row + length > self.size:
+                    continue
+                cells = [
+                    (row * self.size + column + offset)
+                    if horizontal
+                    else ((row + offset) * self.size + column)
+                    for offset in range(length)
+                ]
+                if any(cell in blocked for cell in cells):
+                    continue
+                ships.append([self._index_cell(cell) for cell in cells])
+                for cell in cells:
+                    cell_row, cell_column = divmod(cell, self.size)
+                    for row_offset in (-1, 0, 1):
+                        for column_offset in (-1, 0, 1):
+                            near_row = cell_row + row_offset
+                            near_column = cell_column + column_offset
+                            if 0 <= near_row < self.size and 0 <= near_column < self.size:
+                                blocked.add(near_row * self.size + near_column)
+                break
+            else:
+                raise GameError("Не удалось расставить корабли. Создайте новую партию.")
+        return ships
+
+    def _afloat(self, ships: list[list[str]], shots: set[str]) -> int:
+        return sum(not set(ship).issubset(shots) for ship in ships)
+
+    def _is_cell(self, cell: str) -> bool:
+        return len(cell) in {2, 3} and cell[0] in self.columns and cell[1:].isdigit() and 1 <= int(cell[1:]) <= self.size
+
+    def _cell_index(self, cell: str) -> int:
+        return (int(cell[1:]) - 1) * self.size + self.columns.index(cell[0])
+
+    def _index_cell(self, index: int) -> str:
+        row, column = divmod(index, self.size)
+        return f"{self.columns[column]}{row + 1}"
+
+    @staticmethod
+    def _other(marker: str) -> str:
+        return "O" if marker == "X" else "X"
+
+    def _validate_state(self, state: dict[str, Any]) -> None:
+        boards = state.get("boards")
+        shots = state.get("shots")
+        if (
+            not isinstance(boards, dict)
+            or not isinstance(shots, dict)
+            or set(boards) != {"X", "O"}
+            or set(shots) != {"X", "O"}
+            or state.get("turn") not in {"X", "O"}
+            or any(not isinstance(boards[marker], list) for marker in ("X", "O"))
+            or any(not isinstance(shots[marker], list) for marker in ("X", "O"))
+        ):
+            raise GameError("Состояние партии повреждено.")
+
+
+GAME_REGISTRY: dict[str, GameDefinition] = {
+    "tic_tac_toe": TicTacToeDefinition(),
+    "durak": DurakDefinition(),
+    "battleship": BattleshipDefinition(),
+}
 
 
 class GameService:
@@ -128,7 +540,12 @@ class GameService:
 
     def catalog(self) -> list[dict[str, Any]]:
         return [
-            {"id": item.key, "title": item.title, "players": item.min_players}
+            {
+                "id": item.key,
+                "title": item.title,
+                "players": item.min_players,
+                "description": item.description,
+            }
             for item in GAME_REGISTRY.values()
         ]
 
@@ -206,13 +623,19 @@ class GameService:
         row = self.store.game_for_player(game_id, chat_id)
         if str(row["status"]) != "pending" or int(row["guest_chat_id"]) != chat_id:
             raise GameError("Это приглашение уже нельзя принять.")
+        state = json.loads(str(row["state_json"]))
+        definition = GAME_REGISTRY.get(str(row["kind"]))
+        if definition is None:
+            raise GameError("Правила этой игры недоступны.")
+        first_marker = str(state.get("attacker", state.get("turn", "X")))
+        first_turn = int(row["host_chat_id"]) if first_marker == "X" else int(row["guest_chat_id"])
         updated = self.store.update_game(
             game_id,
             chat_id,
             int(row["version"]),
             status="active",
-            state=json.loads(str(row["state_json"])),
-            turn_chat_id=int(row["host_chat_id"]),
+            state=state,
+            turn_chat_id=first_turn,
             event_type="accepted",
         )
         if updated is None:
@@ -241,7 +664,7 @@ class GameService:
         if str(row["status"]) != "active" or int(row["turn_chat_id"] or 0) != chat_id:
             raise GameError("Сейчас ход соперника.")
         definition = GAME_REGISTRY.get(str(row["kind"]))
-        if definition is None:
+        if not isinstance(definition, TicTacToeDefinition):
             raise GameError("Правила этой игры недоступны.")
         host_id = int(row["host_chat_id"])
         guest_id = int(row["guest_chat_id"])
@@ -265,6 +688,58 @@ class GameService:
         )
         if updated is None:
             raise GameError("Ход уже сделан. Обновите поле.")
+        return self._public_game(updated, chat_id)
+
+    def action(
+        self,
+        chat_id: int,
+        game_id: str,
+        action: str,
+        card: str = "",
+        target: str = "",
+    ) -> dict[str, Any]:
+        """Apply a game-specific action without exposing hidden state to the client."""
+
+        row = self.store.game_for_player(game_id, chat_id)
+        if str(row["status"]) != "active":
+            raise GameError("Эта партия уже завершена.")
+        definition = GAME_REGISTRY.get(str(row["kind"]))
+        if definition is None:
+            raise GameError("Правила этой игры недоступны.")
+        host_id = int(row["host_chat_id"])
+        guest_id = int(row["guest_chat_id"])
+        marker = "X" if chat_id == host_id else "O"
+        transition = definition.action(
+            json.loads(str(row["state_json"])), marker, action, card, target
+        )
+        winner_id = (
+            host_id
+            if transition.winner_marker == "X"
+            else guest_id
+            if transition.winner_marker == "O"
+            else None
+        )
+        status = "finished" if transition.winner_marker or transition.draw else "active"
+        turn_chat_id = (
+            None
+            if status == "finished" or transition.turn_marker is None
+            else host_id
+            if transition.turn_marker == "X"
+            else guest_id
+        )
+        updated = self.store.update_game(
+            game_id,
+            chat_id,
+            int(row["version"]),
+            status=status,
+            state=transition.state,
+            turn_chat_id=turn_chat_id,
+            winner_chat_id=winner_id,
+            event_type=f"game_{action}",
+            event_payload={"card": card, "target": target, "marker": marker},
+        )
+        if updated is None:
+            raise GameError("Игра уже изменилась. Обновите экран.")
         return self._public_game(updated, chat_id)
 
     def resign(self, chat_id: int, game_id: str) -> dict[str, Any]:
@@ -315,14 +790,16 @@ class GameService:
         mine = chat_id == host_id
         opponent = str((row["guest_nickname"] if mine else row["host_nickname"]) or "игрок")
         status = str(row["status"])
+        definition = GAME_REGISTRY[str(row["kind"])]
+        marker = "X" if mine else "O"
         return {
             "id": str(row["id"]),
             "kind": str(row["kind"]),
-            "title": GAME_REGISTRY[str(row["kind"])].title,
+            "title": definition.title,
             "status": status,
-            "state": json.loads(str(row["state_json"])),
+            "state": definition.public_state(json.loads(str(row["state_json"])), marker),
             "you": {
-                "marker": "X" if mine else "O",
+                "marker": marker,
                 "nickname": str(
                     (row["host_nickname"] if mine else row["guest_nickname"])
                     or "вы"

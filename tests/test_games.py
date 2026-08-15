@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import urlencode
 
-from tutorlaing.game_service import GameError, GameService
+from tutorlaing.game_service import BattleshipDefinition, DurakDefinition, GameError, GameService
 from tutorlaing.games_web import GamesWebApp
 from tutorlaing.privacy import CONSENT_VERSION
 from tutorlaing.storage import Storage
@@ -74,6 +74,93 @@ class GameServiceTests(unittest.TestCase):
         cancelled = self.games.finish(10, second["id"])
         self.assertEqual("cancelled", cancelled["status"])
         self.assertIsNone(cancelled["winner"])
+
+    def test_durak_keeps_hands_private_and_resolves_a_defended_round(self) -> None:
+        state = {
+            "deck": [],
+            "trump_suit": "S",
+            "trump_card": "6S",
+            "hands": {"X": ["6H", "7S"], "O": ["8H", "9C"]},
+            "table": [],
+            "attacker": "X",
+            "defender": "O",
+            "phase": "attack",
+            "attack_limit": 2,
+        }
+        row = self.storage.create_game_invitation("durak", 10, 20, state)
+        self.games.accept(20, str(row["id"]))
+        attacked = self.games.action(10, str(row["id"]), "attack", "6H")
+        self.assertEqual("durak", attacked["state"]["game"])
+        self.assertEqual(["7S"], attacked["state"]["hand"])
+        self.assertNotIn("hands", attacked["state"])
+        self.assertNotIn("deck", attacked["state"])
+
+        defended = self.games.action(20, str(row["id"]), "beat", "8H", "6H")
+        self.assertEqual("8H", defended["state"]["table"][0]["defense"])
+        completed = self.games.action(10, str(row["id"]), "finish_round")
+        self.assertEqual("attack", completed["state"]["phase"])
+        self.assertEqual("O", completed["state"]["attacker"])
+
+    def test_durak_rejects_illegal_defense(self) -> None:
+        definition = DurakDefinition()
+        state = {
+            "deck": ["6S"],
+            "trump_suit": "S",
+            "trump_card": "6S",
+            "hands": {"X": ["9H"], "O": ["8C"]},
+            "table": [{"attack": "9H", "defense": ""}],
+            "attacker": "X",
+            "defender": "O",
+            "phase": "defend",
+            "attack_limit": 1,
+        }
+        with self.assertRaises(GameError):
+            definition.action(state, "O", "beat", "8C", "9H")
+
+    def test_durak_deals_a_complete_private_deck(self) -> None:
+        definition = DurakDefinition()
+        state = definition.initial_state()
+        cards = [*state["deck"], *state["hands"]["X"], *state["hands"]["O"]]
+        self.assertEqual(36, len(cards))
+        self.assertEqual(36, len(set(cards)))
+        public = definition.public_state(state, "X")
+        self.assertEqual(6, len(public["hand"]))
+        self.assertEqual(6, public["opponent_cards"])
+        self.assertNotIn("deck", public)
+        self.assertNotIn("hands", public)
+
+    def test_battleship_keeps_fleet_private_and_alternates_shots(self) -> None:
+        state = {
+            "boards": {"X": [["A1"]], "O": [["B2", "C2"]]},
+            "shots": {"X": [], "O": []},
+            "turn": "X",
+            "last_shot": None,
+        }
+        row = self.storage.create_game_invitation("battleship", 10, 20, state)
+        accepted = self.games.accept(20, str(row["id"]))
+        self.assertFalse(accepted["your_turn"])
+        first = self.games.action(10, str(row["id"]), "fire", target="A2")
+        self.assertEqual("miss", first["state"]["target"][0]["result"])
+        self.assertNotIn("boards", first["state"])
+        self.assertNotIn("shots", first["state"])
+        with self.assertRaises(GameError):
+            self.games.action(10, str(row["id"]), "fire", target="B2")
+        self.games.action(20, str(row["id"]), "fire", target="J10")
+        hit = self.games.action(10, str(row["id"]), "fire", target="B2")
+        self.assertEqual("hit", hit["state"]["target"][-1]["result"])
+        self.assertEqual(1, hit["state"]["opponent_fleet"])
+
+    def test_battleship_deals_two_complete_non_overlapping_fleets(self) -> None:
+        definition = BattleshipDefinition()
+        state = definition.initial_state()
+        for marker in ("X", "O"):
+            cells = [cell for ship in state["boards"][marker] for cell in ship]
+            self.assertEqual(20, len(cells))
+            self.assertEqual(20, len(set(cells)))
+        public = definition.public_state(state, "X")
+        self.assertEqual(10, public["size"])
+        self.assertNotIn("boards", public)
+        self.assertNotIn("shots", public)
 
 
 class GamesWebAppTests(unittest.TestCase):
