@@ -3,6 +3,7 @@ const app = document.querySelector("#app");
 let model = null;
 let selectedGame = "tic_tac_toe";
 let selectedId = null;
+let lobbyMode = false;
 let polling = null;
 let selectedCard = "";
 
@@ -30,7 +31,7 @@ function statusLabel(game) {
   if (game.status === "finished") return game.winner === "draw" ? "ничья" : game.winner === "you" ? "вы выиграли" : "соперник выиграл";
   return game.status === "declined" ? "отклонено" : game.status === "cancelled" ? "завершена" : "закрыто";
 }
-function currentGame() { return model?.games.find((game) => game.id === selectedId) || model?.games.find((game) => game.status === "active" || game.can_accept) || null; }
+function currentGame() { if (lobbyMode) return null; return model?.games.find((game) => game.id === selectedId) || model?.games.find((game) => game.status === "active" || game.can_accept) || null; }
 function renderNotice(message = "", isError = false) { return message ? `<p class="notice ${isError ? "error" : ""}">${escapeHtml(message)}</p>` : ""; }
 function profileView() {
   if (model.profile?.telegram_username) return "";
@@ -99,15 +100,15 @@ function render(message = "", isError = false) {
   if (!tg) { app.innerHTML = `<section class="panel"><h2>Откройте игру из Telegram</h2><p>Так мы безопасно узнаем игроков и сохраним партию.</p></section>`; return; }
   if (!model) { app.innerHTML = `<section class="panel"><h2>Не удалось открыть игру</h2>${renderNotice(message || "Попробуйте открыть игру из чата с ботом.", true)}</section>`; return; }
   const game = currentGame();
-  app.innerHTML = `<header class="masthead"><div><div class="eyebrow">Tutorlaing · вдвоём</div><h1>Игровой стол</h1></div>${model?.profile?.telegram_username ? `<span class="nick">@${escapeHtml(model.profile.telegram_username)}</span>` : ""}</header>${renderNotice(message, isError)}${profileView()}${boardView(game)}${lobbyView()}`;
-  app.querySelectorAll("[data-kind]").forEach((button) => button.addEventListener("click", () => { selectedGame = button.dataset.kind; selectedId = null; render(); }));
-  app.querySelectorAll("[data-game]").forEach((button) => button.addEventListener("click", () => { selectedId = button.dataset.game; render(); }));
+  app.innerHTML = `<header class="masthead"><div><div class="eyebrow">Tutorlaing · вдвоём</div><h1>Игровой стол</h1></div><div class="masthead-actions">${game ? `<button class="lobby-link" data-action="lobby">Новая игра</button>` : ""}${model?.profile?.telegram_username ? `<span class="nick">@${escapeHtml(model.profile.telegram_username)}</span>` : ""}</div></header>${renderNotice(message, isError)}${profileView()}${boardView(game)}${lobbyView()}`;
+  app.querySelectorAll("[data-kind]").forEach((button) => button.addEventListener("click", () => { selectedGame = button.dataset.kind; selectedId = null; lobbyMode = true; render(); }));
+  app.querySelectorAll("[data-game]").forEach((button) => button.addEventListener("click", () => { selectedId = button.dataset.game; lobbyMode = false; render(); }));
   app.querySelectorAll("[data-move]").forEach((button) => button.addEventListener("click", () => perform("/games/api/move", {game_id: currentGame().id, position: Number(button.dataset.move)})));
   app.querySelectorAll("[data-durak-card]").forEach((button) => button.addEventListener("click", () => { const mode = button.dataset.durakMode; const card = button.dataset.durakCard; if (mode === "beat") { selectedCard = selectedCard === card ? "" : card; render(); } else if (mode) perform("/games/api/action", {game_id: currentGame().id, action: mode, card}); }));
   app.querySelectorAll("[data-durak-target]").forEach((button) => button.addEventListener("click", () => { if (selectedCard) { const card = selectedCard; selectedCard = ""; perform("/games/api/action", {game_id: currentGame().id, action: "beat", card, target: button.dataset.durakTarget}); } }));
   app.querySelectorAll("[data-durak-action]").forEach((button) => button.addEventListener("click", () => perform("/games/api/action", {game_id: currentGame().id, action: button.dataset.durakAction})));
   app.querySelectorAll("[data-battleship-shot]").forEach((button) => button.addEventListener("click", () => perform("/games/api/action", {game_id: currentGame().id, action: "fire", target: button.dataset.battleshipShot})));
-  app.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => { const action = button.dataset.action; if (action === "lobby") { selectedId = null; render(); } else if (action === "create-link") { createLink(); } else perform(`/games/api/${action}`, {game_id: currentGame().id}); }));
+  app.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => { const action = button.dataset.action; if (action === "lobby") { selectedId = null; lobbyMode = true; render(); } else if (action === "create-link") { createLink(); } else perform(`/games/api/${action}`, {game_id: currentGame().id}); }));
   app.querySelectorAll("[data-copy]").forEach((button) => button.addEventListener("click", () => copyLink(button.dataset.copy || "")));
   app.querySelectorAll("[data-share]").forEach((button) => button.addEventListener("click", () => shareLink(button.dataset.share || "")));
   const invite = app.querySelector('[data-form="invite"]');

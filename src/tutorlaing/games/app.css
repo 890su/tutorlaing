@@ -21,7 +21,7 @@ button { cursor: pointer; }
 .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent); animation: pulse 1.2s infinite; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 12px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 
-.masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 6px 2px 20px; }
+.masthead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 6px 2px 20px; }.masthead-actions { display: flex; align-items: center; gap: 9px; }.lobby-link { min-height: 34px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 999px; color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); font-size: 12px; font-weight: 850; white-space: nowrap; }.lobby-link:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
 .eyebrow { color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 3px 0 0; font-family: ui-rounded, "Arial Rounded MT Bold", Inter, sans-serif; font-size: clamp(30px, 8vw, 42px); letter-spacing: -.055em; line-height: .92; }
 .nick { color: var(--muted); font-size: 14px; white-space: nowrap; }
