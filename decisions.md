@@ -644,6 +644,15 @@ foreground-миссия не получает и не продвигает эт�
 ручная расстановка, она станет отдельной серверной фазой с отдельным UI-контрактом, а не
 скрытым расширением текущей партии.
 
+## 2026-08-15 — Durak и Battleship 5df2003 развёрнуты на srv-150
+
+GHCR image `sha-5df2003` опубликован с digest
+`sha256:6727f75f55e00f88f4e4c5da6e053def9bde2d2e1949054c718f3ba9e9e0c29e`.
+Обновлён только сервис `tutorlaing` через `docker compose pull/up --no-deps`;
+контейнер healthy, локальный и публичный health вернули `status=ok`, `database=ok`.
+Публичный `games/app.js` подтвердил оба игровых стола, а API без Telegram `initData`
+вернул HTTP 403. Persistent volume и сторонние сервисы не изменялись.
+
 ## 2026-08-14 — Hourly cards a4fbd45 развёрнуты на srv-150
 
 GHCR image `sha-a4fbd45` опубликован с digest

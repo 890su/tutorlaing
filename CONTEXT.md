@@ -63,9 +63,9 @@ P2: персональный план дня и privacy-safe продуктов�
 
 - Docker image публикуется в GHCR. Runtime: `srv-150`,
   `~/services/tutorlaing`; текущая ветка не развёртывается автоматически.
-- Последняя подтверждённая production-версия — `sha-b0bc96c`
-  (`sha256:0e61d60078679fc26d0fb9b27f62e00122d55a7f49dd47e7e03dea3553201591`):
-  Docker healthy, local и public health ответили HTTP 200 2026-08-14.
+- Последняя подтверждённая production-версия — `sha-5df2003`
+  (`sha256:6727f75f55e00f88f4e4c5da6e053def9bde2d2e1949054c718f3ba9e9e0c29e`):
+  Docker healthy, local и public health ответили HTTP 200 2026-08-15.
   Публичный `/games` и его обновлённый JavaScript доступны; API игры без
   Telegram `initData` возвращает 403.
 - Доступ описан в `deploy/ACCESS.md`. В проекте нет и не должно быть private
