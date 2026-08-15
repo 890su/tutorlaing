@@ -1281,6 +1281,22 @@ class Storage:
                 (chat_id, utc_now()),
             ).fetchall()
 
+    def cancel_game_link_invitation(self, token: str, host_chat_id: int) -> bool:
+        """Invalidate one pending host-owned link without deleting its audit record."""
+
+        with self._lock, self._connection:
+            cancelled = self._connection.execute(
+                """
+                UPDATE game_link_invitations SET status = 'cancelled'
+                WHERE token = ? AND host_chat_id = ? AND status = 'pending'
+                """,
+                (token, host_chat_id),
+            )
+        if cancelled.rowcount == 1:
+            self.event(host_chat_id, "game_link_cancelled", {"token": token})
+            return True
+        return False
+
     def claim_game_link_invitation(
         self, token: str, guest_chat_id: int
     ) -> sqlite3.Row | None:

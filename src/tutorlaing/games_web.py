@@ -98,6 +98,8 @@ class GamesWebApp:
                 token = str(data.get("token", ""))
                 result = self.games.claim_link_invitation(chat_id, token)
                 self._notify_opponent(result, chat_id, "claim")
+            elif path == "/games/api/cancel-link":
+                result = self.games.cancel_link_invitation(chat_id, str(data.get("token", "")))
             elif path == "/games/api/accept":
                 result = self.games.accept(chat_id, str(data.get("game_id", "")))
                 self._notify_opponent(result, chat_id, "accept")

@@ -34,6 +34,8 @@ class GameStore(Protocol):
 
     def game_link_invitations_for_host(self, chat_id: int) -> list[Any]: ...
 
+    def cancel_game_link_invitation(self, token: str, host_chat_id: int) -> bool: ...
+
     def claim_game_link_invitation(self, token: str, guest_chat_id: int) -> Any | None: ...
 
     def update_game(
@@ -618,6 +620,11 @@ class GameService:
         if row is None:
             raise GameError("Эта ссылка уже использована, устарела или создана вами.")
         return self._public_game(row, chat_id)
+
+    def cancel_link_invitation(self, chat_id: int, token: str) -> dict[str, Any]:
+        if not token or not self.store.cancel_game_link_invitation(token, chat_id):
+            raise GameError("Эта ссылка уже использована, закрыта или вам не принадлежит.")
+        return {"token": token, "status": "cancelled"}
 
     def accept(self, chat_id: int, game_id: str) -> dict[str, Any]:
         row = self.store.game_for_player(game_id, chat_id)

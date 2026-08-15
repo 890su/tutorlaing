@@ -57,8 +57,19 @@ class GameServiceTests(unittest.TestCase):
         self.assertEqual("tic_tac_toe", link["kind"])
         claimed = self.games.claim_link_invitation(20, link["token"])
         self.assertTrue(claimed["can_accept"])
+        self.assertEqual([], self.games.snapshot(10)["share_links"])
         with self.assertRaises(GameError):
             self.games.claim_link_invitation(20, link["token"])
+
+    def test_host_can_close_pending_link_for_any_game(self) -> None:
+        link = self.games.create_link_invitation(10, "battleship")
+        result = self.games.cancel_link_invitation(10, link["token"])
+        self.assertEqual("cancelled", result["status"])
+        self.assertEqual([], self.games.snapshot(10)["share_links"])
+        with self.assertRaises(GameError):
+            self.games.claim_link_invitation(20, link["token"])
+        with self.assertRaises(GameError):
+            self.games.cancel_link_invitation(10, link["token"])
 
     def test_player_can_resign_or_finish_an_active_game(self) -> None:
         invitation = self.games.invite(10, "tic_tac_toe", "bob_2")
@@ -215,6 +226,22 @@ class GamesWebAppTests(unittest.TestCase):
         )
         self.assertEqual(200, response.status)
         self.assertTrue(json.loads(response.body)["result"]["can_accept"])
+
+    def test_api_can_close_a_pending_link(self) -> None:
+        self.web = GamesWebApp(self.storage, self.token, bot_username="TutorlaingBot")
+        created = self.web.post(
+            "/games/api/link-invitations", b'{"kind":"durak"}', self.init_data(10)
+        )
+        token = json.loads(created.body)["result"]["token"]
+        closed = self.web.post(
+            "/games/api/cancel-link",
+            json.dumps({"token": token}).encode(),
+            self.init_data(10),
+        )
+        self.assertEqual(200, closed.status)
+        self.assertEqual("cancelled", json.loads(closed.body)["result"]["status"])
+        snapshot = self.web.post("/games/api/state", b"{}", self.init_data(10))
+        self.assertEqual([], json.loads(snapshot.body)["result"]["share_links"])
 
     def test_api_rejects_missing_or_untrusted_telegram_identity(self) -> None:
         response = self.web.post("/games/api/state", b"{}", "")
