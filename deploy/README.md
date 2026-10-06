@@ -57,5 +57,11 @@ Backup: `/data/backups/tutorlaing-before-eb56f03-20261006T205749Z.sqlite3`,
 
 ## Rollback
 
+Ожидает deploy `sha-f0d1e5a` (случайная практика и инкрементальный word-progress):
+CI (240 тестов) и GHCR успешны, но 2026-10-06 SSH через `10.0.0.1` и
+`192.168.0.150` истёк по тайм-ауту. Public health прежнего сервиса — ok.
+Новый backup и обновление контейнера для этой версии ещё не выполнены;
+после восстановления доступа выполнить backup, pull/up и server smoke.
+
 Укажите предыдущий известный sha-tag в runtime `compose.yaml`, затем выполните
 тот же `pull`/`up`. Persistent volume не удаляется при rollback.
