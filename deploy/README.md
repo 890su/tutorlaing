@@ -32,8 +32,8 @@ docker compose logs --tail 80 tutorlaing
 
 Deploy считается подтверждённым только после remote image digest, local health
 и проверки логов. Один public health не доказывает, что на VM работает новая
-версия. Последняя подтверждённая версия: `sha-f57644a`
-(`sha256:af8258143946ce8cae59ff14726c4382c934b0c1d7b7d537b1a59d7e576fd7cc`).
+версия. Последняя подтверждённая версия: `sha-eb56f03`
+(`sha256:76678ecb47dfd26a9585f9e7a5e379172f0e3e0291f746b574637933cf98da23`).
 На VM подтверждены SSH, remote digest, local health и startup-логи; публичный
 `/games` вернул HTTP 200, а API без Telegram `initData` — 403.
 Для словарного режима 2026-10-06 подтверждены регистрация `/words`, schema,
@@ -46,6 +46,14 @@ health ответили `status=ok`, `database=ok`.
 Живой OCR синтетического двухколоночного PNG сохранил все 55 слов и их написание.
 Backup перед обновлением: `/data/backups/tutorlaing-before-f57644a-20261006T201145Z.sqlite3`,
 `quick_check=ok`. Пользовательские данные smoke-тесты не изменяли.
+
+В `eb56f03` подтверждены CI (232 теста), GHCR, container label/digest, healthy
+и local/public health. Изолированный server smoke подтвердил auto-advance,
+исправление до следующего задания, assisted/retry/mastery, отсутствие раскрытия
+следующего ответа в тесте и продолжение старого feedback без кнопки Next.
+Backup: `/data/backups/tutorlaing-before-eb56f03-20261006T205749Z.sqlite3`,
+`quick_check=ok`. Проверки не изменяли пользовательские данные и не отправляли
+реальные Telegram-сообщения.
 
 ## Rollback
 
