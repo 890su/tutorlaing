@@ -32,13 +32,14 @@ docker compose logs --tail 80 tutorlaing
 
 Deploy считается подтверждённым только после remote image digest, local health
 и проверки логов. Один public health не доказывает, что на VM работает новая
-версия. Последняя подтверждённая версия: `sha-e43418a`
-(`sha256:0636b53124b1bd0b5e619e5bfd78d49e83021e033e80c252320a6add1bd33402`).
+версия. Последняя подтверждённая версия: `sha-63cf904`
+(`sha256:e67002eec4347b4efea37557fbd437335ea76dfc1c8ab9e4054d4ce7745bbeb3`).
 На VM подтверждены SSH, remote digest, local health и startup-логи; публичный
 `/games` вернул HTTP 200, а API без Telegram `initData` — 403.
 Для словарного режима 2026-10-06 подтверждены регистрация `/words`, schema,
 `quick_check=ok`, webhook без очереди и живой OpenAI-import трёх слов без подмены.
 Перед обновлением сделан согласованный SQLite backup в `/data/backups`.
+В `63cf904` на сервере также проверены кнопка экзамена и её переход к текст/фото.
 
 ## Rollback
 
