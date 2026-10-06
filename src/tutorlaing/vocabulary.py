@@ -11,13 +11,14 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from .ai import AIError, DrillEvaluation, DrillItem
 from .engine import normalize
 
 
-MAX_WORDS = 40
+VOCABULARY_BATCH_SIZE = 20
+OCR_PAGE_SIZE = 50
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 
@@ -28,12 +29,12 @@ def vocabulary_key(text: str) -> str:
 
 
 def text_entries(text: str) -> list[str]:
-    if not text.strip() or len(text) > 4096:
-        raise ValueError("Use a list up to 4096 characters")
+    if not text.strip():
+        raise ValueError("Use a nonempty list")
     entries = [re.sub(r"^(?:\d+[.)]|[-•])\s*", "", line.strip())
                for line in re.split(r"[\n,;]+", text) if line.strip()]
-    if not 1 <= len(entries) <= MAX_WORDS or any(not entry or len(entry) > 220 for entry in entries):
-        raise ValueError("Use 1–40 words, phrases or pairs")
+    if not entries or any(not entry or len(entry) > 220 for entry in entries):
+        raise ValueError("Use words, phrases or pairs, one entry per line")
     return entries
 
 
@@ -98,32 +99,33 @@ class VocabularyList:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VocabularyList:
         items = data.get("words")
-        if not isinstance(items, list) or not 1 <= len(items) <= MAX_WORDS:
-            raise ValueError("Use 1–40 readable words per image")
+        if not isinstance(items, list) or not items:
+            raise ValueError("Use a nonempty vocabulary list")
         words: list[VocabularyWord] = []
-        seen: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str, str]] = set()
         for item in items:
             if not isinstance(item, dict):
                 raise ValueError("Invalid vocabulary entry")
             word = VocabularyWord.from_dict(item)
-            key = word.source_language, vocabulary_key(word.source)
+            key = word.source_language, vocabulary_key(word.source), vocabulary_key(word.english)
             if key not in seen:
                 words.append(word)
                 seen.add(key)
         warnings = data.get("warnings", "")
         if not isinstance(warnings, str):
             raise ValueError("Invalid OCR warnings")
-        return cls(tuple(words), warnings[:500])
+        return cls(tuple(words), warnings)
 
 
 class VocabularyAI(Protocol):
     def prepare_text_vocabulary(
         self, text: str, source_language: str, instruction_language: str,
+        heartbeat: Callable[[], None] | None = None,
     ) -> VocabularyList: ...
 
     def extract_vocabulary(
         self, image: bytes, mime_type: str, source_language: str,
-        instruction_language: str,
+        instruction_language: str, heartbeat: Callable[[], None] | None = None,
     ) -> VocabularyList: ...
 
     def evaluate_drill_answer(
@@ -135,6 +137,7 @@ class VocabularyAI(Protocol):
 class VocabularyStore(Protocol):
     def get_user(self, chat_id: int) -> Any: ...
     def set_user_state(self, chat_id: int, **values: Any) -> None: ...
+    def append_vocabulary_input(self, chat_id: int, entries: list[str]) -> list[str]: ...
     def create_vocabulary_deck(self, chat_id: int, words: list[dict[str, Any]], warnings: str) -> int: ...
     def vocabulary_deck(self, chat_id: int, deck_id: int) -> Any: ...
     def vocabulary_decks(self, chat_id: int, limit: int = 20, offset: int = 0) -> list[Any]: ...
@@ -201,8 +204,8 @@ def advance(state: dict[str, Any], now: datetime) -> None:
 def parse_edit(text: str, existing: list[VocabularyWord], source_language: str) -> list[VocabularyWord]:
     """Replace a draft from one `source = English` pair per line, without AI."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not 1 <= len(lines) <= MAX_WORDS:
-        raise ValueError("Use 1–40 lines")
+    if not lines:
+        raise ValueError("Use a nonempty list of pairs")
     lookup = {vocabulary_key(word.source): word for word in existing}
     words = []
     for line in lines:

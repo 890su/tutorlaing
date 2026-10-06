@@ -106,7 +106,7 @@ class VocabularyFlowTests(unittest.TestCase):
         self.bot.handle_callback(42, "Learner", "lang", "words:source:pl")
         self.bot.handle_update({"update_id": 2, "message": {"chat": {"id": 42},
             "document": {"file_id": "png", "mime_type": "image/png", "file_size": 123}}})
-        self.assertEqual(("image/png", "pl", "ru"), self.ai.extract_calls[0][1:])
+        self.assertEqual(("image/png", "pl", "ru"), self.ai.extract_calls[0][1:4])
         self.assertEqual("pl", self.storage.get_user(42)["target_language"])
 
     def test_word_answer_has_priority_and_does_not_change_lesson_or_languages(self):
@@ -130,6 +130,7 @@ class VocabularyFlowTests(unittest.TestCase):
         self.import_word()
         self.callback("edit")
         self.bot.handle_text(42, "Learner", "яблоко = pear\njutro = tomorrow")
+        self.bot.handle_callback(42, "Learner", "edit-ready", "words:process")
         row, state = self.state()
         words = json.loads(row["words_json"])
         self.assertEqual("confirm", state["phase"])
@@ -223,6 +224,7 @@ class VocabularyFlowTests(unittest.TestCase):
         session_id = self.storage.get_user(42)["current_session"]
         self.bot.handle_callback(42, "Learner", "paste", "words:paste")
         self.bot.handle_text(42, "Learner", "яблоко = apple\nгруша = pear\nrower = bicycle")
+        self.bot.handle_callback(42, "Learner", "ready", "words:process")
         row, state = self.state()
         self.assertEqual(3, len(json.loads(row["words_json"])))
         self.assertEqual("confirm", state["phase"])
@@ -242,11 +244,12 @@ class VocabularyFlowTests(unittest.TestCase):
         messages = len(self.telegram.messages)
         self.bot.send_scheduled_reminder(42, "hourly")
         self.assertEqual(messages, len(self.telegram.messages))
-        self.bot.handle_text(42, "Learner", "apple\n" * 41)
+        self.bot.handle_text(42, "Learner", "a" * 221)
         self.assertFalse(self.storage.vocabulary_decks(42))
         self.assertEqual("list", self.storage.get_user(42)["vocabulary_input_mode"])
         self.ai.error = True
         self.bot.handle_text(42, "Learner", "apple")
+        self.bot.handle_callback(42, "Learner", "ready", "words:process")
         self.assertEqual("list", self.storage.get_user(42)["vocabulary_input_mode"])
         self.bot.handle_text(42, "Learner", "📚 Учиться")
         self.assertIsNone(self.storage.get_user(42)["vocabulary_input_mode"])
@@ -287,6 +290,63 @@ class VocabularyFlowTests(unittest.TestCase):
         self.bot.handle_callback(42, "Learner", "open", f"words:open:{row['id']}")
         self.assertEqual(1, self.state()[1]["position"])
         self.assertEqual(1, len(self.state()[1]["exam_results"]))
+
+    def test_full_list_from_several_messages_is_kept_and_test_contains_every_word(self):
+        self.bot.handle_callback(42, "Learner", "paste", "words:paste")
+        for start, end in ((0, 55), (55, 100), (100, 137)):
+            self.bot.handle_text(42, "Learner", "\n".join(f"слово {i} = word{i}" for i in range(start, end)))
+        self.assertEqual(137, len(json.loads(self.storage.get_user(42)["vocabulary_input_entries"])))
+        self.assertFalse(self.storage.vocabulary_decks(42))
+        self.bot.handle_callback(42, "Learner", "all-ready", "words:process")
+        row, _ = self.state()
+        words = json.loads(row["words_json"])
+        self.assertEqual(137, len(words))
+        self.assertEqual("word136", words[-1]["english"])
+        self.assertIn("137 слов", self.telegram.messages[-1]["text"])
+        self.callback("exam")
+        self.assertEqual(set(range(137)), {task["index"] for task in self.state()[1]["queue"]})
+
+    def test_append_text_and_photo_extend_one_draft_without_discarding_prior_words(self):
+        self.bot.handle_text(42, "Learner", "/words " + "\n".join(f"слово {i} = word{i}" for i in range(60)))
+        deck_id = self.state()[0]["id"]
+        self.callback("add")
+        self.bot.handle_text(42, "Learner", "\n".join(f"слово {i} = word{i}" for i in range(60, 110)))
+        self.bot.handle_callback(42, "Learner", "ready", "words:process")
+        self.assertEqual(deck_id, self.state()[0]["id"])
+        self.callback("add")
+        self.bot.handle_photo(42, "Learner", "more", "image/jpeg")
+        self.assertEqual(deck_id, self.state()[0]["id"])
+        self.assertEqual(111, len(json.loads(self.state()[0]["words_json"])))
+        self.assertEqual(1, len(self.storage.vocabulary_decks(42)))
+
+    def test_pending_parts_survive_restart_and_edit_can_use_multiple_messages(self):
+        self.bot.handle_callback(42, "Learner", "paste", "words:paste")
+        self.bot.handle_text(42, "Learner", "\n".join(f"слово {i} = word{i}" for i in range(80)))
+        self.storage.close()
+        self.storage = Storage(self.path)
+        self.bot = TutorlaingBot(self.settings, self.storage, self.telegram, self.ai)
+        self.bot.handle_text(42, "Learner", "/words")
+        self.bot.handle_callback(42, "Learner", "resume-input", "words:input:resume")
+        self.bot.handle_callback(42, "Learner", "ready", "words:process")
+        self.callback("edit")
+        self.bot.handle_text(42, "Learner", "\n".join(f"новое {i} = newword{i}" for i in range(50)))
+        self.bot.handle_text(42, "Learner", "\n".join(f"новое {i} = newword{i}" for i in range(50, 95)))
+        self.bot.handle_callback(42, "Learner", "edited-ready", "words:process")
+        self.assertEqual(95, len(json.loads(self.state()[0]["words_json"])))
+        self.assertEqual("confirm", self.state()[1]["phase"])
+
+    def test_cancelled_processing_does_not_overwrite_navigation_or_lose_pending_text(self):
+        def cancelled(*args):
+            self.bot.handle_text(42, "Learner", "/words")
+            args[-1]()  # The batch heartbeat notices cancellation.
+            raise AssertionError("Must not finish cancelled import")
+        self.ai.prepare_text_vocabulary = cancelled
+        self.bot.handle_callback(42, "Learner", "paste", "words:paste")
+        self.bot.handle_text(42, "Learner", "apple")
+        self.bot.handle_callback(42, "Learner", "ready", "words:process")
+        self.assertFalse(self.storage.vocabulary_decks(42))
+        self.assertEqual(["apple"], json.loads(self.storage.get_user(42)["vocabulary_input_entries"]))
+        self.assertIsNone(self.storage.get_user(42)["vocabulary_input_mode"])
 
 
 class VocabularyScheduleTests(unittest.TestCase):
@@ -331,6 +391,9 @@ class VocabularyScheduleTests(unittest.TestCase):
         self.assertEqual(1, len(result.words))
         self.assertEqual("", result.words[0].hint)
         self.assertEqual("", result.words[0].example_gap)
+        result = VocabularyList.from_dict({"words": [WORD, {**WORD, "english": "fruit"}], "warnings": "x" * 1000})
+        self.assertEqual(2, len(result.words))
+        self.assertEqual(1000, len(result.warnings))
         with self.assertRaises(ValueError):
             VocabularyList.from_dict({"words": []})
         with self.assertRaises(ValueError):
@@ -368,6 +431,51 @@ class VocabularyScheduleTests(unittest.TestCase):
 
 
 class VocabularyAdapterTests(unittest.TestCase):
+    def test_large_text_and_photo_are_batched_without_a_deck_size_limit(self):
+        class LargeClient(GeminiClient):
+            def __init__(self):
+                super().__init__("fake")
+                self.ocr_calls = 0
+                self.batch_sizes = []
+
+            def _generate(self, _system, prompt, _schema, image=None):
+                values = json.loads(prompt)
+                if image:
+                    self.ocr_calls += 1
+                    start = values["already_read"]
+                    end = min(start + 50, 123)
+                    return {"entries": [f"слово {i} = word{i}" for i in range(start, end)],
+                            "has_more": end < 123, "cursor": f"row{end}", "total_entries": 123,
+                            "warnings": ""}, 0, {}
+                entries = values["entries"]
+                self.batch_sizes.append(len(entries))
+                words = []
+                for entry in entries:
+                    if "=" in entry:
+                        source, english = [part.strip() for part in entry.split("=", 1)]
+                    else:
+                        source, english = f"слово {entry[4:]}", entry
+                    words.append({**WORD, "source": source, "english": english, "accepted_answers": [], "hint": "", "example_gap": ""})
+                return {"words": words, "warnings": ""}, 0, {}
+        client = LargeClient()
+        result = client.prepare_text_vocabulary("\n".join(f"word{i}" for i in range(123)), "auto", "ru")
+        self.assertEqual(123, len(result.words))
+        self.assertEqual([20, 20, 20, 20, 20, 20, 3], client.batch_sizes)
+        client.batch_sizes = []
+        result = client.extract_vocabulary(b"image", "image/png", "auto", "ru")
+        self.assertEqual(3, client.ocr_calls)
+        self.assertEqual(123, len(result.words))
+        self.assertEqual("word122", result.words[-1].english)
+        self.assertEqual([20, 20, 20, 20, 20, 20, 3], client.batch_sizes)
+
+    def test_photo_cannot_silently_stop_before_total_or_loop_on_a_repeated_page(self):
+        class RepeatedClient(GeminiClient):
+            def _generate(self, *args, **kwargs):
+                return {"entries": ["яблоко = apple"], "has_more": False,
+                        "cursor": "same-row", "total_entries": 80, "warnings": ""}, 0, {}
+        with self.assertRaisesRegex(AIError, "repeated"):
+            RepeatedClient("fake").extract_vocabulary(b"image", "image/png", "auto", "ru")
+
     def test_text_adapters_keep_phrases_and_reject_an_incomplete_school_list(self):
         for client_type in (OpenAIClient, GeminiClient):
             requests = []
@@ -399,7 +507,10 @@ class VocabularyAdapterTests(unittest.TestCase):
             requests = []
             def opener(request, timeout):
                 requests.append(json.loads(request.data))
-                text = json.dumps({"words": [WORD], "warnings": ""})
+                payload = requests[-1]
+                vision = isinstance(payload.get("input"), list) if client_type is OpenAIClient else len(payload["contents"][0]["parts"]) > 1
+                result = {"entries": ["яблоко = apple"], "warnings": "", "has_more": False, "cursor": "end", "total_entries": 1} if vision else {"words": [WORD], "warnings": ""}
+                text = json.dumps(result)
                 envelope = {"output": [{"content": [{"type": "output_text", "text": text}]}]} if client_type is OpenAIClient else {"candidates": [{"content": {"parts": [{"text": text}]}}]}
                 return io.BytesIO(json.dumps(envelope).encode())
             client = client_type("fake-key", opener=opener)

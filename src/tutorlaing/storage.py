@@ -510,6 +510,9 @@ class Storage:
             self._ensure_column("users", "hourly_card_id", "INTEGER")
             self._ensure_column("users", "vocabulary_source_language", "TEXT NOT NULL DEFAULT 'auto'")
             self._ensure_column("users", "vocabulary_input_mode", "TEXT")
+            self._ensure_column("users", "vocabulary_input_entries", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column("users", "vocabulary_append_deck", "INTEGER")
+            self._ensure_column("users", "vocabulary_input_kind", "TEXT NOT NULL DEFAULT 'new'")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column("users", "reply_keyboard_version", "TEXT")
@@ -1214,6 +1217,19 @@ class Storage:
                 (now, chat_id),
             )
 
+    def append_vocabulary_input(self, chat_id: int, entries: list[str]) -> list[str]:
+        """Keep every text fragment durably until the learner starts processing."""
+        with self._lock, self._connection:
+            row = self.get_user(chat_id)
+            if row["vocabulary_input_mode"] not in {"list", "edit"}:
+                raise ValueError("Vocabulary input is no longer open")
+            collected = json.loads(row["vocabulary_input_entries"]) + entries
+            self._connection.execute(
+                "UPDATE users SET vocabulary_input_entries = ?, updated_at = ? WHERE chat_id = ?",
+                (json.dumps(collected, ensure_ascii=False), utc_now(), chat_id),
+            )
+        return collected
+
     def create_vocabulary_deck(
         self, chat_id: int, words: list[dict[str, Any]], warnings: str = ""
     ) -> int:
@@ -1575,6 +1591,9 @@ class Storage:
             "hourly_card_id",
             "vocabulary_source_language",
             "vocabulary_input_mode",
+            "vocabulary_input_entries",
+            "vocabulary_append_deck",
+            "vocabulary_input_kind",
             "pending_assignment",
             "workspace_message_id",
             "reply_keyboard_version",

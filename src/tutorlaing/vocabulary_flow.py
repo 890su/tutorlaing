@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -17,6 +18,10 @@ from .vocabulary import (
     record_exam_answer, start_exam, start_revision, start_round, text_entries,
 )
 from .workspace import TelegramWorkspace
+
+
+class ImportCancelled(RuntimeError):
+    pass
 
 
 class VocabularyFlow:
@@ -43,6 +48,8 @@ class VocabularyFlow:
         self.store.pause_vocabulary(chat_id)
         keyboard = [[self.button(chat_id, "words.paste", "words:paste")],
                     [self.button(chat_id, "words.upload", "words:upload")]]
+        if json.loads(self.store.get_user(chat_id)["vocabulary_input_entries"]):
+            keyboard.insert(0, [self.button(chat_id, "words.input_resume", "words:input:resume")])
         now = self.clock()
         page = max(0, page)
         rows = self.store.vocabulary_decks(chat_id, limit=11, offset=page * 10)
@@ -86,44 +93,128 @@ class VocabularyFlow:
             return
         self.telegram.send_chat_action(chat_id)
         user = self.store.get_user(chat_id)
+        if user["vocabulary_input_mode"] == "edit":
+            self.telegram.send_message(chat_id, self.text(chat_id, "words.edit_invalid"))
+            return
+        previous = user["vocabulary_input_mode"]
+        pending = json.loads(user["vocabulary_input_entries"]) if previous == "list" else []
+        operation, heartbeat = self._begin_import(chat_id)
         try:
+            target = self._append_target(chat_id) if previous == "list" else None
             image = self.telegram.download_image(file_id, MAX_IMAGE_BYTES)
-            result = self.ai.extract_vocabulary(image, mime_type, str(user["vocabulary_source_language"]), str(user["instruction_language"]))
-        except (AIError, TransportError, ValueError):
+            result = self.ai.extract_vocabulary(image, mime_type, str(user["vocabulary_source_language"]), str(user["instruction_language"]), heartbeat)
+            if pending:
+                text_result = self._prepare_text(chat_id, "\n".join(pending), heartbeat)
+                result = self._merge(text_result, result)
+            heartbeat()
+        except ImportCancelled:
+            return
+        except (AIError, TransportError, ValueError, KeyError):
+            self._restore_input(chat_id, operation, previous)
             self.telegram.send_message(chat_id, self.text(chat_id, "words.error"), [[self.button(chat_id, "words.title", "words")]])
             return
-        self.save_import(chat_id, result)
+        self.save_import(chat_id, result, target)
 
-    def ask_text(self, chat_id: int) -> None:
+    def ask_text(self, chat_id: int, *, resume: bool = False, target: Any | None = None) -> None:
         self.store.pause_vocabulary(chat_id)
         self.store.set_user_state(chat_id, vocabulary_input_mode="list")
-        self.workspace.show(
-            chat_id, card(self.text(chat_id, "words.title"), self.text(chat_id, "words.paste_prompt")),
-            [[self.button(chat_id, "action.cancel", "words")]], surface="vocabulary_text_input",
-        )
-
-    def import_text(self, chat_id: int, text: str) -> None:
+        if not resume:
+            self.store.set_user_state(chat_id, vocabulary_input_entries="[]", vocabulary_append_deck=target["id"] if target else None, vocabulary_input_kind="append" if target else "new")
         user = self.store.get_user(chat_id)
+        if user["vocabulary_append_deck"]:
+            self.store.activate_vocabulary_deck(chat_id, int(user["vocabulary_append_deck"]))
+        if user["vocabulary_input_kind"] == "edit":
+            self.store.set_user_state(chat_id, vocabulary_input_mode="edit")
+        self.show_input(chat_id)
+
+    def show_input(self, chat_id: int, *, force_new: bool = False) -> None:
+        count = len(json.loads(self.store.get_user(chat_id)["vocabulary_input_entries"]))
+        keyboard = [[self.button(chat_id, "words.input_process", "words:process")]] if count else []
+        keyboard.append([self.button(chat_id, "action.cancel", "words")])
+        body = self.text(chat_id, "words.edit_prompt" if self.store.get_user(chat_id)["vocabulary_input_mode"] == "edit" else "words.paste_prompt")
+        if count:
+            body = self.text(chat_id, "words.input_count", count=count)
+        else:
+            body += "\n\n" + self.text(chat_id, "words.input_instructions")
+        self.workspace.show(chat_id, card(self.text(chat_id, "words.title"), body),
+                            keyboard, force_new=force_new, surface="vocabulary_text_input")
+
+    def _begin_import(self, chat_id: int) -> tuple[str, Callable[[], None]]:
+        operation = "processing:" + uuid.uuid4().hex
+        self.store.set_user_state(chat_id, vocabulary_input_mode=operation)
+        self.telegram.send_message(chat_id, self.text(chat_id, "words.processing"))
+
+        def heartbeat() -> None:
+            if self.store.get_user(chat_id)["vocabulary_input_mode"] != operation:
+                raise ImportCancelled()
+            try:
+                self.telegram.send_chat_action(chat_id)
+            except TransportError:
+                pass
+
+        return operation, heartbeat
+
+    def _restore_input(self, chat_id: int, operation: str, previous: str | None) -> None:
+        if self.store.get_user(chat_id)["vocabulary_input_mode"] == operation:
+            self.store.set_user_state(chat_id, vocabulary_input_mode=previous)
+
+    def _append_target(self, chat_id: int) -> Any | None:
+        target = self.store.get_user(chat_id)["vocabulary_append_deck"]
+        if not target:
+            return None
+        row = self.store.vocabulary_deck(chat_id, int(target))
+        if json.loads(row["state_json"])["phase"] != "confirm":
+            raise ValueError("Only an unstarted list can be extended")
+        return row
+
+    @staticmethod
+    def _merge(first: VocabularyList, second: VocabularyList) -> VocabularyList:
+        return VocabularyList.from_dict({
+            "words": [word.to_dict() for word in (*first.words, *second.words)],
+            "warnings": "\n".join(filter(None, (first.warnings, second.warnings))),
+        })
+
+    def _prepare_text(self, chat_id: int, text: str, heartbeat: Callable[[], None]) -> VocabularyList:
+        user = self.store.get_user(chat_id)
+        result = parse_text_pairs(text, str(user["vocabulary_source_language"]))
+        if result is None:
+            if self.ai is None:
+                raise AIError("Text vocabulary AI is disabled")
+            result = self.ai.prepare_text_vocabulary(text, str(user["vocabulary_source_language"]), str(user["instruction_language"]), heartbeat)
+        return result
+
+    def import_text(self, chat_id: int, text: str, *, target: Any | None = None) -> None:
+        user = self.store.get_user(chat_id)
+        previous = user["vocabulary_input_mode"]
+        operation, heartbeat = self._begin_import(chat_id)
         try:
             text_entries(text)
-            result = parse_text_pairs(text, str(user["vocabulary_source_language"]))
-            if result is None:
-                if self.ai is None:
-                    self.telegram.send_message(chat_id, self.text(chat_id, "words.text_no_ai"))
-                    return
-                self.telegram.send_chat_action(chat_id)
-                result = self.ai.prepare_text_vocabulary(text, str(user["vocabulary_source_language"]), str(user["instruction_language"]))
+            result = self._prepare_text(chat_id, text, heartbeat)
+            heartbeat()
+        except ImportCancelled:
+            return
         except ValueError:
+            self._restore_input(chat_id, operation, previous)
             self.telegram.send_message(chat_id, self.text(chat_id, "words.text_invalid"))
             return
         except AIError:
-            self.telegram.send_message(chat_id, self.text(chat_id, "words.text_error"))
+            self._restore_input(chat_id, operation, previous)
+            self.telegram.send_message(chat_id, self.text(chat_id, "words.text_no_ai" if self.ai is None else "words.text_error"))
             return
-        self.save_import(chat_id, result)
+        self.save_import(chat_id, result, target)
 
-    def save_import(self, chat_id: int, result: VocabularyList) -> None:
-        self.store.set_user_state(chat_id, vocabulary_input_mode=None)
-        deck_id = self.store.create_vocabulary_deck(chat_id, [w.to_dict() for w in result.words], result.warnings)
+    def save_import(self, chat_id: int, result: VocabularyList, target: Any | None = None) -> None:
+        if target:
+            old_words, _ = self.decode(target)
+            result = self._merge(VocabularyList(tuple(old_words)), result)
+            if not self.store.update_vocabulary_deck(chat_id, target["id"], target["version"], initial_state(len(result.words), result.warnings), [w.to_dict() for w in result.words]):
+                self.store.set_user_state(chat_id, vocabulary_input_mode=None)
+                self.telegram.send_message(chat_id, self.text(chat_id, "words.stale"))
+                return
+            deck_id = int(target["id"])
+        else:
+            deck_id = self.store.create_vocabulary_deck(chat_id, [w.to_dict() for w in result.words], result.warnings)
+        self.store.set_user_state(chat_id, vocabulary_input_mode=None, vocabulary_input_entries="[]", vocabulary_append_deck=None, vocabulary_input_kind="new")
         self.workspace.start_new_surface(chat_id)
         self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, deck_id))
 
@@ -136,15 +227,18 @@ class VocabularyFlow:
             pages = (len(words) + 9) // 10
             page = max(0, min(page, pages - 1))
             pairs = "\n".join(f"{i + 1}. {word.source} → {word.english}" for i, word in enumerate(words[page * 10:page * 10 + 10], page * 10))
-            body = self.text(chat_id, "words.preview", count=len(words), page=page + 1, pages=pages, pairs=pairs, warnings=state["warnings"])
+            body = self.text(chat_id, "words.preview", count=len(words), page=page + 1, pages=pages, pairs=pairs, warnings=state["warnings"][:1200])
             keyboard = [[self.button(chat_id, "words.confirm", f"words:start:{prefix}")],
                         [self.button(chat_id, "words.exam", f"words:exam:{prefix}")],
+                        [self.button(chat_id, "words.add", f"words:add:{prefix}")],
                         [self.button(chat_id, "words.edit", f"words:edit:{prefix}")]]
             if pages > 1:
                 keyboard.append([self.button(chat_id, "words.next_page", f"words:page:{prefix}:{(page + 1) % pages}")])
         elif phase == "edit":
-            body = self.text(chat_id, "words.edit_prompt")
+            body = self.text(chat_id, "words.edit_prompt") + "\n\n" + self.text(chat_id, "words.input_instructions")
             keyboard = [[self.button(chat_id, "action.cancel", f"words:confirm:{prefix}")]]
+            if json.loads(self.store.get_user(chat_id)["vocabulary_input_entries"]):
+                keyboard.insert(0, [self.button(chat_id, "words.input_process", "words:process")])
         elif phase in {"recall", "feedback"}:
             task = state["queue"][state["position"]]
             word = words[task["index"]]
@@ -210,6 +304,40 @@ class VocabularyFlow:
         if data == "words:paste":
             self.ask_text(chat_id)
             return
+        if data == "words:input:resume":
+            self.ask_text(chat_id, resume=True)
+            return
+        if data == "words:process":
+            user = self.store.get_user(chat_id)
+            if user["vocabulary_input_mode"] not in {"list", "edit"}:
+                self.telegram.send_message(chat_id, self.text(chat_id, "words.stale"))
+                return
+            entries = json.loads(user["vocabulary_input_entries"])
+            if not entries:
+                self.show_input(chat_id)
+                return
+            if user["vocabulary_input_mode"] == "edit":
+                try:
+                    row = self.store.vocabulary_deck(chat_id, int(user["vocabulary_append_deck"]))
+                    words, state = self.decode(row)
+                    if state["phase"] != "edit":
+                        raise ValueError("Draft changed")
+                    words = parse_edit("\n".join(entries), words, str(user["vocabulary_source_language"]))
+                    if not self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], initial_state(len(words)), [word.to_dict() for word in words]):
+                        raise ValueError("Draft changed")
+                except (KeyError, ValueError):
+                    self.telegram.send_message(chat_id, self.text(chat_id, "words.edit_invalid"))
+                    return
+                self.store.set_user_state(chat_id, vocabulary_input_mode=None, vocabulary_input_entries="[]", vocabulary_append_deck=None, vocabulary_input_kind="new")
+                self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, row["id"]))
+                return
+            try:
+                target = self._append_target(chat_id)
+            except (ValueError, KeyError):
+                self.telegram.send_message(chat_id, self.text(chat_id, "words.stale"))
+                return
+            self.import_text(chat_id, "\n".join(entries), target=target)
+            return
         if data.startswith("words:source:"):
             source = data.rsplit(":", 1)[1]
             if source in {"auto", "pl", "ru"}:
@@ -230,8 +358,13 @@ class VocabularyFlow:
             action, deck_id = parts[1], int(parts[2])
             row = self.store.vocabulary_deck(chat_id, deck_id)
             if action == "open":
+                previous_target = self.store.get_user(chat_id)["vocabulary_append_deck"]
                 self.store.set_user_state(chat_id, vocabulary_input_mode=None)
                 row = self.store.activate_vocabulary_deck(chat_id, deck_id)
+                if json.loads(row["state_json"])["phase"] == "edit":
+                    if previous_target != deck_id:
+                        self.store.set_user_state(chat_id, vocabulary_input_entries="[]")
+                    self.store.set_user_state(chat_id, vocabulary_input_mode="edit", vocabulary_append_deck=deck_id, vocabulary_input_kind="edit")
                 self.show_deck(chat_id, row)
                 return
             if len(parts) < 4 or int(parts[3]) != row["version"] or not row["active"]:
@@ -243,6 +376,9 @@ class VocabularyFlow:
                 return
             if action == "start" and phase in {"confirm", "finished"}:
                 start_round(words, state, self.clock())
+            elif action == "add" and phase == "confirm":
+                self.ask_text(chat_id, target=row)
+                return
             elif action == "exam" and phase in {"confirm", "finished"}:
                 start_exam(words, state)
             elif action == "mistakes" and phase == "finished":
@@ -258,9 +394,14 @@ class VocabularyFlow:
                 state["helped"] = True
             else:
                 raise ValueError("Invalid vocabulary action")
+            self.store.set_user_state(chat_id, vocabulary_input_mode=None)
             if not self.store.update_vocabulary_deck(chat_id, deck_id, row["version"], state):
                 raise ValueError("State changed")
             row = self.store.vocabulary_deck(chat_id, deck_id)
+            if action == "edit":
+                self.store.set_user_state(chat_id, vocabulary_input_mode="edit", vocabulary_input_entries="[]", vocabulary_append_deck=deck_id, vocabulary_input_kind="edit")
+            elif action == "confirm":
+                self.store.set_user_state(chat_id, vocabulary_input_entries="[]", vocabulary_append_deck=None, vocabulary_input_kind="new")
             self.show_deck(chat_id, row)
             if action in {"hint", "reveal"}:
                 word = words[state["queue"][state["position"]]["index"]]
@@ -275,8 +416,20 @@ class VocabularyFlow:
                 self.show_menu(chat_id)
 
     def handle_text(self, chat_id: int, text: str) -> bool:
-        if self.store.get_user(chat_id)["vocabulary_input_mode"] == "list":
-            self.import_text(chat_id, text)
+        input_mode = str(self.store.get_user(chat_id)["vocabulary_input_mode"] or "")
+        if input_mode.startswith("processing:"):
+            self.telegram.send_message(chat_id, self.text(chat_id, "words.processing"))
+            return True
+        if input_mode in {"list", "edit"}:
+            try:
+                entries = text_entries(text)
+                if input_mode == "edit" and any("=" not in entry for entry in entries):
+                    raise ValueError("Editing needs source = English pairs")
+                self.store.append_vocabulary_input(chat_id, entries)
+            except ValueError:
+                self.telegram.send_message(chat_id, self.text(chat_id, "words.text_invalid"))
+                return True
+            self.show_input(chat_id, force_new=True)
             return True
         row = self.store.active_vocabulary_deck(chat_id)
         if row is None:
@@ -285,13 +438,8 @@ class VocabularyFlow:
         if state["phase"] == "finished":
             return False
         if state["phase"] == "edit":
-            try:
-                words = parse_edit(text, words, str(self.store.get_user(chat_id)["vocabulary_source_language"]))
-            except ValueError:
-                self.telegram.send_message(chat_id, self.text(chat_id, "words.edit_invalid"))
-                return True
-            if self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], initial_state(len(words)), [w.to_dict() for w in words]):
-                self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, row["id"]), force_new=True)
+            self.store.set_user_state(chat_id, vocabulary_input_mode="edit", vocabulary_append_deck=row["id"], vocabulary_input_kind="edit")
+            return self.handle_text(chat_id, text)
         elif state["phase"] == "recall":
             task = state["queue"][state["position"]]
             word = words[task["index"]]
