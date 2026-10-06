@@ -218,8 +218,28 @@ class VocabularyFlow:
         self.workspace.start_new_surface(chat_id)
         self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, deck_id))
 
-    def show_deck(self, chat_id: int, row: Any, page: int = 0, *, force_new: bool = False) -> None:
+    def answer_notice(
+        self, chat_id: int, word: VocabularyWord, *, correct: bool,
+        helped: bool = False, feedback: str = "",
+    ) -> str:
+        if correct:
+            return self.text(chat_id, "words.answer_helped" if helped else "words.answer_ok")
+        body = self.text(chat_id, "words.answer_fix", source=word.source, answer=word.english)
+        return "\n".join(part for part in (body, feedback, word.explanation) if part)
+
+    def show_deck(self, chat_id: int, row: Any, page: int = 0, *, force_new: bool = False, notice: str = "") -> None:
         words, state = self.decode(row)
+        if state["phase"] == "feedback":
+            # Resume pre-upgrade lists without requiring their old Next button.
+            task = state["queue"][state["position"]]
+            notice = notice or self.answer_notice(
+                chat_id, words[task["index"]], correct=state["correct"],
+                helped=state["helped"], feedback=state["feedback"],
+            )
+            advance(state, self.clock())
+            if not self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], state):
+                return
+            row = self.store.vocabulary_deck(chat_id, row["id"])
         prefix = f"{row['id']}:{row['version']}"
         phase = state["phase"]
         keyboard = []
@@ -239,19 +259,15 @@ class VocabularyFlow:
             keyboard = [[self.button(chat_id, "action.cancel", f"words:confirm:{prefix}")]]
             if json.loads(self.store.get_user(chat_id)["vocabulary_input_entries"]):
                 keyboard.insert(0, [self.button(chat_id, "words.input_process", "words:process")])
-        elif phase in {"recall", "feedback"}:
+        elif phase == "recall":
             task = state["queue"][state["position"]]
             word = words[task["index"]]
-            if phase == "recall":
-                body = self.text(chat_id, "words.context" if task["kind"] == "context" else "words.translate", source=word.source, gap=word.example_gap)
-                body += "\n\n" + self.text(chat_id, "words.position", position=state["position"] + 1, total=len(state["queue"]))
-                if state.get("mode") == "exam":
-                    body += "\n\n" + self.text(chat_id, "words.exam_note")
-                else:
-                    keyboard = [[self.button(chat_id, "action.hint", f"words:hint:{prefix}"), self.button(chat_id, "words.reveal", f"words:reveal:{prefix}")]]
+            body = self.text(chat_id, "words.context" if task["kind"] == "context" else "words.translate", source=word.source, gap=word.example_gap)
+            body += "\n\n" + self.text(chat_id, "words.position", position=state["position"] + 1, total=len(state["queue"]))
+            if state.get("mode") == "exam":
+                body += "\n\n" + self.text(chat_id, "words.exam_note")
             else:
-                body = self.text(chat_id, "words.result", source=word.source, answer=word.english, feedback=state["feedback"], explanation=word.explanation)
-                keyboard = [[self.button(chat_id, "action.next", f"words:next:{prefix}")]]
+                keyboard = [[self.button(chat_id, "action.hint", f"words:hint:{prefix}"), self.button(chat_id, "words.reveal", f"words:reveal:{prefix}")]]
         else:
             dates = [datetime.fromisoformat(stats["due"]) for stats in state["stats"] if stats["due"] and not stats["mastered"]]
             zone = ZoneInfo(str(self.store.get_user(chat_id)["timezone"]))
@@ -278,8 +294,8 @@ class VocabularyFlow:
             keyboard.append([self.button(chat_id, "words.exam", f"words:exam:{prefix}")])
         keyboard.append([self.button(chat_id, "words.pause", "words")])
         title = self.text(chat_id, "words.title")
-        if phase == "feedback":
-            title = self.text(chat_id, "words.correct" if state["correct"] else "words.repeat")
+        if notice:
+            body = notice + "\n\n" + body
         self.workspace.show(chat_id, card(title, body.strip()), keyboard, force_new=force_new, surface="vocabulary_" + phase)
         if phase == "edit":
             # Plain pairs can be copied into the replacement message; keep each
@@ -445,6 +461,7 @@ class VocabularyFlow:
             word = words[task["index"]]
             if state.get("mode") == "exam":
                 record_exam_answer(words, state, text[:500])
+                notice = self.answer_notice(chat_id, word, correct=state["exam_results"][-1]["correct"])
             else:
                 user = self.store.get_user(chat_id)
                 self.telegram.send_chat_action(chat_id)
@@ -452,8 +469,13 @@ class VocabularyFlow:
                 record_answer(state, result)
                 if state["feedback"] == "vocabulary_ai_unavailable":
                     state["feedback"] = self.text(chat_id, "words.no_check")
+                notice = self.answer_notice(
+                    chat_id, word, correct=result.correct and result.score >= 0.75,
+                    helped=state["helped"], feedback=state["feedback"],
+                )
+                advance(state, self.clock())
             if self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], state):
-                self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, row["id"]), force_new=True)
+                self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, row["id"]), force_new=True, notice=notice)
         else:
             self.show_deck(chat_id, row)
         return True

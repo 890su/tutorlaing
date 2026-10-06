@@ -116,8 +116,8 @@ class VocabularyFlowTests(unittest.TestCase):
         self.callback("start")
         self.assertNotIn("apple", self.telegram.messages[-1]["text"])
         self.bot.handle_text(42, "Learner", "apple", message_id=501)
-        self.assertTrue(self.state()[1]["correct"])
-        self.callback("next")
+        self.assertEqual([True], self.state()[1]["round_results"]["0"])
+        self.assertEqual(1, self.state()[1]["position"])
         self.assertIn("I ate an ___", self.telegram.messages[-1]["text"])
         self.bot.handle_text(42, "Learner", "wrong")
         self.assertEqual("en", self.ai.evaluate_calls[-1][-1])
@@ -153,8 +153,9 @@ class VocabularyFlowTests(unittest.TestCase):
         self.storage = Storage(self.path)
         bot = TutorlaingBot(self.settings, self.storage, self.telegram, self.ai)
         bot.handle_callback(42, "Learner", "open", f"words:open:{row['id']}")
-        self.assertEqual("feedback", self.state()[1]["phase"])
-        self.assertIn("apple", self.telegram.messages[-1]["text"])
+        self.assertEqual("recall", self.state()[1]["phase"])
+        self.assertEqual(1, self.state()[1]["position"])
+        self.assertIn("I ate an ___", self.telegram.messages[-1]["text"])
 
     def test_stale_callbacks_cannot_advance_and_owner_cannot_open_other_deck(self):
         self.import_word()
@@ -196,10 +197,9 @@ class VocabularyFlowTests(unittest.TestCase):
         self.import_word()
         self.callback("start")
         self.bot.handle_text(42, "Learner", "apple")
-        self.callback("next")
         self.bot.handle_text(42, "Learner", "an apple")
         self.assertEqual("an apple", self.ai.evaluate_calls[-1][1])
-        self.assertFalse(self.state()[1]["correct"])
+        self.assertFalse(self.state()[1]["round_results"]["0"][-1])
         self.storage.set_reminder_mode(42, "hourly", NOW)
         self.assertFalse(self.storage.due_reminder_users(NOW))
         self.bot.handle_callback(42, "Learner", "leave", "words")
@@ -212,7 +212,6 @@ class VocabularyFlowTests(unittest.TestCase):
         self.callback("start")
         for _ in range(2):
             self.bot.handle_text(42, "Learner", "apple")
-            self.callback("next")
         self.assertEqual("finished", self.state()[1]["phase"])
         self.bot.handle_text(42, "Learner", "I want to buy fruit.")
         self.assertTrue(any(button["callback_data"].startswith("text:check:") for row in self.telegram.messages[-1]["keyboard"] for button in row))
@@ -256,7 +255,7 @@ class VocabularyFlowTests(unittest.TestCase):
         self.bot.handle_text(42, "Learner", "ordinary phrase")
         self.assertEqual(1, len(self.ai.text_calls))
 
-    def test_exam_shows_no_answers_or_hints_until_end_and_mistakes_can_be_retried(self):
+    def test_exam_corrects_previous_mistake_but_never_reveals_next_answer(self):
         self.bot.handle_text(42, "Learner", "/words яблоко = apple\nгруша = pear")
         self.callback("exam")
         self.assertNotIn("apple", self.telegram.messages[-1]["text"])
@@ -267,11 +266,12 @@ class VocabularyFlowTests(unittest.TestCase):
         self.assertFalse(self.state()[1]["helped"])
         self.bot.handle_text(42, "Learner", "wrong")
         self.assertEqual("recall", self.state()[1]["phase"])
-        self.assertNotIn("apple", self.telegram.messages[-1]["text"])
-        self.assertNotIn("pear", self.telegram.messages[-1]["text"])
         row, state = self.state()
+        previous = state["exam_results"][-1]["index"]
+        self.assertIn(json.loads(row["words_json"])[previous]["english"], self.telegram.messages[-1]["text"])
         current = state["queue"][state["position"]]["index"]
         answer = json.loads(row["words_json"])[current]["english"]
+        self.assertNotIn(answer, self.telegram.messages[-1]["text"])
         self.bot.handle_text(42, "Learner", answer)
         self.assertIn("1/2", self.telegram.messages[-1]["text"])
         self.assertEqual("finished", self.state()[1]["phase"])
@@ -279,6 +279,67 @@ class VocabularyFlowTests(unittest.TestCase):
         self.callback("mistakes")
         self.assertEqual("revision", self.state()[1]["mode"])
         self.assertEqual(1, len(self.state()[1]["queue"]))
+        self.bot.handle_text(42, "Learner", json.loads(row["words_json"])[previous]["english"])
+        self.assertEqual("finished", self.state()[1]["phase"])
+        self.assertTrue(all(s["streak"] == 0 for s in self.state()[1]["stats"]))
+
+    def test_correct_answer_advances_atomically_without_next_button_or_double_skip(self):
+        self.import_word()
+        self.callback("start")
+        row, _ = self.state()
+        old_next = f"words:next:{row['id']}:{row['version']}"
+        messages = len(self.telegram.messages)
+        self.bot.handle_text(42, "Learner", "apple")
+        current, state = self.state()
+        self.assertEqual(row["version"] + 1, current["version"])
+        self.assertEqual(("recall", 1), (state["phase"], state["position"]))
+        self.assertEqual(messages + 1, len(self.telegram.messages))
+        self.assertIn("✓ Верно.", self.telegram.messages[-1]["text"])
+        self.assertIn("I ate an ___", self.telegram.messages[-1]["text"])
+        self.assertFalse(any(":next:" in b["callback_data"] for buttons in self.telegram.messages[-1]["keyboard"] for b in buttons))
+        self.bot.handle_callback(42, "Learner", "old-next", old_next)
+        self.assertEqual(1, self.state()[1]["position"])
+
+    def test_wrong_answer_shows_correction_then_next_and_preserves_failed_word(self):
+        self.import_word()
+        self.callback("start")
+        self.bot.handle_text(42, "Learner", "pear")
+        _, state = self.state()
+        self.assertEqual(("recall", 1), (state["phase"], state["position"]))
+        message = self.telegram.messages[-1]["text"]
+        self.assertLess(message.index("Правильный вариант: яблоко → apple"), message.index("I ate an ___"))
+        self.assertEqual([False], state["round_results"]["0"])
+        self.assertTrue(state["queue"][-1]["retry"])
+        self.bot.handle_text(42, "Learner", "apple")
+        self.bot.handle_text(42, "Learner", "apple")
+        _, state = self.state()
+        self.assertEqual("finished", state["phase"])
+        self.assertEqual(0, state["stats"][0]["streak"])
+        self.assertEqual((NOW + timedelta(minutes=10)).isoformat(), state["stats"][0]["due"])
+
+    def test_helped_correct_answer_advances_but_is_not_independent_recall(self):
+        self.import_word()
+        self.callback("start")
+        self.callback("hint")
+        self.bot.handle_text(42, "Learner", "apple")
+        _, state = self.state()
+        self.assertEqual(1, state["position"])
+        self.assertEqual([False], state["round_results"]["0"])
+        self.assertTrue(state["queue"][-1]["retry"])
+        self.assertIn("Верно, с подсказкой", self.telegram.messages[-1]["text"])
+        self.assertFalse(state["helped"])
+
+    def test_pre_upgrade_feedback_resumes_directly_to_next_task_once(self):
+        self.import_word()
+        self.callback("start")
+        row, state = self.state()
+        record_answer(state, DrillEvaluation(True, 1, "", "apple"))
+        self.storage.update_vocabulary_deck(42, row["id"], row["version"], state)
+        self.bot.handle_callback(42, "Learner", "open-old", f"words:open:{row['id']}")
+        self.assertEqual(("recall", 1), (self.state()[1]["phase"], self.state()[1]["position"]))
+        self.assertIn("I ate an ___", self.telegram.messages[-1]["text"])
+        self.bot.handle_callback(42, "Learner", "open-again", f"words:open:{row['id']}")
+        self.assertEqual(1, self.state()[1]["position"])
 
     def test_unfinished_test_resumes_and_keeps_result_after_navigation(self):
         self.bot.handle_text(42, "Learner", "/words яблоко = apple\nгруша = pear")

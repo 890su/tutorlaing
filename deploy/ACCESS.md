@@ -34,14 +34,9 @@ reference; private key, пароли, токены и содержимое `.env
 
 ## Состояние
 
-Последняя подтверждённая deploy-версия — `sha-63cf904`
-(`sha256:e67002eec4347b4efea37557fbd437335ea76dfc1c8ab9e4054d4ce7745bbeb3`):
-Docker был `running healthy`, local/public health вернули `status=ok`,
-`database=ok`. Публичный `/games` вернул HTTP 200; игровой API без Telegram
-`initData` вернул 403. Deploy подтверждён remote digest, local health и логами,
-а не одним публичным health endpoint.
-2026-10-06 подтверждены словарная миграция, команда `/words`, webhook без очереди
-и живой текстовый AI-import. Резервная копия БД с `quick_check=ok` сохранена на
-сервере в `/data/backups` до обновления контейнера.
-Для обновления кнопки экзамена сделан новый backup; label/callback и переходы
-к загрузке текста/фото проверены в работающем контейнере `63cf904`.
+Текущие image SHA/digest и подтверждённые проверки указаны в
+[Deployment](README.md) и [CONTEXT.md](../CONTEXT.md). Здесь хранятся только
+маршруты подключения и secret reference, без дублирования версии приложения.
+Deploy подтверждается remote digest, local/public health и логами, а не одним
+публичным health endpoint. Перед обновлением сохраняется согласованный SQLite
+backup с `quick_check=ok` в `/data/backups`; ключи и `.env` не копируются в проект.
