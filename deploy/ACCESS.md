@@ -1,6 +1,6 @@
 # Доступ к srv-150
 
-Актуально на 2026-08-14. Документ хранит только безопасные маршруты и secret
+Актуально на 2026-10-06. Документ хранит только безопасные маршруты и secret
 reference; private key, пароли, токены и содержимое `.env` в Tutorlaing не
 копируются.
 
@@ -34,9 +34,12 @@ reference; private key, пароли, токены и содержимое `.env
 
 ## Состояние
 
-Последняя подтверждённая deploy-версия — `sha-f907e33`
-(`sha256:b62f167ce1b26ac5817e98a30466c96b1eefe21701d3de7a81c240dcf5439ffb`):
+Последняя подтверждённая deploy-версия — `sha-e43418a`
+(`sha256:0636b53124b1bd0b5e619e5bfd78d49e83021e033e80c252320a6add1bd33402`):
 Docker был `running healthy`, local/public health вернули `status=ok`,
 `database=ok`. Публичный `/games` вернул HTTP 200; игровой API без Telegram
 `initData` вернул 403. Deploy подтверждён remote digest, local health и логами,
 а не одним публичным health endpoint.
+2026-10-06 подтверждены словарная миграция, команда `/words`, webhook без очереди
+и живой текстовый AI-import. Резервная копия БД с `quick_check=ok` сохранена на
+сервере в `/data/backups` до обновления контейнера.

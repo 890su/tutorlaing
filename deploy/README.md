@@ -1,6 +1,6 @@
 # Deployment
 
-Актуально на 2026-08-14. GitHub публикует image в GHCR; VM только скачивает
+Актуально на 2026-10-06. GitHub публикует image в GHCR; VM только скачивает
 его и хранит SQLite в persistent volume. Private keys и `.env` в Git не
 хранятся.
 
@@ -32,10 +32,13 @@ docker compose logs --tail 80 tutorlaing
 
 Deploy считается подтверждённым только после remote image digest, local health
 и проверки логов. Один public health не доказывает, что на VM работает новая
-версия. Последняя подтверждённая версия: `sha-f907e33`
-(`sha256:b62f167ce1b26ac5817e98a30466c96b1eefe21701d3de7a81c240dcf5439ffb`).
+версия. Последняя подтверждённая версия: `sha-e43418a`
+(`sha256:0636b53124b1bd0b5e619e5bfd78d49e83021e033e80c252320a6add1bd33402`).
 На VM подтверждены SSH, remote digest, local health и startup-логи; публичный
 `/games` вернул HTTP 200, а API без Telegram `initData` — 403.
+Для словарного режима 2026-10-06 подтверждены регистрация `/words`, schema,
+`quick_check=ok`, webhook без очереди и живой OpenAI-import трёх слов без подмены.
+Перед обновлением сделан согласованный SQLite backup в `/data/backups`.
 
 ## Rollback
 
