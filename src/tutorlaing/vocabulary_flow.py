@@ -15,7 +15,8 @@ from .ui import card
 from .vocabulary import (
     MAX_IMAGE_BYTES, VocabularyAI, VocabularyList, VocabularyStore, VocabularyWord,
     advance, evaluate, initial_state, parse_edit, parse_text_pairs, record_answer,
-    record_exam_answer, start_exam, start_revision, start_round, text_entries,
+    record_exam_answer, resume_progress, progress_totals, word_status,
+    start_exam, start_revision, start_round, text_entries,
 )
 from .workspace import TelegramWorkspace
 
@@ -227,8 +228,20 @@ class VocabularyFlow:
         body = self.text(chat_id, "words.answer_fix", source=word.source, answer=word.english)
         return "\n".join(part for part in (body, feedback, word.explanation) if part)
 
+    def word_progress(self, chat_id: int, word: VocabularyWord, stats: dict[str, Any]) -> str:
+        result = self.text(chat_id, "words.word_progress", source=word.source,
+                           status=self.text(chat_id, "words.status_" + word_status(stats)),
+                           streak=min(stats["streak"], 3))
+        if stats.get("attempts", 0):
+            result += "\n" + self.text(chat_id, "words.answer_counts", correct=stats.get("correct_answers", 0), attempts=stats["attempts"])
+        return result
+
     def show_deck(self, chat_id: int, row: Any, page: int = 0, *, force_new: bool = False, notice: str = "") -> None:
         words, state = self.decode(row)
+        if resume_progress(state, self.clock()):
+            if not self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], state):
+                return
+            row = self.store.vocabulary_deck(chat_id, row["id"])
         if state["phase"] == "feedback":
             # Resume pre-upgrade lists without requiring their old Next button.
             task = state["queue"][state["position"]]
@@ -267,6 +280,7 @@ class VocabularyFlow:
             if state.get("mode") == "exam":
                 body += "\n\n" + self.text(chat_id, "words.exam_note")
             else:
+                body += "\n" + self.word_progress(chat_id, word, state["stats"][task["index"]])
                 keyboard = [[self.button(chat_id, "action.hint", f"words:hint:{prefix}"), self.button(chat_id, "words.reveal", f"words:reveal:{prefix}")]]
         else:
             dates = [datetime.fromisoformat(stats["due"]) for stats in state["stats"] if stats["due"] and not stats["mastered"]]
@@ -287,6 +301,16 @@ class VocabularyFlow:
                     keyboard.append([self.button(chat_id, "words.next_page", f"words:page:{prefix}:{(page + 1) % pages}")])
             elif state.get("mode") == "revision":
                 body = self.text(chat_id, "words.revision_done")
+            if state.get("mode") != "exam":
+                pages = max(1, (len(words) + 9) // 10)
+                page = max(0, min(page, pages - 1))
+                body += "\n\n" + self.text(chat_id, "words.progress_page", page=page + 1, pages=pages)
+                for index, word in enumerate(words[page * 10:page * 10 + 10], page * 10):
+                    stats = state["stats"][index]
+                    status = self.text(chat_id, "words.status_" + word_status(stats))
+                    body += f"\n{index + 1}. {word.source}: {status} · {min(stats['streak'], 3)}/3"
+                if pages > 1:
+                    keyboard.append([self.button(chat_id, "words.next_page", f"words:page:{prefix}:{(page + 1) % pages}")])
             if state.get("last_exam", {}).get("mistakes"):
                 keyboard.append([self.button(chat_id, "words.mistakes", f"words:mistakes:{prefix}")])
             if any(date <= self.clock() for date in dates):
@@ -294,6 +318,8 @@ class VocabularyFlow:
             keyboard.append([self.button(chat_id, "words.exam", f"words:exam:{prefix}")])
         keyboard.append([self.button(chat_id, "words.pause", "words")])
         title = self.text(chat_id, "words.title")
+        if phase != "edit":
+            body += "\n\n" + self.text(chat_id, "words.progress_summary", **progress_totals(state))
         if notice:
             body = notice + "\n\n" + body
         self.workspace.show(chat_id, card(title, body.strip()), keyboard, force_new=force_new, surface="vocabulary_" + phase)
@@ -387,7 +413,7 @@ class VocabularyFlow:
                 raise ValueError("Stale vocabulary callback")
             words, state = self.decode(row)
             phase = state["phase"]
-            if action == "page" and (phase == "confirm" or (phase == "finished" and state.get("mode") == "exam")):
+            if action == "page" and phase in {"confirm", "finished"}:
                 self.show_deck(chat_id, row, int(parts[4]))
                 return
             if action == "start" and phase in {"confirm", "finished"}:
@@ -451,6 +477,10 @@ class VocabularyFlow:
         if row is None:
             return False
         words, state = self.decode(row)
+        if resume_progress(state, self.clock()):
+            if not self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], state):
+                return True
+            row = self.store.vocabulary_deck(chat_id, row["id"])
         if state["phase"] == "finished":
             return False
         if state["phase"] == "edit":
@@ -474,6 +504,7 @@ class VocabularyFlow:
                     helped=state["helped"], feedback=state["feedback"],
                 )
                 advance(state, self.clock())
+                notice += "\n" + self.word_progress(chat_id, word, state["stats"][task["index"]])
             if self.store.update_vocabulary_deck(chat_id, row["id"], row["version"], state):
                 self.show_deck(chat_id, self.store.vocabulary_deck(chat_id, row["id"]), force_new=True, notice=notice)
         else:

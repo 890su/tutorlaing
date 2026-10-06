@@ -15,7 +15,7 @@ from tutorlaing.telegram_api import TelegramAPI, TelegramError
 from tutorlaing.vocabulary import (
     MAX_IMAGE_BYTES, VocabularyList, VocabularyWord, advance, initial_state,
     parse_text_pairs, record_answer, record_exam_answer, start_exam, start_revision,
-    start_round, text_entries,
+    start_round, text_entries, resume_progress, progress_totals, word_status,
 )
 from test_app import FakeAI, FakeTelegram
 
@@ -409,6 +409,44 @@ class VocabularyFlowTests(unittest.TestCase):
         self.assertEqual(["apple"], json.loads(self.storage.get_user(42)["vocabulary_input_entries"]))
         self.assertIsNone(self.storage.get_user(42)["vocabulary_input_mode"])
 
+    def test_partial_word_progress_and_shuffled_queue_survive_restart(self):
+        self.bot.handle_text(42, "Learner", "/words яблоко = apple\nгруша = pear\nбанан = banana")
+        self.callback("start")
+        row, state = self.state()
+        index = state["queue"][0]["index"]
+        answer = json.loads(row["words_json"])[index]["english"]
+        queue = state["queue"]
+        self.bot.handle_text(42, "Learner", answer)
+        row, state = self.state()
+        self.assertEqual(1, state["stats"][index]["streak"])
+        self.assertEqual(1, state["stats"][index]["attempts"])
+        self.assertEqual("recall", state["phase"])
+        self.assertIn("закрепление 1/3", self.telegram.messages[-1]["text"])
+        self.assertIn("новых 2 · учим 1", self.telegram.messages[-1]["text"])
+        self.bot.handle_text(42, "Learner", "/words")
+        self.storage.close()
+        self.storage = Storage(self.path)
+        self.bot = TutorlaingBot(self.settings, self.storage, self.telegram, self.ai)
+        self.bot.handle_callback(42, "Learner", "open", f"words:open:{row['id']}")
+        _, state = self.state()
+        self.assertEqual(queue, state["queue"])
+        self.assertEqual(1, state["position"])
+        self.assertEqual(1, state["stats"][index]["streak"])
+
+    def test_completed_list_word_status_pages_cover_the_whole_list(self):
+        self.bot.handle_text(42, "Learner", "/words " + "\n".join(f"слово {i} = word{i}" for i in range(22)))
+        self.callback("start")
+        while self.state()[1]["phase"] == "recall":
+            row, state = self.state()
+            index = state["queue"][state["position"]]["index"]
+            self.bot.handle_text(42, "Learner", json.loads(row["words_json"])[index]["english"])
+        self.assertEqual(22, progress_totals(self.state()[1])["learning"])
+        for page, source in ((1, "слово 10"), (2, "слово 21")):
+            row, _ = self.state()
+            self.bot.handle_callback(42, "Learner", "page", f"words:page:{row['id']}:{row['version']}:{page}")
+            display = (self.telegram.edits or self.telegram.messages)[-1]["text"]
+            self.assertIn(source + ": учим · 1/3", display)
+
 
 class VocabularyScheduleTests(unittest.TestCase):
     def setUp(self):
@@ -489,6 +527,99 @@ class VocabularyScheduleTests(unittest.TestCase):
         start_exam(self.words, state)
         record_exam_answer(self.words, state, "an apple")
         self.assertEqual(0, state["last_exam"]["correct"])
+
+    def test_practice_and_revision_shuffle_each_pass_without_losing_tasks(self):
+        words = [VocabularyWord.from_dict({**WORD, "source": f"слово {i}", "english": f"word{i}"}) for i in range(5)]
+        state = initial_state(5)
+        with patch("tutorlaing.vocabulary.random.SystemRandom.shuffle", side_effect=lambda values: values.reverse()) as shuffle:
+            start_round(words, state, NOW)
+            self.assertEqual([4, 3, 2, 1, 0], [task["index"] for task in state["queue"][:5]])
+            self.assertEqual(set(range(5)), {task["index"] for task in state["queue"][5:]})
+            self.assertNotEqual(state["queue"][4]["index"], state["queue"][5]["index"])
+            self.assertGreaterEqual(shuffle.call_count, 2)
+            state["last_exam"] = {"mistakes": [{"index": i} for i in range(5)]}
+            original_stats = json.loads(json.dumps(state["stats"]))
+            self.assertTrue(start_revision(words, state))
+            self.assertEqual([4, 3, 2, 1, 0], [task["index"] for task in state["queue"][:5]])
+            self.assertEqual(original_stats, state["stats"])
+
+    def test_word_credit_is_applied_before_the_list_finishes_and_only_once(self):
+        words = [VocabularyWord.from_dict({**WORD, "source": f"слово {i}", "english": f"word{i}", "example_gap": ""}) for i in range(3)]
+        state = initial_state(3)
+        start_round(words, state, NOW)
+        first = state["queue"][0]["index"]
+        record_answer(state, DrillEvaluation(True, 1, "", ""))
+        advance(state, NOW)
+        self.assertEqual("recall", state["phase"])
+        self.assertEqual(1, state["stats"][first]["streak"])
+        self.assertEqual((NOW + timedelta(days=1)).isoformat(), state["stats"][first]["due"])
+        self.assertEqual({"new": 2, "learning": 1, "repeat": 0, "mastered": 0}, progress_totals(state))
+        advance(state, NOW)  # An already-consumed feedback must not advance twice.
+        self.assertEqual(1, state["position"])
+        while state["phase"] == "recall":
+            record_answer(state, DrillEvaluation(True, 1, "", ""))
+            advance(state, NOW)
+        self.assertEqual([1, 1, 1], [stats["streak"] for stats in state["stats"]])
+
+    def test_context_word_tracks_attempts_immediately_but_requires_both_checks(self):
+        state = initial_state(1)
+        start_round(self.words, state, NOW)
+        record_answer(state, DrillEvaluation(True, 1, "", "apple"))
+        advance(state, NOW)
+        self.assertEqual("learning", word_status(state["stats"][0]))
+        self.assertEqual((1, 1, 0), tuple(state["stats"][0][key] for key in ("attempts", "correct_answers", "streak")))
+        record_answer(state, DrillEvaluation(True, 1, "", "apple"))
+        advance(state, NOW)
+        self.assertEqual((2, 2, 1), tuple(state["stats"][0][key] for key in ("attempts", "correct_answers", "streak")))
+
+    def test_error_or_help_resets_only_that_word_immediately(self):
+        for helped in (False, True):
+            words = [VocabularyWord.from_dict({**WORD, "source": f"слово {i}", "english": f"word{i}"}) for i in range(2)]
+            state = initial_state(2)
+            for stats in state["stats"]:
+                stats["streak"] = 2
+            start_round(words, state, NOW)
+            index = state["queue"][0]["index"]
+            other = 1 - index
+            state["helped"] = helped
+            record_answer(state, DrillEvaluation(helped, float(helped), "", ""))
+            advance(state, NOW)
+            stats = state["stats"][index]
+            self.assertEqual("repeat", word_status(stats))
+            self.assertEqual(0, stats["streak"])
+            self.assertEqual(1, stats["attempts"])
+            self.assertEqual(int(helped), stats["assisted_answers"])
+            self.assertEqual((NOW + timedelta(minutes=10)).isoformat(), stats["due"])
+            self.assertEqual(2, state["stats"][other]["streak"])
+
+    def test_legacy_partial_round_upgrades_once_and_keeps_visible_question(self):
+        state = initial_state(5)
+        for key in ("progress_version", "order_version", "round_applied"):
+            state.pop(key)
+        state["stats"] = [{"streak": 0, "mastered": False, "due": None} for _ in range(5)]
+        state.update(phase="recall", mode="practice", position=1,
+                     queue=[{"index": i, "kind": "translate", "retry": False} for i in range(5)],
+                     round_results={"0": [True]})
+        with patch("tutorlaing.vocabulary.random.SystemRandom.shuffle", side_effect=lambda values: values.reverse()):
+            self.assertTrue(resume_progress(state, NOW))
+        self.assertEqual([0, 1, 4, 3, 2], [task["index"] for task in state["queue"]])
+        self.assertEqual(1, state["stats"][0]["streak"])
+        self.assertEqual(1, state["stats"][0]["attempts"])
+        snapshot = json.loads(json.dumps(state))
+        self.assertFalse(resume_progress(state, NOW + timedelta(days=1)))
+        self.assertEqual(snapshot, state)
+
+    def test_same_day_repetition_cannot_create_three_mastery_credits(self):
+        words = [VocabularyWord.from_dict({**WORD, "example_gap": ""})]
+        state = initial_state(1)
+        for offset in (0, 10, 20):
+            state["stats"][0]["due"] = None  # Even a forced early round cannot farm credits.
+            start_round(words, state, NOW + timedelta(minutes=offset))
+            record_answer(state, DrillEvaluation(True, 1, "", "apple"))
+            advance(state, NOW + timedelta(minutes=offset))
+        self.assertEqual(1, state["stats"][0]["streak"])
+        self.assertFalse(state["stats"][0]["mastered"])
+        self.assertEqual(3, state["stats"][0]["attempts"])
 
 
 class VocabularyAdapterTests(unittest.TestCase):

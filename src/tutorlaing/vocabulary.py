@@ -152,11 +152,109 @@ class VocabularyStore(Protocol):
 
 def initial_state(count: int, warnings: str = "") -> dict[str, Any]:
     return {"phase": "confirm", "warnings": warnings, "queue": [], "position": 0,
-            "stats": [{"streak": 0, "due": None, "mastered": False} for _ in range(count)],
+            "stats": [{"streak": 0, "due": None, "mastered": False,
+                       "attempts": 0, "correct_answers": 0, "assisted_answers": 0,
+                       "needs_repeat": False, "last_result": "new", "last_success_at": None}
+                      for _ in range(count)],
+            "progress_version": 2, "order_version": 2, "round_applied": [],
             "helped": False, "feedback": "", "correct": False}
 
 
+def shuffle_practice(queue: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Randomize both recall passes; keep context after translation, retries last."""
+    rng = random.SystemRandom()
+    groups = [[task for task in queue if not task["retry"] and task["kind"] == kind]
+              for kind in ("translate", "context")]
+    groups.append([task for task in queue if task["retry"]])
+    result = []
+    for group in groups:
+        rng.shuffle(group)
+        if result and group and result[-1]["index"] == group[0]["index"]:
+            for offset, task in enumerate(group[1:], 1):
+                if task["index"] != result[-1]["index"]:
+                    group[0], group[offset] = group[offset], group[0]
+                    break
+        result.extend(group)
+    return result
+
+
+def _apply_word_progress(state: dict[str, Any], index: int, now: datetime, through: int) -> None:
+    if state.get("mode", "practice") != "practice":
+        return
+    key = str(index)
+    results = state.get("round_results", {}).get(key, [])
+    if not results or key in state["round_applied"]:
+        return
+    stats = state["stats"][index]
+    if not all(results):
+        stats.update(streak=0, mastered=False, needs_repeat=True,
+                     due=(now + timedelta(minutes=10)).isoformat())
+    if any(task["index"] == index for task in state["queue"][through:]):
+        return
+    if all(results):
+        previous = stats.get("last_success_at")
+        if not previous or now - datetime.fromisoformat(previous) >= timedelta(days=1):
+            stats["streak"] += 1
+            stats["last_success_at"] = now.isoformat()
+        stats["mastered"] = stats["streak"] >= 3
+        delay = timedelta(days=1 if stats["streak"] <= 1 else 3)
+        stats.update(needs_repeat=False,
+                     due=None if stats["mastered"] else (now + delay).isoformat())
+    state["round_applied"].append(key)
+
+
+def resume_progress(state: dict[str, Any], now: datetime) -> bool:
+    """Lazily upgrade old JSON without losing the visible question or position."""
+    changed = False
+    if state.get("progress_version", 0) < 2:
+        for stats in state["stats"]:
+            defaults = {"attempts": 0, "correct_answers": 0, "assisted_answers": 0,
+                        "needs_repeat": bool(stats["due"] and not stats["streak"]),
+                        "last_result": "correct" if stats["streak"] else "new",
+                        "last_success_at": None}
+            for field, value in defaults.items():
+                stats.setdefault(field, value)
+        state.update(progress_version=2, round_applied=[])
+        if state["phase"] in {"recall", "feedback"} and state.get("mode", "practice") == "practice":
+            through = state["position"] + int(state["phase"] == "feedback")
+            for key, results in state.get("round_results", {}).items():
+                if not results:
+                    continue
+                stats = state["stats"][int(key)]
+                stats["attempts"] += len(results)
+                stats["correct_answers"] += sum(results)
+                stats["last_result"] = "correct" if results[-1] else "wrong"
+                _apply_word_progress(state, int(key), now, through)
+        changed = True
+    if state.get("order_version", 0) < 2:
+        if state["phase"] in {"recall", "feedback"} and state.get("mode", "practice") != "exam":
+            # Keep the currently visible prompt and answered prefix intact.
+            through = state["position"] + 1
+            state["queue"] = state["queue"][:through] + shuffle_practice(state["queue"][through:])
+        state["order_version"] = 2
+        changed = True
+    return changed
+
+
+def word_status(stats: dict[str, Any]) -> str:
+    if stats["mastered"]:
+        return "mastered"
+    if stats.get("needs_repeat", bool(stats["due"] and not stats["streak"])):
+        return "repeat"
+    if stats.get("attempts", 0) or stats["streak"]:
+        return "learning"
+    return "new"
+
+
+def progress_totals(state: dict[str, Any]) -> dict[str, int]:
+    totals = dict.fromkeys(("new", "learning", "repeat", "mastered"), 0)
+    for stats in state["stats"]:
+        totals[word_status(stats)] += 1
+    return totals
+
+
 def start_round(words: list[VocabularyWord], state: dict[str, Any], now: datetime) -> bool:
+    resume_progress(state, now)
     queue = []
     for index, stats in enumerate(state["stats"]):
         if stats["mastered"] or (stats["due"] and datetime.fromisoformat(stats["due"]) > now):
@@ -166,10 +264,8 @@ def start_round(words: list[VocabularyWord], state: dict[str, Any], now: datetim
             queue.append({"index": index, "kind": "context", "retry": False})
     if not queue:
         return False
-    # First translate all words, then retrieve them again in sentence context.
-    queue.sort(key=lambda task: task["kind"] == "context")
-    state.update(phase="recall", mode="practice", queue=queue, position=0, helped=False,
-                 round_results={}, feedback="", correct=False)
+    state.update(phase="recall", mode="practice", queue=shuffle_practice(queue), position=0, helped=False,
+                 round_results={}, round_applied=[], order_version=2, feedback="", correct=False)
     return True
 
 
@@ -179,25 +275,27 @@ def record_answer(state: dict[str, Any], evaluation: DrillEvaluation) -> None:
     key = str(task["index"])
     results = state["round_results"].setdefault(key, [])
     results.append(correct)
+    if state.get("mode", "practice") == "practice" and state.get("progress_version", 0) >= 2:
+        stats = state["stats"][task["index"]]
+        stats["attempts"] = stats.get("attempts", 0) + 1
+        stats["correct_answers"] = stats.get("correct_answers", 0) + int(correct)
+        stats["assisted_answers"] = stats.get("assisted_answers", 0) + int(state["helped"])
+        stats["last_result"] = "correct" if correct else "helped" if state["helped"] else "wrong"
     if not correct and not task["retry"]:
         state["queue"].append({**task, "retry": True})
     state.update(phase="feedback", feedback=evaluation.feedback[:600], correct=correct)
 
 
 def advance(state: dict[str, Any], now: datetime) -> None:
+    if state["phase"] != "feedback":
+        return
+    resume_progress(state, now)
+    _apply_word_progress(state, state["queue"][state["position"]]["index"], now, state["position"] + 1)
     state["position"] += 1
     state.update(helped=False, feedback="", correct=False)
     if state["position"] < len(state["queue"]):
         state["phase"] = "recall"
         return
-    for key, results in state["round_results"].items():
-        if state.get("mode") == "revision":
-            continue
-        stats = state["stats"][int(key)]
-        stats["streak"] = stats["streak"] + 1 if all(results) else 0
-        stats["mastered"] = stats["streak"] >= 3
-        delay = timedelta(days=(1, 3, 7)[min(stats["streak"] - 1, 2)]) if stats["streak"] else timedelta(minutes=10)
-        stats["due"] = None if stats["mastered"] else (now + delay).isoformat()
     state["phase"] = "finished"
 
 
@@ -265,8 +363,8 @@ def start_revision(words: list[VocabularyWord], state: dict[str, Any]) -> bool:
         return False
     queue = [{"index": result["index"], "kind": "translate", "retry": False} for result in mistakes]
     queue += [{**task, "kind": "context"} for task in queue if words[task["index"]].example_gap]
-    state.update(phase="recall", mode="revision", queue=queue, position=0,
-                 helped=False, round_results={}, feedback="", correct=False)
+    state.update(phase="recall", mode="revision", queue=shuffle_practice(queue), position=0,
+                 helped=False, round_results={}, round_applied=[], order_version=2, feedback="", correct=False)
     return True
 
 
