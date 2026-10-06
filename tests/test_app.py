@@ -1495,6 +1495,7 @@ class AppFlowTests(unittest.TestCase):
                 "learn:conversation",
                 "background:menu:practice",
                 "words",
+                "words:grade8",
                 "reviews:list",
                 "drill:start",
                 "home",
@@ -1512,6 +1513,10 @@ class AppFlowTests(unittest.TestCase):
             "practice",
             self.telegram.messages[-1]["keyboard"][-1][0]["callback_data"],
         )
+
+        self.bot.handle_callback(chat_id, "Learner", "grade8", "words:grade8")
+        self.assertIn("СЛОВА К ТЕСТУ", self.telegram.messages[-1]["text"])
+        self.assertEqual("words:paste", self.telegram.messages[-1]["keyboard"][0][0]["callback_data"])
 
     def test_conversation_depth_is_chosen_after_the_user_goal(self) -> None:
         chat_id = 285

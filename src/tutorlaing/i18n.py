@@ -7,6 +7,12 @@ SUPPORTED_UI_LANGUAGES = ("ru", "uk", "en", "pl")
 
 
 CATALOG: dict[str, dict[str, str]] = {
+    "learn.grade8_exam": {
+        "ru": "🎓 Экзамен 8-классника",
+        "uk": "🎓 Іспит восьмикласника",
+        "en": "🎓 Grade 8 English exam",
+        "pl": "🎓 Egzamin ósmoklasisty",
+    },
     "navigation.learn": {"ru": "📚 Учиться", "uk": "📚 Вчитися", "en": "📚 Learn", "pl": "📚 Ucz się"},
     "navigation.assistant": {"ru": "💬 Помощник", "uk": "💬 Помічник", "en": "💬 Assistant", "pl": "💬 Pomocnik"},
     "navigation.profile": {"ru": "👤 Профиль", "uk": "👤 Профіль", "en": "👤 Profile", "pl": "👤 Profil"},

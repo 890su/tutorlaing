@@ -201,7 +201,7 @@ class VocabularyFlow:
                 self.telegram.send_message(chat_id, chunk.rstrip())
 
     def handle_callback(self, chat_id: int, data: str) -> None:
-        if data == "words":
+        if data in {"words", "words:grade8"}:
             self.show_menu(chat_id)
             return
         if data == "words:upload":

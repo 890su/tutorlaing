@@ -424,6 +424,7 @@ class LearnerMenu:
                     }
                 ],
                 [{"text": tr(language, "words.title"), "callback_data": "words"}],
+                [{"text": tr(language, "learn.grade8_exam"), "callback_data": "words:grade8"}],
                 [
                     {"text": review_label, "callback_data": "reviews:list"},
                     {
