@@ -1494,6 +1494,7 @@ class AppFlowTests(unittest.TestCase):
             [
                 "learn:conversation",
                 "background:menu:practice",
+                "words",
                 "reviews:list",
                 "drill:start",
                 "home",

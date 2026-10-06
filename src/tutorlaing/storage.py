@@ -448,6 +448,18 @@ class Storage:
             ON quest_attempts(quest_session_id, id);
         CREATE INDEX IF NOT EXISTS idx_text_inbox_chat
             ON text_inbox(chat_id, id DESC);
+        CREATE TABLE IF NOT EXISTS vocabulary_decks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id) ON DELETE CASCADE,
+            words_json TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_vocabulary_owner ON vocabulary_decks(chat_id, id DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabulary_active ON vocabulary_decks(chat_id) WHERE active = 1;
         CREATE INDEX IF NOT EXISTS idx_coach_sessions_chat
             ON coach_sessions(chat_id, status, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_coach_exchanges_session
@@ -496,6 +508,8 @@ class Storage:
             self._ensure_column("users", "coach_input_mode", "TEXT")
             self._ensure_column("users", "background_card_id", "INTEGER")
             self._ensure_column("users", "hourly_card_id", "INTEGER")
+            self._ensure_column("users", "vocabulary_source_language", "TEXT NOT NULL DEFAULT 'auto'")
+            self._ensure_column("users", "vocabulary_input_mode", "TEXT")
             self._ensure_column("users", "pending_assignment", "TEXT")
             self._ensure_column("users", "workspace_message_id", "INTEGER")
             self._ensure_column("users", "reply_keyboard_version", "TEXT")
@@ -1200,6 +1214,68 @@ class Storage:
                 (now, chat_id),
             )
 
+    def create_vocabulary_deck(
+        self, chat_id: int, words: list[dict[str, Any]], warnings: str = ""
+    ) -> int:
+        from .vocabulary import initial_state
+
+        now = utc_now()
+        with self._lock, self._connection:
+            self._connection.execute("UPDATE vocabulary_decks SET active = 0 WHERE chat_id = ?", (chat_id,))
+            cursor = self._connection.execute(
+                "INSERT INTO vocabulary_decks(chat_id, words_json, state_json, active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+                (chat_id, json.dumps(words, ensure_ascii=False),
+                 json.dumps(initial_state(len(words), warnings), ensure_ascii=False), now, now),
+            )
+        return int(cursor.lastrowid)
+
+    def vocabulary_deck(self, chat_id: int, deck_id: int) -> sqlite3.Row:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM vocabulary_decks WHERE chat_id = ? AND id = ?", (chat_id, deck_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Vocabulary deck not found")
+        return row
+
+    def vocabulary_decks(self, chat_id: int, limit: int = 20, offset: int = 0) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT * FROM vocabulary_decks WHERE chat_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (chat_id, limit, offset),
+            ).fetchall()
+
+    def active_vocabulary_deck(self, chat_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self._connection.execute(
+                "SELECT * FROM vocabulary_decks WHERE chat_id = ? AND active = 1", (chat_id,),
+            ).fetchone()
+
+    def activate_vocabulary_deck(self, chat_id: int, deck_id: int) -> sqlite3.Row:
+        with self._lock, self._connection:
+            self.vocabulary_deck(chat_id, deck_id)
+            self._connection.execute("UPDATE vocabulary_decks SET active = 0 WHERE chat_id = ?", (chat_id,))
+            self._connection.execute("UPDATE vocabulary_decks SET active = 1 WHERE chat_id = ? AND id = ?", (chat_id, deck_id))
+        return self.vocabulary_deck(chat_id, deck_id)
+
+    def pause_vocabulary(self, chat_id: int) -> None:
+        with self._lock, self._connection:
+            self._connection.execute("UPDATE vocabulary_decks SET active = 0 WHERE chat_id = ?", (chat_id,))
+            self._connection.execute("UPDATE users SET vocabulary_input_mode = NULL WHERE chat_id = ?", (chat_id,))
+
+    def update_vocabulary_deck(
+        self, chat_id: int, deck_id: int, version: int, state: dict[str, Any],
+        words: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE vocabulary_decks SET state_json = ?, words_json = COALESCE(?, words_json), "
+                "version = version + 1, updated_at = ? WHERE chat_id = ? AND id = ? AND version = ? AND active = 1",
+                (json.dumps(state, ensure_ascii=False), json.dumps(words, ensure_ascii=False) if words is not None else None,
+                 utc_now(), chat_id, deck_id, version),
+            )
+        return cursor.rowcount == 1
+
     def game_profile(self, chat_id: int) -> sqlite3.Row | None:
         with self._lock:
             return self._connection.execute(
@@ -1497,6 +1573,8 @@ class Storage:
             "coach_input_mode",
             "background_card_id",
             "hourly_card_id",
+            "vocabulary_source_language",
+            "vocabulary_input_mode",
             "pending_assignment",
             "workspace_message_id",
             "reply_keyboard_version",
@@ -2715,9 +2793,15 @@ class Storage:
                       AND (reminder_cooldown_until IS NULL OR reminder_cooldown_until <= ?)
                       AND (reminder_pending_until IS NULL OR reminder_pending_until <= ?)
                       AND toolkit_input_mode IS NULL
+                      AND vocabulary_input_mode IS NULL
                       AND coach_session_id IS NULL
                       AND background_card_id IS NULL
                       AND hourly_card_id IS NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM vocabulary_decks
+                          WHERE vocabulary_decks.chat_id = users.chat_id AND active = 1
+                            AND json_extract(state_json, '$.phase') != 'finished'
+                      )
                       AND stage IN (
                           'idle', 'waiting', 'scenario', 'practice', 'review', 'drill',
                           'quest'

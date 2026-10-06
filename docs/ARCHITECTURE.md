@@ -1,6 +1,6 @@
 # Архитектура Tutorlaing
 
-Актуально на 2026-08-14.
+Актуально на 2026-10-06.
 
 ## Границы
 
@@ -37,6 +37,8 @@ flowchart LR
 | `coach.py` | side-channel преподавателя, не меняющий основной flow |
 | `learning_cards.py` / `background_learning.py` | валидируемый semantic content и связанная микро-практика |
 | `hourly_cards.py` | генерация и fallback batch-а почасовых карточек; состояние, scheduling и mastery остаются в storage/app |
+| `vocabulary.py` | DTO словаря, `VocabularyAI`/`VocabularyStore`, текстовые пары, Unicode-ключи, очередь повторов и школьный тест |
+| `vocabulary_flow.py` | photo import, проверка/правка списка, локализованный Telegram flow без изменения основной session |
 | `game_service.py` | реестр правил игр, приглашения по @username/ссылке, очередность ходов и owner-scoped проекция состояния |
 | `games_web.py` / `games/` | проверка Telegram Mini App `initData`, JSON API и статический мобильный игровой стол |
 | `toolkit.py` | работа со своей фразой, переводные карточки и тематический drill |
@@ -69,6 +71,54 @@ flowchart LR
 - Игры с закрытой информацией обязаны возвращать через `GameDefinition` только
   player-scoped проекцию состояния: колода и рука соперника не выходят из backend.
   Для «Морского боя» эта же граница скрывает расклад флота соперника.
+
+## Контракт словаря с текстом и фото
+
+`TelegramGateway.download_image(file_id, max_bytes) -> bytes` разрешает путь
+через `getFile`, ограничивает чтение 10 МБ, хранит фото только в памяти и
+возвращает безопасную ошибку без token-bearing URL. Dispatcher передаёт
+`handle_photo` для Telegram photo и JPEG/PNG/WebP document; caption не команда.
+Consent и alpha-access проверяются до скачивания.
+
+`VocabularyAI.extract_vocabulary(image, mime_type, source_language,
+instruction_language) -> VocabularyList` возвращает до 40 `VocabularyWord`:
+source, source_language (`pl`/`ru`), english, accepted_answers, hint,
+explanation, example_gap. Общая JSON schema обслуживается обоими провайдерами;
+OpenAI использует Responses image input и `store=false`, Gemini — inlineData.
+AI возвращает материал однократно; повторное прохождение использует БД.
+
+`VocabularyAI.prepare_text_vocabulary(text, source_language, instruction_language)`
+возвращает тот же `VocabularyList`. До AI `text_entries` ограничивает объём:
+1–40 строк/элементов через запятую или `;`, до 4096 символов, многословная фраза
+остаётся одним элементом. Адаптер проверяет полноту списка. Явные пары через `=`
+обрабатываются локально, включая `English = русский`; формат латинских пар —
+`Polski = English`. Unicode-ключи сохраняют кириллицу; общий Polish normalizer
+не используется для дедупликации или поиска русских слов.
+
+`VocabularyStore` предоставляет owner-scoped create/read/list/activate/pause и
+`update_vocabulary_deck(..., version, state, words?) -> bool`. SQLite хранит
+`words_json`, `state_json`, версию и active-флаг; partial unique index допускает
+один словарный ввод на пользователя. Запись сравнивает версию и active-флаг.
+Удаление пользователя каскадно удаляет наборы. Ручная правка разрешена до
+подтверждения и полностью заменяет draft, сбрасывая его пустую учебную статистику.
+
+Фазы: `confirm → edit/recall → feedback → recall/finished`. Очередь содержит
+перевод, затем контекст, затем по одному повтору ошибок. Подсказка обнуляет
+самостоятельность текущей попытки. Любая ошибка в раунде назначает повтор через
+10 минут; успешные независимые раунды — через 1 и 3 дня; третий даёт mastery.
+Автоматические напоминания не перекрывают открытый словарный шаг.
+Общий foreground (`users.stage/current_*`) остаётся сохранён; словарный текст
+получает отдельный приоритет, переходы меню явно отключают его capture.
+
+`vocabulary_input_mode=list` включает ожидание текста только через `words:paste`;
+команда `/words <list>` передаёт список напрямую. Выход/команда/фото-импорт
+снимают ожидание. Напоминания не перекрывают ни этот ввод, ни незаконченный раунд.
+Режим `exam` перемешивает полный список независимо от due/mastery, принимает по
+одному ответу и проверяет точное целевое написание без AI-послаблений; результат
+доступен только в конце. `last_exam` сохраняет итог и ошибки, `exam_results` —
+позицию/ответы текущего теста. Режим `revision` немедленно упражняет только ошибки.
+Оба режима не меняют `stats` интервальных повторов. Старые состояния без `mode`
+совместимы с обычной практикой.
 
 ## Следующий технический долг
 

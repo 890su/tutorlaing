@@ -423,6 +423,7 @@ class LearnerMenu:
                         "callback_data": "background:menu:practice",
                     }
                 ],
+                [{"text": tr(language, "words.title"), "callback_data": "words"}],
                 [
                     {"text": review_label, "callback_data": "reviews:list"},
                     {

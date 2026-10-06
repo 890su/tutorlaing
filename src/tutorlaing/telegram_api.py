@@ -21,6 +21,27 @@ class TelegramError(TransportError):
 class TelegramAPI:
     def __init__(self, token: str):
         self.base_url = f"https://api.telegram.org/bot{token}"
+        self.file_base_url = f"https://api.telegram.org/file/bot{token}"
+
+    def download_image(self, file_id: str, max_bytes: int) -> bytes:
+        """Resolve a Telegram file and keep the bounded image only in memory.
+
+        Errors deliberately exclude the download URL, which contains a token.
+        """
+        file = self.call("getFile", {"file_id": file_id})
+        if not isinstance(file, dict) or int(file.get("file_size", 0)) > max_bytes:
+            raise TelegramError("Image exceeds the size limit")
+        path = str(file.get("file_path", ""))
+        if not path or any(part in {"..", "."} for part in path.split("/")) or ":" in path or "\\" in path:
+            raise TelegramError("Invalid Telegram file path")
+        try:
+            with urllib.request.urlopen(f"{self.file_base_url}/{path}", timeout=30) as response:
+                image = response.read(max_bytes + 1)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            raise TelegramError("Image download failed") from None
+        if not image or len(image) > max_bytes:
+            raise TelegramError("Image exceeds the size limit or is empty")
+        return image
 
     def call(
         self, method: str, params: dict[str, Any] | None = None, timeout: int = 40

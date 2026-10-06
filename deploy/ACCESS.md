@@ -34,8 +34,8 @@ reference; private key, пароли, токены и содержимое `.env
 
 ## Состояние
 
-Последняя подтверждённая deploy-версия — `sha-b0bc96c`
-(`sha256:0e61d60078679fc26d0fb9b27f62e00122d55a7f49dd47e7e03dea3553201591`):
+Последняя подтверждённая deploy-версия — `sha-f907e33`
+(`sha256:b62f167ce1b26ac5817e98a30466c96b1eefe21701d3de7a81c240dcf5439ffb`):
 Docker был `running healthy`, local/public health вернули `status=ok`,
 `database=ok`. Публичный `/games` вернул HTTP 200; игровой API без Telegram
 `initData` вернул 403. Deploy подтверждён remote digest, local health и логами,

@@ -56,6 +56,7 @@ from .toolkit import LANGUAGE_LABELS, PracticeToolkit
 from .ui import card, progress, route
 from .workspace import TelegramWorkspace
 from .update_dispatcher import TelegramUpdateDispatcher
+from .vocabulary_flow import VocabularyFlow
 
 
 LOGGER = logging.getLogger(__name__)
@@ -97,6 +98,7 @@ class TutorlaingBot:
         self.coach = CoachService(storage, self.ai)
         self.background_learning = BackgroundLearningService(storage, self.ai)
         self.hourly_cards = HourlyCardService(self.ai)
+        self.vocabulary = VocabularyFlow(storage, self.telegram, self.workspace, self.ai)
         self.adaptive_difficulty = AdaptiveDifficultyService(storage)
         self.feedback = FeedbackPresenter(
             storage, self.workspace, self.language_support, self.ai
@@ -2944,7 +2946,14 @@ class TutorlaingBot:
         ]
 
     def send_scheduled_reminder(self, chat_id: int, mode: str) -> None:
+        vocabulary = self.storage.active_vocabulary_deck(chat_id)
+        if vocabulary and json.loads(vocabulary["state_json"])["phase"] != "finished":
+            return
+        if vocabulary:
+            self.storage.pause_vocabulary(chat_id)
         user = self.storage.get_user(chat_id)
+        if user["vocabulary_input_mode"]:
+            return
         if mode == "hourly":
             self.send_hourly_card(chat_id)
             return
@@ -3104,6 +3113,25 @@ class TutorlaingBot:
                 keyboard,
             )
 
+    def handle_photo(
+        self, chat_id: int, first_name: str, file_id: str, mime_type: str,
+        file_size: int = 0, message_id: int | None = None,
+    ) -> None:
+        if not self.is_allowed(chat_id):
+            self.telegram.send_message(chat_id, "Сейчас доступна только закрытая alpha.")
+            return
+        user = self.storage.ensure_user(chat_id, first_name)
+        if not self._has_current_consent(user):
+            self.start(chat_id, first_name)
+            return
+        self.storage.record_user_interaction(chat_id)
+        self.vocabulary.import_photo(chat_id, file_id, mime_type, file_size)
+        if self.storage.active_vocabulary_deck(chat_id):
+            self.storage.set_user_state(chat_id, toolkit_input_mode=None, profile_input_mode=None)
+            self.storage.close_coach_session(chat_id)
+            self.storage.dismiss_background_card(chat_id)
+            self.storage.dismiss_hourly_card_check(chat_id)
+
     def handle_text(
         self,
         chat_id: int,
@@ -3117,6 +3145,8 @@ class TutorlaingBot:
         user = self.storage.ensure_user(chat_id, first_name)
         self.storage.record_user_interaction(chat_id)
         command = parse_command(text)
+        if command or reply_action(text):
+            self.storage.pause_vocabulary(chat_id)
         if command.startswith("/") and (
             user["toolkit_input_mode"]
             or user["profile_input_mode"]
@@ -3217,6 +3247,13 @@ class TutorlaingBot:
         if command == "/tools":
             self.toolkit.show_menu(chat_id)
             return
+        if command == "/words":
+            parts = text.strip().split(maxsplit=1)
+            if len(parts) == 2:
+                self.vocabulary.import_text(chat_id, parts[1])
+            else:
+                self.vocabulary.show_menu(chat_id)
+            return
         if command == "/games":
             self.show_games(chat_id)
             return
@@ -3235,6 +3272,13 @@ class TutorlaingBot:
         if command.startswith("/"):
             self._notice(chat_id, self._t(chat_id, "help.unknown_command"))
             self.show_help(chat_id)
+            return
+        if self.vocabulary.handle_text(chat_id, text):
+            return
+        if self.storage.active_vocabulary_deck(chat_id):
+            # A completed vocabulary round has no question. A new phrase must
+            # not silently answer the lesson preserved behind this side channel.
+            self.offer_text_actions(chat_id, text)
             return
         if user["background_card_id"]:
             self.answer_background_card(
@@ -3296,6 +3340,9 @@ class TutorlaingBot:
             self.workspace.focus_message(chat_id, message_id)
             user = self.storage.get_user(chat_id)
 
+        if data != "words" and not data.startswith("words:"):
+            self.storage.pause_vocabulary(chat_id)
+
         if (
             user["toolkit_input_mode"]
             and data not in {"toolkit", "toolkit:resume"}
@@ -3339,6 +3386,8 @@ class TutorlaingBot:
             self.home(chat_id)
         elif data == "practice":
             self.show_practice_hub(chat_id)
+        elif data == "words" or data.startswith("words:"):
+            self.vocabulary.handle_callback(chat_id, data)
         elif data == "learn:conversation":
             self.menu.show_conversation_choices(chat_id)
         elif data == "help":

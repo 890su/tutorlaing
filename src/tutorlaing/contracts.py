@@ -19,6 +19,8 @@ class TransportError(RuntimeError):
 
 
 class TelegramGateway(Protocol):
+    def download_image(self, file_id: str, max_bytes: int) -> bytes: ...
+
     def send_message(
         self, chat_id: int, text: str, keyboard: Keyboard | None = None
     ) -> Any: ...
@@ -206,6 +208,11 @@ class UpdateStore(Protocol):
 
 
 class UpdateTarget(Protocol):
+    def handle_photo(
+        self, chat_id: int, first_name: str, file_id: str, mime_type: str,
+        file_size: int = 0, message_id: int | None = None,
+    ) -> None: ...
+
     def handle_text(
         self,
         chat_id: int,

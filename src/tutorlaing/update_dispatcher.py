@@ -36,11 +36,22 @@ class TelegramUpdateDispatcher:
         if "message" in update:
             message = update["message"]
             chat_id = int(message["chat"]["id"])
+            first_name = str(message.get("from", {}).get("first_name", ""))
+            photos = message.get("photo")
+            document = message.get("document", {})
+            if photos or document.get("mime_type") in {"image/jpeg", "image/png", "image/webp"}:
+                image = max(photos, key=lambda item: int(item.get("width", 0)) * int(item.get("height", 0))) if photos else document
+                self.target.handle_photo(
+                    chat_id, first_name, str(image["file_id"]),
+                    "image/jpeg" if photos else str(document["mime_type"]),
+                    int(image.get("file_size", 0)), message.get("message_id"),
+                )
+                return
             text = message.get("text")
             if not text:
                 self.telegram.send_message(
                     chat_id,
-                    "В этой версии используйте текстовые ответы. "
+                    "Можно отправить текст или фото списка слов. "
                     "Голос появится после проверки качества.",
                 )
                 return
